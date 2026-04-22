@@ -34,6 +34,7 @@ yarn-error.*
 .env
 .env.*
 .env*.local
+!.env.example
 
 # Firebase service account — NEVER commit this
 serviceAccountKey*.json
