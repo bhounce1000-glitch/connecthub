@@ -1,0 +1,17 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "expo-web-clear",
+			"type": "shell",
+			"command": "npx",
+			"args": [
+				"expo",
+				"start",
+				"--web",
+				"--clear"
+			],
+			"isBackground": true
+		}
+	]
+}

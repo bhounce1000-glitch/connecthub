@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "connecthub",
+    "slug": "connecthub",
+    "version": "1.0.0",
+    "scheme": "connecthub",
+    "web": {
+      "favicon": "./assets/images/favicon.png"
+    },
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ]
+  }
+}

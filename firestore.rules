@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function email() {
+      return isSignedIn() && request.auth.token.email != null
+        ? request.auth.token.email
+        : '';
+    }
+
+    function isAdmin() {
+      return email() in ['bhounce1000@gmail.com'];
+    }
+
+    function isOwner() {
+      return resource.data.user == email();
+    }
+
+    function validStatus(value) {
+      return value in ['open', 'accepted', 'in_progress', 'completed', 'paid', 'cancelled'];
+    }
+
+    match /requests/{requestId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.user == email()
+        && request.resource.data.paid == false
+        && request.resource.data.acceptedBy == null
+        && request.resource.data.rating == null
+        && request.resource.data.status == 'open'
+        && validStatus(request.resource.data.status);
+
+      allow delete: if isAdmin()
+        || (isOwner() && resource.data.status == 'open' && resource.data.paid == false);
+
+      allow update: if isSignedIn() && (
+        isAdmin()
+
+        // Any provider can accept an open request.
+        || (
+          resource.data.status == 'open'
+          && request.resource.data.status == 'accepted'
+          && request.resource.data.acceptedBy == email()
+          && request.resource.data.user == resource.data.user
+          && request.resource.data.paid == false
+        )
+
+        // Assigned provider starts work.
+        || (
+          resource.data.acceptedBy == email()
+          && resource.data.status == 'accepted'
+          && request.resource.data.status == 'in_progress'
+        )
+
+        // Assigned provider marks completion.
+        || (
+          resource.data.acceptedBy == email()
+          && resource.data.status == 'in_progress'
+          && request.resource.data.status == 'completed'
+        )
+
+        // Request owner can rate after paid.
+        || (
+          isOwner()
+          && resource.data.status == 'paid'
+          && resource.data.rating == null
+          && request.resource.data.status == 'paid'
+          && request.resource.data.rating is int
+          && request.resource.data.rating >= 1
+          && request.resource.data.rating <= 5
+        )
+      );
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
