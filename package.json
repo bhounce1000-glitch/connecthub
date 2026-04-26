@@ -11,7 +11,12 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "smoke:api": "node scripts/smoke-api.js",
-    "check:release": "npm run lint && npm run smoke:api"
+    "check:release": "npm run lint && npm run smoke:api",
+    "build:android": "eas build --platform android --profile production",
+    "build:ios": "eas build --platform ios --profile production",
+    "build:all": "eas build --platform all --profile production",
+    "submit:android": "eas submit --platform android",
+    "submit:ios": "eas submit --platform ios"
   },
   "dependencies": {
     "@expo/metro-runtime": "55.0.8-canary-20260328-2049187",
@@ -54,6 +59,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "eas-cli": "^18.8.1",
     "eslint": "^9.0.0",
     "eslint-config-expo": "55.0.1-canary-20260328-2049187",
     "pino-pretty": "^13.1.3",

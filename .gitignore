@@ -39,6 +39,9 @@ yarn-error.*
 # Firebase service account — NEVER commit this
 serviceAccountKey*.json
 
+# Google Play service account key — NEVER commit this
+google-play-key.json
+
 # typescript
 *.tsbuildinfo
 

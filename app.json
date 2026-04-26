@@ -1,16 +1,62 @@
 {
   "expo": {
-    "name": "connecthub",
+    "name": "ConnectHub",
     "slug": "connecthub",
     "version": "1.0.0",
     "scheme": "connecthub",
-    "web": {
-      "favicon": "./assets/images/favicon.png"
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
     },
     "platforms": [
       "ios",
       "android",
       "web"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.bhounceconnecthub",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "ConnectHub needs access to your photo library to set a profile picture.",
+        "NSCameraUsageDescription": "ConnectHub needs access to your camera to take a profile picture."
+      }
+    },
+    "android": {
+      "package": "com.bhounceconnecthub",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "connecthub"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ConnectHub needs access to your photo library to set a profile picture."
+        }
+      ]
     ]
   }
 }
