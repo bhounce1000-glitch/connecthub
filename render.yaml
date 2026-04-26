@@ -7,3 +7,26 @@ services:
     buildCommand: npm install
     startCommand: npm run server
     autoDeploy: true
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      # Set these in the Render dashboard — do NOT commit real values here
+      - key: PAYSTACK_SECRET
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: ADMIN_BOOTSTRAP_SECRET
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: PAYSTACK_CALLBACK_BASE_URL
+        sync: false
+      - key: BACKEND_PUBLIC_URL
+        sync: false
+      - key: EXPO_PUBLIC_WEB_BASE_URL
+        sync: false

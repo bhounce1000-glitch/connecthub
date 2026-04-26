@@ -1,0 +1,36 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isImageUpload() {
+      return request.resource != null
+        && (
+          request.resource.contentType == null
+          || request.resource.contentType.matches('image/.*')
+        );
+    }
+
+    // Profile pictures - any signed-in user can read; owner can write
+    match /profile-pictures/{userId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isImageUpload();
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Request images - any signed-in user can read; owner can write
+    match /request-images/{userId}/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && request.auth.uid == userId && isImageUpload();
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Catch-all deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

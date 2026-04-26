@@ -23,14 +23,43 @@ service cloud.firestore {
       return value in ['open', 'accepted', 'in_progress', 'completed', 'paid', 'cancelled'];
     }
 
+    function changedKeysOnly(keys) {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly(keys);
+    }
+
+    function requestDoc(requestId) {
+      return get(/databases/$(database)/documents/requests/$(requestId));
+    }
+
+    function requestExists(requestId) {
+      return requestDoc(requestId).data != null;
+    }
+
+    function isRequestParticipant(requestId) {
+      return requestExists(requestId)
+        && (
+          requestDoc(requestId).data.user == email()
+          || requestDoc(requestId).data.acceptedBy == email()
+          || isAdmin()
+        );
+    }
+
     match /requests/{requestId} {
       allow read: if isSignedIn();
 
       allow create: if isSignedIn()
+        && request.resource.data.keys().hasAll(['title', 'location', 'price', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['title', 'location', 'price', 'image', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
+        && request.resource.data.title is string
+        && request.resource.data.location is string
+        && request.resource.data.price is string
+        && (!('image' in request.resource.data) || request.resource.data.image is string)
         && request.resource.data.user == email()
         && request.resource.data.paid == false
         && request.resource.data.acceptedBy == null
         && request.resource.data.rating == null
+        && request.resource.data.review is string
+        && request.resource.data.createdAt is timestamp
         && request.resource.data.status == 'open'
         && validStatus(request.resource.data.status);
 
@@ -47,6 +76,7 @@ service cloud.firestore {
           && request.resource.data.acceptedBy == email()
           && request.resource.data.user == resource.data.user
           && request.resource.data.paid == false
+          && changedKeysOnly(['acceptedBy', 'status', 'acceptedAt'])
         )
 
         // Assigned provider starts work.
@@ -54,6 +84,7 @@ service cloud.firestore {
           resource.data.acceptedBy == email()
           && resource.data.status == 'accepted'
           && request.resource.data.status == 'in_progress'
+          && changedKeysOnly(['status', 'startedAt'])
         )
 
         // Assigned provider marks completion.
@@ -61,6 +92,7 @@ service cloud.firestore {
           resource.data.acceptedBy == email()
           && resource.data.status == 'in_progress'
           && request.resource.data.status == 'completed'
+          && changedKeysOnly(['status', 'completedAt'])
         )
 
         // Request owner can rate after paid.
@@ -68,12 +100,58 @@ service cloud.firestore {
           isOwner()
           && resource.data.status == 'paid'
           && resource.data.rating == null
-          && request.resource.data.status == 'paid'
+          && request.resource.data.status == resource.data.status
           && request.resource.data.rating is int
           && request.resource.data.rating >= 1
           && request.resource.data.rating <= 5
+          && request.resource.data.review is string
+          && changedKeysOnly(['rating', 'review', 'ratedAt'])
         )
       );
+    }
+
+    match /chats/{requestId}/messages/{messageId} {
+      allow read: if isSignedIn() && isRequestParticipant(requestId);
+
+      allow create: if isSignedIn()
+        && isRequestParticipant(requestId)
+        && request.resource.data.keys().hasOnly(['text', 'user', 'createdAt'])
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 4000
+        && request.resource.data.user == email()
+        && request.resource.data.createdAt is timestamp;
+
+      allow update, delete: if false;
+    }
+
+    match /users/{userEmail} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && userEmail == email();
+      allow delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      // Only the recipient can read their own notifications
+      allow read: if isSignedIn() && resource.data.user == email();
+
+      // Any signed-in user can create a notification for another user
+      // (e.g. provider → owner on accept, owner → provider on pay)
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasAll(['user', 'text', 'createdAt', 'read'])
+        && request.resource.data.user is string
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 500
+        && request.resource.data.read == false;
+
+      // Recipients can only flip the read flag
+      allow update: if isSignedIn()
+        && resource.data.user == email()
+        && changedKeysOnly(['read'])
+        && request.resource.data.read is bool;
+
+      allow delete: if false;
     }
 
     match /{document=**} {

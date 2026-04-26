@@ -1,19 +1,25 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, updateDoc } from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Text } from 'react-native';
 
+import AppButton from '../components/ui/app-button';
+import AppCard from '../components/ui/app-card';
+import AppNotice from '../components/ui/app-notice';
+import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
-import { db } from '../firebase';
+import { apiPost } from '../utils/api-client';
+import { formatApiMessage } from '../utils/api-response';
 
 export default function PayReturn() {
   const router = useRouter();
   const { id, reference: referenceParam, trxref } = useLocalSearchParams();
-  const [status, setStatus] = useState('Verifying payment...');
-  const [details, setDetails] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [statusTone, setStatusTone] = useState('pending');
+  const [notice, setNotice] = useState({
+    tone: 'info',
+    title: 'Verifying payment',
+    message: 'We are checking your Paystack reference now.',
+  });
   const hasVerified = useRef(false);
 
   const requestId = Array.isArray(id) ? id[0] : id;
@@ -24,9 +30,11 @@ export default function PayReturn() {
   useEffect(() => {
     if (!reference || hasVerified.current) {
       if (!reference) {
-        setStatus('No payment reference found');
-        setDetails('Return here after checkout so the payment can be verified.');
-        setStatusTone('missing');
+        setNotice({
+          tone: 'warning',
+          title: 'No payment reference found',
+          message: 'Return here after checkout so the payment can be verified.',
+        });
         setIsLoading(false);
       }
       return;
@@ -36,54 +44,58 @@ export default function PayReturn() {
 
     const verifyPayment = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/pay/verify`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ reference }),
-        });
-
-        const data = await response.json();
+        const { response, data } = await apiPost(`${API_BASE_URL}/pay/verify`, { reference }, { requireAuth: true });
         const paymentStatus = data?.data?.status;
-        const resolvedRequestId = data?.data?.metadata?.requestId || requestId;
+        const paymentUpdate = data?.paymentUpdate;
 
         if (!response.ok || !data?.status) {
-          setStatus('Verification request failed');
-          setDetails(data?.message || data?.error || 'The payment could not be verified.');
-          setStatusTone('error');
+          setNotice({
+            tone: 'error',
+            title: 'Verification request failed',
+            message: formatApiMessage(data, 'The payment could not be verified.'),
+          });
           return;
         }
 
         if (paymentStatus === 'success') {
-          if (resolvedRequestId) {
-            await updateDoc(doc(db, 'requests', resolvedRequestId), {
-              paid: true,
-              status: 'paid',
+          if (paymentUpdate?.updated === false && paymentUpdate?.reason === 'invalid_status_transition') {
+            setNotice({
+              tone: 'warning',
+              title: 'Payment verified but not applied',
+              message: 'Payment succeeded, but the request is not in a payable state yet. Please contact support.',
             });
+            return;
           }
 
           setIsSuccess(true);
-          setStatusTone('success');
-          setStatus('Payment confirmed');
-          setDetails('Your payment was verified and the request has been marked as paid.');
+          setNotice({
+            tone: 'success',
+            title: 'Payment confirmed',
+            message: 'Your payment was verified and the request has been marked as paid.',
+          });
           return;
         }
 
         if (paymentStatus === 'abandoned') {
-          setStatusTone('abandoned');
-          setStatus('Payment not completed');
-          setDetails('Checkout was opened, but the transaction was not completed. You can go back and try again.');
+          setNotice({
+            tone: 'warning',
+            title: 'Payment not completed',
+            message: 'Checkout was opened, but the transaction was not completed. You can go back and try again.',
+          });
           return;
         }
 
-        setStatusTone('pending');
-        setStatus('Payment pending');
-        setDetails(data?.data?.gateway_response || 'The payment is not complete yet.');
+        setNotice({
+          tone: 'info',
+          title: 'Payment pending',
+          message: formatApiMessage({ message: data?.data?.gateway_response, requestId: data?.requestId }, 'The payment is not complete yet.'),
+        });
       } catch (error) {
-        setStatusTone('error');
-        setStatus('Verification error');
-        setDetails(error.message || 'An unexpected error occurred during verification.');
+        setNotice({
+          tone: 'error',
+          title: 'Verification error',
+          message: error.message || 'An unexpected error occurred during verification.',
+        });
       } finally {
         setIsLoading(false);
       }
@@ -93,10 +105,16 @@ export default function PayReturn() {
   }, [reference, requestId]);
 
   return (
-    <View style={{ flex: 1, padding: 24, backgroundColor: '#f4f6f8', justifyContent: 'center' }}>
-      <View
+    <ScreenShell
+      eyebrow="PAYMENT RETURN"
+      title="Payment Status"
+      subtitle="Review the verification result from your Paystack checkout."
+      accentColor="#1f2937"
+      accentTextColor="#dbeafe"
+      backgroundColor="#f4f6f8"
+    >
+      <AppCard
         style={{
-          backgroundColor: 'white',
           borderRadius: 20,
           padding: 24,
           shadowColor: '#0f172a',
@@ -105,63 +123,11 @@ export default function PayReturn() {
           elevation: 6,
         }}
       >
-        <Text style={{ fontSize: 28, fontWeight: 'bold', marginBottom: 16 }}>
-          Payment Status
-        </Text>
-
-        <View
-          style={{
-            alignSelf: 'flex-start',
-            backgroundColor:
-              statusTone === 'success'
-                ? '#dcfce7'
-                : statusTone === 'abandoned'
-                  ? '#fee2e2'
-                  : statusTone === 'error'
-                    ? '#fef2f2'
-                    : statusTone === 'missing'
-                      ? '#e5e7eb'
-                      : '#dbeafe',
-            borderRadius: 999,
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            marginBottom: 16,
-          }}
-        >
-          <Text
-            style={{
-              color:
-                statusTone === 'success'
-                  ? '#166534'
-                  : statusTone === 'abandoned'
-                    ? '#b91c1c'
-                    : statusTone === 'error'
-                      ? '#991b1b'
-                      : statusTone === 'missing'
-                        ? '#374151'
-                        : '#1d4ed8',
-              fontWeight: '700',
-            }}
-          >
-            {statusTone === 'success'
-              ? 'PAID'
-              : statusTone === 'abandoned'
-                ? 'ABANDONED'
-                : statusTone === 'error'
-                  ? 'ERROR'
-                  : statusTone === 'missing'
-                    ? 'MISSING'
-                    : 'PENDING'}
-          </Text>
-        </View>
-
-        <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 8 }}>
-          {status}
-        </Text>
-
-        <Text style={{ fontSize: 15, color: '#4b5563', marginBottom: 12 }}>
-          {details}
-        </Text>
+        <AppNotice
+          tone={notice?.tone}
+          title={notice?.title}
+          message={notice?.message}
+        />
 
         <Text style={{ fontSize: 14, color: '#6b7280', marginBottom: 24 }}>
           Reference: {reference || 'Unavailable'}
@@ -169,27 +135,16 @@ export default function PayReturn() {
 
         {isLoading ? <ActivityIndicator size="large" color="#2563eb" /> : null}
 
-        <TouchableOpacity
-          style={{
-            backgroundColor: isSuccess ? '#16a34a' : '#2563eb',
-            padding: 14,
-            borderRadius: 10,
-            marginTop: 24,
-            marginBottom: 12,
-          }}
+        <AppButton
+          label="Back To Home"
+          variant={isSuccess ? 'success' : 'primary'}
           onPress={() => router.replace('/home')}
-        >
-          <Text style={{ color: 'white', textAlign: 'center', fontWeight: 'bold' }}>
-            Back To Home
-          </Text>
-        </TouchableOpacity>
+          style={{ marginTop: 24, marginBottom: 12 }}
+        />
 
-        <TouchableOpacity
-          style={{
-            backgroundColor: '#111827',
-            padding: 14,
-            borderRadius: 10,
-          }}
+        <AppButton
+          label="Back To Payment Screen"
+          variant="neutral"
           onPress={() => router.replace({
             pathname: '/pay',
             params: {
@@ -197,12 +152,8 @@ export default function PayReturn() {
               reference,
             },
           })}
-        >
-          <Text style={{ color: 'white', textAlign: 'center', fontWeight: 'bold' }}>
-            Back To Payment Screen
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+        />
+      </AppCard>
+    </ScreenShell>
   );
 }

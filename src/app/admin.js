@@ -1,15 +1,41 @@
+import { useRouter } from 'expo-router';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 
+import AppButton from '../components/ui/app-button';
+import AppCard from '../components/ui/app-card';
+import AppNotice from '../components/ui/app-notice';
+import ListScreen from '../components/ui/list-screen';
 import { REQUEST_STATUS, STATUS_LABELS, isAdminEmail } from '../constants/access';
 import { API_BASE_URL } from '../constants/api';
-import { auth, db } from '../firebase';
+import { AppColors, AppSpace } from '../constants/design-tokens';
+import { db } from '../firebase';
+import useAuthUser from '../hooks/use-auth-user';
+import { apiDelete, apiPost, assertApiSuccess } from '../utils/api-client';
+import { formatApiMessage } from '../utils/api-response';
 
 export default function Admin() {
+  const router = useRouter();
+  const { user, isAuthReady } = useAuthUser();
   const [requests, setRequests] = useState([]);
-  const currentEmail = auth.currentUser?.email || '';
+  const [notice, setNotice] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
+
+  // Redirect unauthenticated users or non-admins
+  useEffect(() => {
+    if (!isAuthReady) return;
+    if (!user) {
+      router.replace('/auth');
+      return;
+    }
+    if (!isAdmin) {
+      router.replace('/home');
+    }
+  }, [isAuthReady, isAdmin, router, user]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -29,66 +55,68 @@ export default function Admin() {
     });
   }, [isAdmin]);
 
-  const getAuthHeaders = async () => {
-    const token = await auth.currentUser?.getIdToken(true);
-
-    if (!token) {
-      throw new Error('You are not authenticated');
-    }
-
-    return {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
-  };
-
   const setStatus = async (item, nextStatus) => {
+    setPendingAction(`${item.id}:${nextStatus}`);
+    setNotice(null);
+
     try {
-      const headers = await getAuthHeaders();
-      const response = await fetch(`${API_BASE_URL}/admin/requests/${item.id}/moderate`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          status: nextStatus,
-          note: 'Updated from admin screen',
-        }),
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/requests/${item.id}/moderate`, {
+        status: nextStatus,
+        note: 'Updated from admin screen',
+      }, {
+        requireAuth: true,
       });
-
-      const result = await response.json();
-
-      if (!response.ok || !result?.status) {
-        throw new Error(result?.error || result?.message || 'Moderation request failed');
-      }
+      assertApiSuccess(response, data, 'Moderation request failed');
+      setNotice({
+        tone: 'success',
+        title: 'Request updated',
+        message: `${item.title || item.id} is now ${STATUS_LABELS[nextStatus] || nextStatus}.`,
+      });
     } catch (error) {
-      Alert.alert('Moderation failed', error.message || 'Could not update this request status.');
+      setNotice({
+        tone: 'error',
+        title: 'Moderation failed',
+        message: formatApiMessage({ message: error.message }, 'Could not update this request status.'),
+      });
+    } finally {
+      setPendingAction(null);
     }
   };
 
-  const deleteRequest = (item) => {
-    Alert.alert('Delete request', 'Delete this request permanently?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            const headers = await getAuthHeaders();
-            const response = await fetch(`${API_BASE_URL}/admin/requests/${item.id}`, {
-              method: 'DELETE',
-              headers,
-            });
+  const deleteRequest = async (item) => {
+    if (confirmDeleteId !== item.id) {
+      setConfirmDeleteId(item.id);
+      setNotice({
+        tone: 'warning',
+        title: 'Confirm deletion',
+        message: `Tap delete again to permanently remove "${item.title || item.id}".`,
+      });
+      return;
+    }
 
-            const result = await response.json();
+    setPendingAction(`${item.id}:delete`);
+    setConfirmDeleteId(null);
+    setNotice(null);
 
-            if (!response.ok || !result?.status) {
-              throw new Error(result?.error || result?.message || 'Delete request failed');
-            }
-          } catch (error) {
-            Alert.alert('Delete failed', error.message || 'Could not delete this request.');
-          }
-        },
-      },
-    ]);
+    try {
+      const { response, data } = await apiDelete(`${API_BASE_URL}/admin/requests/${item.id}`, {
+        requireAuth: true,
+      });
+      assertApiSuccess(response, data, 'Delete request failed');
+      setNotice({
+        tone: 'success',
+        title: 'Request deleted',
+        message: `${item.title || item.id} was removed successfully.`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: 'Delete failed',
+        message: formatApiMessage({ message: error.message }, 'Could not delete this request.'),
+      });
+    } finally {
+      setPendingAction(null);
+    }
   };
 
   if (!isAdmin) {
@@ -103,63 +131,81 @@ export default function Admin() {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: '#f4f6f8' }} contentContainerStyle={{ padding: 20 }}>
-      <Text style={{ fontSize: 28, fontWeight: '700', marginBottom: 8 }}>Admin Moderation</Text>
-      <Text style={{ color: '#4b5563', marginBottom: 18 }}>Manage status and moderate request records.</Text>
+    <ListScreen
+      eyebrow="ADMIN DESK"
+      title="Moderation"
+      subtitle="Manage status and moderate request records."
+      accentColor="#111827"
+      accentTextColor="#cbd5e1"
+      toolbar={(
+        <AppNotice
+          tone={notice?.tone}
+          title={notice?.title}
+          message={notice?.message}
+        />
+      )}
+      hasItems={requests.length > 0}
+      emptyTitle="No requests found"
+      emptyDescription="Requests will appear here once they are created."
+    >
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {requests.map((item) => (
+          <AppCard key={item.id} style={{ marginBottom: 12 }}>
+            <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>
+            <Text>ID: {item.id}</Text>
+            <Text>User: {item.user || 'Unavailable'}</Text>
+            <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
+            <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
+            <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
 
-      {requests.map((item) => (
-        <View key={item.id} style={{ backgroundColor: 'white', borderRadius: 14, padding: 14, marginBottom: 12 }}>
-          <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>
-          <Text>ID: {item.id}</Text>
-          <Text>User: {item.user || 'Unavailable'}</Text>
-          <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
-          <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
-          <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm }}>
+              <AppButton
+                label="Reopen"
+                variant="primary"
+                onPress={() => setStatus(item, REQUEST_STATUS.OPEN)}
+                disabled={Boolean(pendingAction)}
+                loading={pendingAction === `${item.id}:${REQUEST_STATUS.OPEN}`}
+                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+              />
 
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 }}>
-            <TouchableOpacity
-              style={{ backgroundColor: '#1d4ed8', padding: 8, borderRadius: 8, marginRight: 8, marginBottom: 8 }}
-              onPress={() => setStatus(item, REQUEST_STATUS.OPEN)}
-            >
-              <Text style={{ color: 'white' }}>Reopen</Text>
-            </TouchableOpacity>
+              <AppButton
+                label="Complete"
+                onPress={() => setStatus(item, REQUEST_STATUS.COMPLETED)}
+                disabled={Boolean(pendingAction)}
+                loading={pendingAction === `${item.id}:${REQUEST_STATUS.COMPLETED}`}
+                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: AppColors.teal700 }}
+              />
 
-            <TouchableOpacity
-              style={{ backgroundColor: '#0f766e', padding: 8, borderRadius: 8, marginRight: 8, marginBottom: 8 }}
-              onPress={() => setStatus(item, REQUEST_STATUS.COMPLETED)}
-            >
-              <Text style={{ color: 'white' }}>Complete</Text>
-            </TouchableOpacity>
+              <AppButton
+                label="Mark Paid"
+                variant="success"
+                onPress={() => setStatus(item, REQUEST_STATUS.PAID)}
+                disabled={Boolean(pendingAction)}
+                loading={pendingAction === `${item.id}:${REQUEST_STATUS.PAID}`}
+                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+              />
 
-            <TouchableOpacity
-              style={{ backgroundColor: '#16a34a', padding: 8, borderRadius: 8, marginRight: 8, marginBottom: 8 }}
-              onPress={() => setStatus(item, REQUEST_STATUS.PAID)}
-            >
-              <Text style={{ color: 'white' }}>Mark Paid</Text>
-            </TouchableOpacity>
+              <AppButton
+                label="Cancel"
+                variant="danger"
+                onPress={() => setStatus(item, REQUEST_STATUS.CANCELLED)}
+                disabled={Boolean(pendingAction)}
+                loading={pendingAction === `${item.id}:${REQUEST_STATUS.CANCELLED}`}
+                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#b91c1c' }}
+              />
 
-            <TouchableOpacity
-              style={{ backgroundColor: '#b91c1c', padding: 8, borderRadius: 8, marginRight: 8, marginBottom: 8 }}
-              onPress={() => setStatus(item, REQUEST_STATUS.CANCELLED)}
-            >
-              <Text style={{ color: 'white' }}>Cancel</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={{ backgroundColor: '#7f1d1d', padding: 8, borderRadius: 8, marginBottom: 8 }}
-              onPress={() => deleteRequest(item)}
-            >
-              <Text style={{ color: 'white' }}>Delete</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ))}
-
-      {!requests.length ? (
-        <View style={{ backgroundColor: 'white', padding: 16, borderRadius: 12 }}>
-          <Text style={{ color: '#4b5563' }}>No requests found.</Text>
-        </View>
-      ) : null}
-    </ScrollView>
+              <AppButton
+                label={confirmDeleteId === item.id ? 'Tap Again To Delete' : 'Delete'}
+                variant="danger"
+                onPress={() => deleteRequest(item)}
+                disabled={Boolean(pendingAction)}
+                loading={pendingAction === `${item.id}:delete`}
+                style={{ marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#7f1d1d' }}
+              />
+            </View>
+          </AppCard>
+        ))}
+      </ScrollView>
+    </ListScreen>
   );
 }
