@@ -23,7 +23,7 @@ import { auth, db } from '../firebase';
 
 const SOCIAL_AUTH_ENABLED = {
   google: (process.env.EXPO_PUBLIC_AUTH_GOOGLE || 'true').toLowerCase() === 'true',
-  facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'true').toLowerCase() === 'true',
+  facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'false').toLowerCase() === 'true',
 };
 
 function getSocialProvider(providerKey) {
@@ -401,6 +401,8 @@ export default function Auth() {
             style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1d4ed8' }}
           />
         ) : null}
+
+        {SOCIAL_AUTH_ENABLED.facebook ? (
           <AppButton
             label="Continue with Facebook"
             onPress={() => handleSocialAuth('facebook')}
