@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
 import { useEffect, useMemo, useState } from 'react';
-import { Text, TouchableOpacity } from 'react-native';
+import { Platform, Text, TouchableOpacity } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppInput from '../components/ui/app-input';
@@ -9,6 +9,46 @@ import AppNotice from '../components/ui/app-notice';
 import FormScreen from '../components/ui/form-screen';
 import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tokens';
 import { auth } from '../firebase';
+
+function firstParam(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function parseParamFromUrl(rawUrl, key) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return '';
+  }
+
+  const candidates = [rawUrl];
+  try {
+    candidates.push(decodeURIComponent(rawUrl));
+  } catch (_) {
+    // Ignore decode failures for already-decoded input.
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate);
+      const value = url.searchParams.get(key);
+      if (value) {
+        return value;
+      }
+    } catch (_) {
+      // Ignore parse failures and try regex fallback below.
+    }
+
+    const match = candidate.match(new RegExp(`(?:[?&#]|^)${key}=([^&#]+)`));
+    if (match?.[1]) {
+      try {
+        return decodeURIComponent(match[1]);
+      } catch (_) {
+        return match[1];
+      }
+    }
+  }
+
+  return '';
+}
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
@@ -19,9 +59,51 @@ export default function ResetPasswordScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCodeValid, setIsCodeValid] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [hashSearch, setHashSearch] = useState('');
 
-  const mode = Array.isArray(params.mode) ? params.mode[0] : params.mode;
-  const oobCode = Array.isArray(params.oobCode) ? params.oobCode[0] : params.oobCode;
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+
+    const rawHash = window.location.hash || '';
+    const hashWithoutPrefix = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash;
+    setHashSearch(hashWithoutPrefix);
+  }, []);
+
+  const mode = useMemo(() => {
+    const direct = firstParam(params.mode);
+    if (direct) {
+      return direct;
+    }
+
+    const nestedRaw = [
+      firstParam(params.link),
+      firstParam(params.continueUrl),
+      firstParam(params.url),
+      firstParam(params.deep_link_id),
+      hashSearch,
+    ].find(Boolean);
+
+    return parseParamFromUrl(nestedRaw, 'mode');
+  }, [hashSearch, params.continueUrl, params.deep_link_id, params.link, params.mode, params.url]);
+
+  const oobCode = useMemo(() => {
+    const direct = firstParam(params.oobCode);
+    if (direct) {
+      return direct;
+    }
+
+    const nestedRaw = [
+      firstParam(params.link),
+      firstParam(params.continueUrl),
+      firstParam(params.url),
+      firstParam(params.deep_link_id),
+      hashSearch,
+    ].find(Boolean);
+
+    return parseParamFromUrl(nestedRaw, 'oobCode');
+  }, [hashSearch, params.continueUrl, params.deep_link_id, params.link, params.oobCode, params.url]);
 
   const passwordError = useMemo(() => {
     if (!newPassword) {
