@@ -21,6 +21,12 @@ import {
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
+const SOCIAL_AUTH_ENABLED = {
+  google: (process.env.EXPO_PUBLIC_AUTH_GOOGLE || 'true').toLowerCase() === 'true',
+  apple: (process.env.EXPO_PUBLIC_AUTH_APPLE || 'false').toLowerCase() === 'true',
+  facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'false').toLowerCase() === 'true',
+};
+
 function getSocialProvider(providerKey) {
   if (providerKey === 'google') {
     const provider = new GoogleAuthProvider();
@@ -338,26 +344,32 @@ export default function Auth() {
           <View style={{ flex: 1, height: 1, backgroundColor: '#cbd5e1' }} />
         </View>
 
-        <AppButton
-          label="Continue with Google"
-          onPress={() => handleSocialAuth('google')}
-          disabled={isSubmitting}
-          style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1d4ed8' }}
-        />
+        {SOCIAL_AUTH_ENABLED.google ? (
+          <AppButton
+            label="Continue with Google"
+            onPress={() => handleSocialAuth('google')}
+            disabled={isSubmitting}
+            style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1d4ed8' }}
+          />
+        ) : null}
 
-        <AppButton
-          label="Continue with Apple"
-          onPress={() => handleSocialAuth('apple')}
-          disabled={isSubmitting}
-          style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#111827' }}
-        />
+        {SOCIAL_AUTH_ENABLED.apple ? (
+          <AppButton
+            label="Continue with Apple"
+            onPress={() => handleSocialAuth('apple')}
+            disabled={isSubmitting}
+            style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#111827' }}
+          />
+        ) : null}
 
-        <AppButton
-          label="Continue with Facebook"
-          onPress={() => handleSocialAuth('facebook')}
-          disabled={isSubmitting}
-          style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1877f2' }}
-        />
+        {SOCIAL_AUTH_ENABLED.facebook ? (
+          <AppButton
+            label="Continue with Facebook"
+            onPress={() => handleSocialAuth('facebook')}
+            disabled={isSubmitting}
+            style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1877f2' }}
+          />
+        ) : null}
 
         <TouchableOpacity
           style={{ paddingVertical: AppSpace.sm }}
