@@ -124,7 +124,7 @@ export default function Auth() {
         setNotice({
           tone: 'warning',
           title: 'Email not verified',
-          message: 'Please open the verification email and click the link first. If you cannot find it, use the resend option below.',
+          message: 'Please open the verification email and click the link first. Check Inbox, Spam, and Promotions. If needed, use resend below.',
         });
         setIsSubmitting(false);
         return;
@@ -170,7 +170,7 @@ export default function Auth() {
       setNotice({
         tone: 'success',
         title: 'Account created — check your email',
-        message: `A verification link was sent to ${normalizedEmail}. Click it to verify your account, then log in.`,
+        message: `A verification link was sent to ${normalizedEmail}. Check Inbox, Spam, and Promotions, then verify and log in.`,
       });
       setIsLogin(true);
       setPassword('');
@@ -251,7 +251,7 @@ export default function Auth() {
       if (tempCredential && !tempCredential.user.emailVerified) {
         await sendEmailVerification(tempCredential.user);
       }
-      setNotice({ tone: 'success', title: 'Verification email sent', message: `A new verification link was sent to ${normalizedEmail}. Check your inbox.` });
+      setNotice({ tone: 'success', title: 'Verification email sent', message: `A new verification link was sent to ${normalizedEmail}. Check Inbox, Spam, and Promotions.` });
     } catch (_) {
       setNotice({ tone: 'error', title: 'Could not resend', message: 'Please check your email and password are correct, then try again.' });
     } finally {

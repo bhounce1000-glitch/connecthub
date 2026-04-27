@@ -287,6 +287,16 @@ export default function ResetPasswordScreen() {
       />
 
       <TouchableOpacity
+        style={{ paddingVertical: AppSpace.xs }}
+        onPress={() => router.replace('/forgot-password')}
+        disabled={isSubmitting}
+      >
+        <Text style={{ textAlign: 'center', color: '#0f766e', fontWeight: '600' }}>
+          Request a new reset link
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
         style={{ paddingVertical: AppSpace.sm }}
         onPress={() => router.replace('/auth')}
         disabled={isSubmitting}

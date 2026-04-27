@@ -41,7 +41,7 @@ export default function ForgotPasswordScreen() {
       setNotice({
         tone: 'success',
         title: 'Password reset requested',
-        message: 'If this email is registered, a reset link will arrive shortly. Open it to set a new password.',
+        message: 'If this email is registered, a reset link will arrive shortly. Check Inbox, Spam, and Promotions, then open it to set a new password.',
       });
     } catch (error) {
       const code = error?.code || '';
