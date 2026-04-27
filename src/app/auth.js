@@ -15,7 +15,6 @@ import {
     createUserWithEmailAndPassword,
     reload,
     sendEmailVerification,
-    sendPasswordResetEmail,
     signInWithEmailAndPassword,
     signInWithPopup,
     signOut,
@@ -260,44 +259,6 @@ export default function Auth() {
     }
   };
 
-  const handleResetPassword = async () => {
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-    if (!normalizedEmail || !emailPattern.test(normalizedEmail)) {
-      setNotice({
-        tone: 'warning',
-        title: 'Enter your email first',
-        message: 'Type the email address for your account, then tap reset password.',
-      });
-      return;
-    }
-
-    setIsSubmitting(true);
-    setNotice(null);
-
-    try {
-      await sendPasswordResetEmail(auth, normalizedEmail);
-      // Keep response generic to avoid exposing whether an account exists.
-      setNotice({
-        tone: 'success',
-        title: 'Password reset requested',
-        message: 'If this email is registered, you will receive a password reset link shortly.',
-      });
-    } catch (error) {
-      const code = error?.code || '';
-      let message = 'Could not start password reset right now. Please try again.';
-      if (code === 'auth/too-many-requests') {
-        message = 'Too many reset attempts. Please wait a few minutes and try again.';
-      }
-      setNotice({
-        tone: 'error',
-        title: 'Reset failed',
-        message,
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return (
     <FormScreen
       eyebrow="CONNECTHUB"
@@ -371,7 +332,7 @@ export default function Auth() {
         {isLogin ? (
           <TouchableOpacity
             style={{ paddingVertical: AppSpace.xs }}
-            onPress={handleResetPassword}
+            onPress={() => router.push('/forgot-password')}
             disabled={isSubmitting}
           >
             <Text style={{ textAlign: 'center', color: AppColors.blue700, fontWeight: '600' }}>
