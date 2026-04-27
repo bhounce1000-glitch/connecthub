@@ -69,7 +69,6 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         isAdmin()
 
-        // Any provider can accept an open request.
         || (
           resource.data.status == 'open'
           && request.resource.data.status == 'accepted'
@@ -79,7 +78,6 @@ service cloud.firestore {
           && changedKeysOnly(['acceptedBy', 'status', 'acceptedAt'])
         )
 
-        // Assigned provider starts work.
         || (
           resource.data.acceptedBy == email()
           && resource.data.status == 'accepted'
@@ -87,7 +85,6 @@ service cloud.firestore {
           && changedKeysOnly(['status', 'startedAt'])
         )
 
-        // Assigned provider marks completion.
         || (
           resource.data.acceptedBy == email()
           && resource.data.status == 'in_progress'
@@ -95,7 +92,6 @@ service cloud.firestore {
           && changedKeysOnly(['status', 'completedAt'])
         )
 
-        // Request owner can rate after paid.
         || (
           isOwner()
           && resource.data.status == 'paid'
@@ -126,27 +122,46 @@ service cloud.firestore {
     }
 
     match /users/{userEmail} {
-      // Users can only read their own profile. Admins can read any.
       allow read: if isSignedIn() && (userEmail == email() || isAdmin());
       allow create, update: if isSignedIn() && userEmail == email();
       allow delete: if false;
     }
 
     match /notifications/{notificationId} {
-      // Only the recipient can read their own notifications
       allow read: if isSignedIn() && resource.data.user == email();
-
-      // All notifications are created exclusively by the backend admin SDK,
-      // which bypasses these rules. No client-side creation is permitted.
       allow create: if false;
-
-      // Recipients can only flip the read flag
       allow update: if isSignedIn()
         && resource.data.user == email()
         && changedKeysOnly(['read'])
         && request.resource.data.read is bool;
-
       allow delete: if false;
+    }
+
+    match /providers/{providerEmail} {
+      allow read: if isSignedIn();
+
+      allow create, update: if isSignedIn()
+        && providerEmail == email()
+        && request.resource.data.keys().hasOnly([
+            'email', 'name', 'bio', 'category', 'location', 'phone',
+            'startingPrice', 'experience', 'isAvailable',
+            'profilePicture', 'avgRating', 'jobsCompleted',
+            'createdAt', 'updatedAt'
+          ])
+        && request.resource.data.email == email()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.bio is string
+        && request.resource.data.bio.size() <= 500
+        && request.resource.data.category is string
+        && request.resource.data.location is string
+        && request.resource.data.location.size() <= 200
+        && request.resource.data.isAvailable is bool
+        && (!('avgRating' in request.resource.data) || resource != null)
+        && (!('jobsCompleted' in request.resource.data) || resource != null);
+
+      allow delete: if isSignedIn() && (providerEmail == email() || isAdmin());
     }
 
     match /{document=**} {

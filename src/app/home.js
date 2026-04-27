@@ -259,7 +259,7 @@ export default function Home() {
 
       <View style={{ flexDirection: 'row', marginBottom: AppSpace.sm }}>
         <AppButton label="My Requests" variant="neutral" onPress={() => router.push('/my-requests')} style={{ flex: 1, marginRight: 8 }} />
-        <View style={{ flex: 1, marginRight: 8 }}>
+        <View style={{ flex: 1, marginRight: 8, position: 'relative' }}>
           <AppButton label="Notifications" variant="neutral" onPress={() => router.push('/notifications')} />
           {unreadCount > 0 ? (
             <View style={{ position: 'absolute', top: -6, right: -6, backgroundColor: '#dc2626', borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 }}>
@@ -268,6 +268,11 @@ export default function Home() {
           ) : null}
         </View>
         <AppButton label="Profile" variant="neutral" onPress={() => router.push('/profile')} style={{ flex: 1 }} />
+      </View>
+
+      <View style={{ flexDirection: 'row', marginBottom: AppSpace.sm }}>
+        <AppButton label="Browse Providers" onPress={() => router.push('/providers')} style={{ flex: 1, marginRight: 8, backgroundColor: '#4f46e5' }} />
+        <AppButton label="Offer Services" variant="neutral" onPress={() => router.push('/provider-setup')} style={{ flex: 1 }} />
       </View>
 
       {isAdmin ? (

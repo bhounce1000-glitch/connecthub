@@ -219,6 +219,22 @@ export default function Profile() {
             onPress={() => router.replace('/home')}
             style={{ marginTop: 16 }}
           />
+
+            <View style={{ marginTop: 20, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 20 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#4f46e5', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>
+                Provider Marketplace
+              </Text>
+              <AppButton
+                label="Set Up / Edit Provider Profile"
+                onPress={() => router.push('/provider-setup')}
+                style={{ marginBottom: 10, backgroundColor: '#4f46e5' }}
+              />
+              <AppButton
+                label="Browse Available Providers"
+                variant="neutral"
+                onPress={() => router.push('/providers')}
+              />
+            </View>
         </View>
       )}
     </ScreenShell>
