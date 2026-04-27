@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ConnectHub Icon Generator</title>
+  <style>
+    body { margin: 0; background: #0f172a; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif; color: #fff; gap: 24px; padding: 40px; box-sizing: border-box; }
+    h1 { font-size: 22px; margin: 0; color: #93c5fd; }
+    p { margin: 0; color: #64748b; font-size: 14px; text-align: center; }
+    #preview { border-radius: 24px; box-shadow: 0 0 60px rgba(37,99,235,0.5); }
+    button { background: #2563eb; color: #fff; border: none; border-radius: 10px; padding: 14px 32px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    button:hover { background: #1d4ed8; }
+    #status { color: #86efac; font-size: 14px; min-height: 20px; }
+  </style>
+</head>
+<body>
+  <h1>ConnectHub Icon Generator</h1>
+  <canvas id="preview" width="300" height="300"></canvas>
+  <p id="status">Ready. Click the button to generate and download all assets.</p>
+  <button onclick="generateAll()">Download All Store Icons</button>
+  <p>Files saved to your Downloads folder — copy them to <code>assets/images/</code></p>
+
+  <script>
+    // ─── Draw the ConnectHub logo on any canvas ───────────────────────────────
+    function drawLogo(ctx, size) {
+      const cx = size / 2;
+      const cy = size / 2;
+      const pad = size * 0.08;
+
+      // ── Background ──
+      const bg = ctx.createRadialGradient(cx, cy * 0.8, size * 0.05, cx, cy, size * 0.72);
+      bg.addColorStop(0, '#1e3a8a');
+      bg.addColorStop(1, '#0f172a');
+      ctx.fillStyle = bg;
+      if (size > 100) {
+        const r = size * 0.18;
+        ctx.beginPath();
+        ctx.moveTo(r, 0);
+        ctx.lineTo(size - r, 0);
+        ctx.quadraticCurveTo(size, 0, size, r);
+        ctx.lineTo(size, size - r);
+        ctx.quadraticCurveTo(size, size, size - r, size);
+        ctx.lineTo(r, size);
+        ctx.quadraticCurveTo(0, size, 0, size - r);
+        ctx.lineTo(0, r);
+        ctx.quadraticCurveTo(0, 0, r, 0);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.fillRect(0, 0, size, size);
+      }
+
+      // ── Hub spokes ──
+      const hubR = size * 0.13;
+      const nodeR = size * 0.075;
+      const spokeLen = size * 0.24;
+      const angles = [-90, -30, 30, 90, 150, 210]; // degrees for 6 satellite nodes
+      const visibleAngles = [-70, 10, 90, 170]; // 4 nodes for cleaner look
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(147,197,253,0.35)';
+      ctx.lineWidth = size * 0.025;
+      ctx.lineCap = 'round';
+
+      visibleAngles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = cx + Math.cos(rad) * spokeLen;
+        const ny = cy + Math.sin(rad) * spokeLen;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(rad) * hubR, cy + Math.sin(rad) * hubR);
+        ctx.lineTo(nx - Math.cos(rad) * nodeR, ny - Math.sin(rad) * nodeR);
+        ctx.stroke();
+      });
+      ctx.restore();
+
+      // ── Satellite nodes ──
+      visibleAngles.forEach((deg, i) => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = cx + Math.cos(rad) * spokeLen;
+        const ny = cy + Math.sin(rad) * spokeLen;
+
+        const glow = ctx.createRadialGradient(nx, ny, nodeR * 0.2, nx, ny, nodeR * 1.5);
+        glow.addColorStop(0, 'rgba(96,165,250,0.25)');
+        glow.addColorStop(1, 'transparent');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(nx, ny, nodeR * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Node circle
+        const nodeGrad = ctx.createRadialGradient(nx - nodeR * 0.2, ny - nodeR * 0.2, nodeR * 0.1, nx, ny, nodeR);
+        nodeGrad.addColorStop(0, '#93c5fd');
+        nodeGrad.addColorStop(1, '#3b82f6');
+        ctx.fillStyle = nodeGrad;
+        ctx.beginPath();
+        ctx.arc(nx, ny, nodeR, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // ── Central hub circle ──
+      const hubGlow = ctx.createRadialGradient(cx, cy, hubR * 0.3, cx, cy, hubR * 2.2);
+      hubGlow.addColorStop(0, 'rgba(59,130,246,0.4)');
+      hubGlow.addColorStop(1, 'transparent');
+      ctx.fillStyle = hubGlow;
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      const hubGrad = ctx.createRadialGradient(cx - hubR * 0.3, cy - hubR * 0.3, hubR * 0.1, cx, cy, hubR);
+      hubGrad.addColorStop(0, '#dbeafe');
+      hubGrad.addColorStop(0.5, '#60a5fa');
+      hubGrad.addColorStop(1, '#2563eb');
+      ctx.fillStyle = hubGrad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Hub inner dot
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+
+      // ── "CH" text ──
+      if (size >= 200) {
+        const fontSize = size * 0.1;
+        ctx.font = `900 ${fontSize}px system-ui, -apple-system, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.fillText('CH', cx, cy + size * 0.295);
+
+        if (size >= 512) {
+          const labelSize = size * 0.048;
+          ctx.font = `600 ${labelSize}px system-ui, -apple-system, sans-serif`;
+          ctx.fillStyle = 'rgba(147,197,253,0.7)';
+          ctx.fillText('CONNECTHUB', cx, cy + size * 0.39);
+        }
+      }
+    }
+
+    // ─── Foreground only (transparent bg) for Android adaptive icon ──────────
+    function drawForeground(ctx, size) {
+      const cx = size / 2;
+      const cy = size / 2;
+      // Slightly smaller so it fits the safe zone (66% of the total)
+      const scale = 0.6;
+      ctx.save();
+      ctx.translate(cx * (1 - scale), cy * (1 - scale));
+      ctx.scale(scale, scale);
+
+      const hubR = size * 0.13;
+      const nodeR = size * 0.075;
+      const spokeLen = size * 0.24;
+      const visibleAngles = [-70, 10, 90, 170];
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = size * 0.025;
+      ctx.lineCap = 'round';
+      visibleAngles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = cx + Math.cos(rad) * spokeLen;
+        const ny = cy + Math.sin(rad) * spokeLen;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(rad) * hubR, cy + Math.sin(rad) * hubR);
+        ctx.lineTo(nx - Math.cos(rad) * nodeR, ny - Math.sin(rad) * nodeR);
+        ctx.stroke();
+      });
+
+      visibleAngles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = cx + Math.cos(rad) * spokeLen;
+        const ny = cy + Math.sin(rad) * spokeLen;
+        ctx.fillStyle = '#93c5fd';
+        ctx.beginPath();
+        ctx.arc(nx, ny, nodeR, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#2563eb';
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // ─── Monochrome (single color) for Android themed icons ──────────────────
+    function drawMonochrome(ctx, size) {
+      const cx = size / 2;
+      const cy = size / 2;
+      const hubR = size * 0.13;
+      const nodeR = size * 0.075;
+      const spokeLen = size * 0.24;
+      const visibleAngles = [-70, 10, 90, 170];
+
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, size, size);
+
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = size * 0.025;
+      ctx.lineCap = 'round';
+      visibleAngles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = cx + Math.cos(rad) * spokeLen;
+        const ny = cy + Math.sin(rad) * spokeLen;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(rad) * hubR, cy + Math.sin(rad) * hubR);
+        ctx.lineTo(nx - Math.cos(rad) * nodeR, ny - Math.sin(rad) * nodeR);
+        ctx.stroke();
+      });
+
+      visibleAngles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = cx + Math.cos(rad) * spokeLen;
+        const ny = cy + Math.sin(rad) * spokeLen;
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.arc(nx, ny, nodeR, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ─── Splash screen ───────────────────────────────────────────────────────
+    function drawSplash(ctx, w, h) {
+      const cx = w / 2;
+      const cy = h / 2;
+      const bg = ctx.createLinearGradient(0, 0, 0, h);
+      bg.addColorStop(0, '#0f172a');
+      bg.addColorStop(1, '#1e3a8a');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+
+      // Draw icon centered
+      const iconSize = Math.min(w, h) * 0.38;
+      ctx.save();
+      ctx.translate(cx - iconSize / 2, cy - iconSize / 2);
+      // Inline draw without background for splash
+      const s = iconSize;
+      const icx = s / 2;
+      const icy = s / 2;
+      const hubR = s * 0.13;
+      const nodeR = s * 0.075;
+      const spokeLen = s * 0.24;
+      const visibleAngles = [-70, 10, 90, 170];
+
+      ctx.strokeStyle = 'rgba(147,197,253,0.4)';
+      ctx.lineWidth = s * 0.025;
+      ctx.lineCap = 'round';
+      visibleAngles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = icx + Math.cos(rad) * spokeLen;
+        const ny = icy + Math.sin(rad) * spokeLen;
+        ctx.beginPath();
+        ctx.moveTo(icx + Math.cos(rad) * hubR, icy + Math.sin(rad) * hubR);
+        ctx.lineTo(nx - Math.cos(rad) * nodeR, ny - Math.sin(rad) * nodeR);
+        ctx.stroke();
+      });
+      visibleAngles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        const nx = icx + Math.cos(rad) * spokeLen;
+        const ny = icy + Math.sin(rad) * spokeLen;
+        const g = ctx.createRadialGradient(nx, ny, nodeR * 0.1, nx, ny, nodeR);
+        g.addColorStop(0, '#93c5fd');
+        g.addColorStop(1, '#3b82f6');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(nx, ny, nodeR, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      const hg = ctx.createRadialGradient(icx - hubR * 0.3, icy - hubR * 0.3, hubR * 0.1, icx, icy, hubR);
+      hg.addColorStop(0, '#dbeafe');
+      hg.addColorStop(1, '#2563eb');
+      ctx.fillStyle = hg;
+      ctx.beginPath();
+      ctx.arc(icx, icy, hubR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(icx, icy, hubR * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // App name below
+      ctx.font = `800 ${w * 0.072}px system-ui, -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('ConnectHub', cx, cy + iconSize * 0.7);
+
+      ctx.font = `400 ${w * 0.033}px system-ui, -apple-system, sans-serif`;
+      ctx.fillStyle = 'rgba(147,197,253,0.75)';
+      ctx.fillText('Services. Simplified.', cx, cy + iconSize * 0.7 + w * 0.085);
+    }
+
+    // ─── Favicon ─────────────────────────────────────────────────────────────
+    function drawFavicon(ctx, size) {
+      const bg = ctx.createLinearGradient(0, 0, size, size);
+      bg.addColorStop(0, '#1e40af');
+      bg.addColorStop(1, '#2563eb');
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.roundRect(0, 0, size, size, size * 0.18);
+      ctx.fill();
+
+      const cx = size / 2, cy = size / 2;
+      const hubR = size * 0.14;
+      const nodeR = size * 0.07;
+      const spokeLen = size * 0.26;
+      const angles = [-70, 10, 90, 170];
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = size * 0.06;
+      ctx.lineCap = 'round';
+      angles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(rad) * hubR, cy + Math.sin(rad) * hubR);
+        ctx.lineTo(cx + Math.cos(rad) * (spokeLen - nodeR), cy + Math.sin(rad) * (spokeLen - nodeR));
+        ctx.stroke();
+      });
+      angles.forEach(deg => {
+        const rad = (deg * Math.PI) / 180;
+        ctx.fillStyle = '#93c5fd';
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(rad) * spokeLen, cy + Math.sin(rad) * spokeLen, nodeR, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2563eb';
+      ctx.beginPath();
+      ctx.arc(cx, cy, hubR * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ─── Utility: canvas → download ──────────────────────────────────────────
+    function downloadCanvas(canvas, filename) {
+      return new Promise(resolve => {
+        canvas.toBlob(blob => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = filename;
+          a.click();
+          setTimeout(resolve, 300);
+        }, 'image/png');
+      });
+    }
+
+    function makeCanvas(w, h) {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      return c;
+    }
+
+    // ─── Draw preview ────────────────────────────────────────────────────────
+    const preview = document.getElementById('preview');
+    drawLogo(preview.getContext('2d'), 300);
+
+    // ─── Generate all assets ─────────────────────────────────────────────────
+    async function generateAll() {
+      const status = document.getElementById('status');
+      const assets = [
+        { name: 'icon.png',                       w: 1024, h: 1024, fn: (ctx, s) => drawLogo(ctx, s) },
+        { name: 'android-icon-foreground.png',    w: 1024, h: 1024, fn: (ctx, s) => { ctx.clearRect(0,0,s,s); drawForeground(ctx, s); } },
+        { name: 'android-icon-background.png',    w: 1024, h: 1024, fn: (ctx, s) => { ctx.fillStyle = '#1e3a8a'; ctx.fillRect(0,0,s,s); } },
+        { name: 'android-icon-monochrome.png',    w: 1024, h: 1024, fn: (ctx, s) => drawMonochrome(ctx, s) },
+        { name: 'splash-icon.png',                w: 1284, h: 2778, fn: (ctx, w, h) => drawSplash(ctx, w, h) },
+        { name: 'favicon.png',                    w: 64,   h: 64,   fn: (ctx, s) => drawFavicon(ctx, s) },
+      ];
+
+      for (const asset of assets) {
+        status.textContent = `Generating ${asset.name}...`;
+        const c = makeCanvas(asset.w, asset.h);
+        const ctx = c.getContext('2d');
+        if (asset.h !== asset.w) {
+          asset.fn(ctx, asset.w, asset.h);
+        } else {
+          asset.fn(ctx, asset.w);
+        }
+        await downloadCanvas(c, asset.name);
+      }
+
+      status.textContent = '✅ All 6 files downloaded! Copy them to assets/images/ in your project.';
+    }
+  </script>
+</body>
+</html>
