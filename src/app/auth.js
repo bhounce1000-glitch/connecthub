@@ -13,10 +13,12 @@ import {
     FacebookAuthProvider,
     GoogleAuthProvider,
     createUserWithEmailAndPassword,
+    reload,
     sendEmailVerification,
     sendPasswordResetEmail,
     signInWithEmailAndPassword,
     signInWithPopup,
+    signOut,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
@@ -116,11 +118,14 @@ export default function Auth() {
 
     try {
       const loginCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      await reload(loginCredential.user);
+
       if (!loginCredential.user.emailVerified) {
+        await signOut(auth);
         setNotice({
           tone: 'warning',
           title: 'Email not verified',
-          message: 'Please check your inbox and click the verification link. Tap below to resend it.',
+          message: 'Please open the verification email and click the link first. If you cannot find it, use the resend option below.',
         });
         setIsSubmitting(false);
         return;
