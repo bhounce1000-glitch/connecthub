@@ -92,9 +92,8 @@ export default function Profile() {
 
       setProfilePicture(downloadURL);
       setUploadNotice({ tone: 'success', title: 'Picture updated', message: 'Your profile picture was saved.' });
-    } catch (error) {
-      console.error('Error uploading picture:', error);
-      setUploadNotice({ tone: 'error', title: 'Upload failed', message: error?.message || 'Could not upload your picture. Please try again.' });
+    } catch {
+      setUploadNotice({ tone: 'error', title: 'Upload failed', message: 'Could not upload your picture. Please try again.' });
     } finally {
       setIsUploading(false);
     }
@@ -149,8 +148,8 @@ export default function Profile() {
           if (userDoc.exists()) {
             setProfilePicture(userDoc.data().profilePicture || null);
           }
-        } catch (error) {
-          console.log('Error fetching profile:', error.message);
+        } catch {
+          // Non-blocking — profile picture is optional
         }
       })();
       setIsLoading(false);

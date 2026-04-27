@@ -101,16 +101,22 @@ export default function Request() {
 
     if (!normalizedTitle) {
       nextErrors.title = 'Add a short title for the request.';
+    } else if (normalizedTitle.length > 100) {
+      nextErrors.title = 'Title must be 100 characters or fewer.';
     }
 
     if (!normalizedLocation) {
       nextErrors.location = 'Add the service location.';
+    } else if (normalizedLocation.length > 200) {
+      nextErrors.location = 'Location must be 200 characters or fewer.';
     }
 
     if (!normalizedPrice) {
       nextErrors.price = 'Add a price for the request.';
     } else if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
       nextErrors.price = 'Enter a valid price greater than zero.';
+    } else if (parsedPrice > 1_000_000) {
+      nextErrors.price = 'Price cannot exceed 1,000,000.';
     }
 
     setFieldErrors(nextErrors);

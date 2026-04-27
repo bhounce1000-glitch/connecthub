@@ -27,23 +27,22 @@ export default function Auth() {
 
   const validateForm = () => {
     const nextErrors = {};
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-    if (!normalizedEmail || !password) {
-      if (!normalizedEmail) {
-        nextErrors.email = 'Please provide your email address.';
-      }
-
-      if (!password) {
-        nextErrors.password = 'Please provide your password.';
-      }
-    }
-
-    if (!normalizedEmail.includes('@')) {
+    if (!normalizedEmail) {
+      nextErrors.email = 'Please provide your email address.';
+    } else if (!emailPattern.test(normalizedEmail)) {
       nextErrors.email = 'Please enter a valid email address.';
     }
 
-    if (password.length < 6) {
-      nextErrors.password = 'Password must be at least 6 characters.';
+    if (!password) {
+      nextErrors.password = 'Please provide your password.';
+    } else if (password.length < 8) {
+      nextErrors.password = 'Password must be at least 8 characters.';
+    } else if (!isLogin && !/[A-Z]/.test(password)) {
+      nextErrors.password = 'Password must contain at least one uppercase letter.';
+    } else if (!isLogin && !/[0-9]/.test(password)) {
+      nextErrors.password = 'Password must contain at least one number.';
     }
 
     setFieldErrors(nextErrors);
@@ -122,7 +121,7 @@ export default function Auth() {
       title={isLogin ? 'Welcome Back' : 'Create Account'}
       subtitle={isLogin
         ? 'Log in to manage requests, payments, and ratings.'
-        : 'Join now and start offering or requesting services.'}
+        : 'Join now and start offering or requesting services. Password must be 8+ characters with an uppercase letter and a number.'}
       accentColor="#4338ca"
       accentTextColor="#c7d2fe"
       backgroundColor="#eef2ff"

@@ -4,6 +4,7 @@ export const AppColors = {
   ink500: '#64748b',
   white: '#ffffff',
   slate50: '#f8fafc',
+  slate200: '#e2e8f0',
   blue600: '#2563eb',
   blue700: '#1d4ed8',
   green600: '#16a34a',

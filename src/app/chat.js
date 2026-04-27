@@ -111,9 +111,8 @@ export default function Chat() {
         );
 
         setSenderProfiles((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
-      } catch (error) {
+      } catch {
         // Non-blocking: chat still renders with initials when profile docs are missing.
-        console.log('Unable to load sender profiles:', error?.message || error);
       }
     };
 

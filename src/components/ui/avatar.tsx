@@ -1,21 +1,28 @@
-import { View, Image, Text } from 'react-native';
+import { Image, Text, View, ViewStyle } from 'react-native';
 import { AppColors } from '../../constants/design-tokens';
+
+interface AvatarProps {
+  src?: string | null;
+  email?: string | null;
+  size?: number;
+  style?: ViewStyle;
+}
 
 export default function Avatar({
   src,
   email,
   size = 40,
   style,
-}) {
+}: AvatarProps) {
   const initials = email
     ?.split('@')[0]
     ?.split('.')
-    ?.map((part) => part[0])
+    ?.map((part: string) => part[0])
     ?.join('')
     ?.toUpperCase()
     ?.slice(0, 2) || '?';
 
-  const bgColor = `hsl(${email?.charCodeAt(0) * 7 % 360}, 70%, 50%)`;
+  const bgColor = `hsl(${(email?.charCodeAt(0) ?? 72) * 7 % 360}, 70%, 50%)`;
 
   return (
     <View

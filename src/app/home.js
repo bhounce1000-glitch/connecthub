@@ -68,14 +68,48 @@ export default function Home() {
   }, [currentEmail]);
 
   useEffect(() => {
-    return onSnapshot(collection(db, 'requests'), (snapshot) => {
-      const data = snapshot.docs
-        .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
-        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-      setRequests(data);
-      setIsLoading(false);
-    });
-  }, []);
+    if (!currentEmail) return undefined;
+
+    // Admins see all requests; regular users see open requests + requests they own or accepted
+    const baseCollection = collection(db, 'requests');
+
+    if (isAdmin) {
+      return onSnapshot(baseCollection, (snapshot) => {
+        const data = snapshot.docs
+          .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+          .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+        setRequests(data);
+        setIsLoading(false);
+      });
+    }
+
+    // For regular users: listen to open requests + their own requests in parallel
+    const openQuery = query(baseCollection, where('status', '==', REQUEST_STATUS.OPEN));
+    const ownQuery = query(baseCollection, where('user', '==', currentEmail));
+    const acceptedQuery = query(baseCollection, where('acceptedBy', '==', currentEmail));
+
+    const mergeSnapshots = (...snapshots) => {
+      const seen = new Map();
+      snapshots.forEach((snap) => {
+        snap.docs.forEach((d) => seen.set(d.id, { id: d.id, ...d.data() }));
+      });
+      return [...seen.values()].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    };
+
+    const snapMap = { open: null, own: null, accepted: null };
+    const emit = () => {
+      if (snapMap.open && snapMap.own && snapMap.accepted) {
+        setRequests(mergeSnapshots(snapMap.open, snapMap.own, snapMap.accepted));
+        setIsLoading(false);
+      }
+    };
+
+    const unsubOpen = onSnapshot(openQuery, (s) => { snapMap.open = s; emit(); });
+    const unsubOwn = onSnapshot(ownQuery, (s) => { snapMap.own = s; emit(); });
+    const unsubAccepted = onSnapshot(acceptedQuery, (s) => { snapMap.accepted = s; emit(); });
+
+    return () => { unsubOpen(); unsubOwn(); unsubAccepted(); };
+  }, [currentEmail, isAdmin]);
 
   useEffect(() => {
     const emails = new Set();

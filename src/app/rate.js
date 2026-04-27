@@ -52,23 +52,33 @@ export default function RateProvider() {
       return;
     }
 
+    const numericRating = Number(rating);
+    if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+      setNotice({ tone: 'error', title: 'Invalid rating', message: 'Select a rating between 1 and 5 stars.' });
+      return;
+    }
+
+    const trimmedReview = review.trim();
+    if (trimmedReview.length > 500) {
+      setNotice({ tone: 'error', title: 'Review too long', message: 'Keep your review under 500 characters.' });
+      return;
+    }
     setIsSaving(true);
     setNotice(null);
 
     try {
       await updateDoc(doc(db, 'requests', resolvedRequestId), {
-        rating: Number(rating),
-        review: review.trim(),
+        rating: numericRating,
+        review: trimmedReview,
         ratedAt: new Date().toISOString(),
       });
 
       // Notify the provider that they received a rating
       if (resolvedProviderEmail) {
-        const stars = '★'.repeat(Number(rating)) + '☆'.repeat(5 - Number(rating));
-        const reviewText = review.trim();
+        const stars = '★'.repeat(numericRating) + '☆'.repeat(5 - numericRating);
         addDoc(collection(db, 'notifications'), {
           user: resolvedProviderEmail,
-          text: `${auth.currentUser?.email} rated you ${stars}${reviewText ? ` — "${reviewText}"` : ''} for request ${resolvedRequestId}.`,
+          text: `${auth.currentUser?.email} rated you ${stars}${trimmedReview ? ` — "${trimmedReview}"` : ''} for request ${resolvedRequestId}.`,
           read: false,
           createdAt: new Date().toISOString(),
         }).catch(() => {});
