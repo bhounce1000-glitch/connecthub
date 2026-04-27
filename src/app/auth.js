@@ -12,11 +12,10 @@ import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tok
 import {
     FacebookAuthProvider,
     GoogleAuthProvider,
-    RecaptchaVerifier,
     createUserWithEmailAndPassword,
+    sendEmailVerification,
     sendPasswordResetEmail,
     signInWithEmailAndPassword,
-    signInWithPhoneNumber,
     signInWithPopup,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
@@ -24,7 +23,6 @@ import { auth, db } from '../firebase';
 
 const SOCIAL_AUTH_ENABLED = {
   google: (process.env.EXPO_PUBLIC_AUTH_GOOGLE || 'true').toLowerCase() === 'true',
-  phone: (process.env.EXPO_PUBLIC_AUTH_PHONE || 'true').toLowerCase() === 'true',
   facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'true').toLowerCase() === 'true',
 };
 
@@ -52,11 +50,7 @@ export default function Auth() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [notice, setNotice] = useState(null);
 
-  // Phone auth state
-  const [phoneStep, setPhoneStep] = useState('idle'); // 'idle' | 'entering_phone' | 'entering_code'
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [verificationCode, setVerificationCode] = useState('');
-  const [confirmationResult, setConfirmationResult] = useState(null);
+
 
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -121,7 +115,16 @@ export default function Auth() {
     setNotice(null);
 
     try {
-      await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      const loginCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      if (!loginCredential.user.emailVerified) {
+        setNotice({
+          tone: 'warning',
+          title: 'Email not verified',
+          message: 'Please check your inbox and click the verification link. Tap below to resend it.',
+        });
+        setIsSubmitting(false);
+        return;
+      }
       router.replace('/home');
     } catch (error) {
       // Map Firebase error codes to generic messages to prevent user enumeration.
@@ -157,7 +160,16 @@ export default function Auth() {
       // Seed a user document so profile data is immediately available
       await ensureUserDocument(credential.user);
 
-      router.replace('/home');
+      // Send email verification — free Firebase feature, no upgrade needed
+      await sendEmailVerification(credential.user);
+
+      setNotice({
+        tone: 'success',
+        title: 'Account created — check your email',
+        message: `A verification link was sent to ${normalizedEmail}. Click it to verify your account, then log in.`,
+      });
+      setIsLogin(true);
+      setPassword('');
     } catch (error) {
       const code = error?.code || '';
       let signupMessage = 'Unable to create your account right now. Please try again.';
@@ -221,65 +233,23 @@ export default function Auth() {
     }
   };
 
-  const handleSendPhoneCode = async () => {
-    if (Platform.OS !== 'web') {
-      setNotice({ tone: 'warning', title: 'Web only for now', message: 'Phone sign-in is currently available on web. Native mobile support coming soon.' });
+  const handleResendVerification = async () => {
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (!normalizedEmail || !emailPattern.test(normalizedEmail)) {
+      setNotice({ tone: 'warning', title: 'Enter your email first', message: 'Type your email address above, then tap resend.' });
       return;
     }
-
-    const cleaned = phoneNumber.trim();
-    if (!cleaned || !/^\+[1-9]\d{6,14}$/.test(cleaned)) {
-      setNotice({ tone: 'error', title: 'Invalid phone number', message: 'Enter your number in international format, e.g. +233241234567' });
-      return;
-    }
-
     setIsSubmitting(true);
     setNotice(null);
-
     try {
-      let verifier = window._recaptchaVerifier;
-      if (!verifier) {
-        verifier = new RecaptchaVerifier(auth, 'recaptcha-container', { size: 'invisible' });
-        window._recaptchaVerifier = verifier;
+      // Sign in silently just to get the user object so we can resend
+      const tempCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password).catch(() => null);
+      if (tempCredential && !tempCredential.user.emailVerified) {
+        await sendEmailVerification(tempCredential.user);
       }
-      const result = await signInWithPhoneNumber(auth, cleaned, verifier);
-      setConfirmationResult(result);
-      setPhoneStep('entering_code');
-      setNotice({ tone: 'success', title: 'Code sent', message: `A 6-digit verification code was sent to ${cleaned}.` });
-    } catch (error) {
-      const code = error?.code || '';
-      let message = 'Could not send verification code. Please try again.';
-      if (code === 'auth/invalid-phone-number') message = 'That phone number is not valid. Use international format like +233241234567.';
-      else if (code === 'auth/too-many-requests') message = 'Too many attempts. Please wait a few minutes and try again.';
-      else if (code === 'auth/operation-not-allowed') message = 'Phone sign-in is not enabled yet in Firebase Authentication settings.';
-      // Reset reCAPTCHA on error so it can be retried
-      if (window._recaptchaVerifier) { try { window._recaptchaVerifier.clear(); } catch (_) {} window._recaptchaVerifier = null; }
-      setNotice({ tone: 'error', title: 'Failed to send code', message });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleVerifyPhoneCode = async () => {
-    const code = verificationCode.trim();
-    if (!code || !/^\d{6}$/.test(code)) {
-      setNotice({ tone: 'error', title: 'Invalid code', message: 'Enter the 6-digit code from your SMS.' });
-      return;
-    }
-
-    setIsSubmitting(true);
-    setNotice(null);
-
-    try {
-      const credential = await confirmationResult.confirm(code);
-      await ensureUserDocument(credential.user);
-      router.replace('/home');
-    } catch (error) {
-      const errorCode = error?.code || '';
-      let message = 'Verification failed. Please try again.';
-      if (errorCode === 'auth/invalid-verification-code') message = 'That code is incorrect. Check your SMS and try again.';
-      else if (errorCode === 'auth/code-expired') message = 'The code has expired. Please request a new one.';
-      setNotice({ tone: 'error', title: 'Verification failed', message });
+      setNotice({ tone: 'success', title: 'Verification email sent', message: `A new verification link was sent to ${normalizedEmail}. Check your inbox.` });
+    } catch (_) {
+      setNotice({ tone: 'error', title: 'Could not resend', message: 'Please check your email and password are correct, then try again.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -405,6 +375,18 @@ export default function Auth() {
           </TouchableOpacity>
         ) : null}
 
+        {isLogin && notice?.title === 'Email not verified' ? (
+          <TouchableOpacity
+            style={{ paddingVertical: AppSpace.xs }}
+            onPress={handleResendVerification}
+            disabled={isSubmitting}
+          >
+            <Text style={{ textAlign: 'center', color: '#0f766e', fontWeight: '600' }}>
+              Resend verification email
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
         <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: AppSpace.md }}>
           <View style={{ flex: 1, height: 1, backgroundColor: '#cbd5e1' }} />
           <Text style={{ marginHorizontal: 10, color: '#64748b', fontSize: 12, fontWeight: '700' }}>OR CONTINUE WITH</Text>
@@ -419,66 +401,6 @@ export default function Auth() {
             style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1d4ed8' }}
           />
         ) : null}
-
-        {/* Invisible reCAPTCHA anchor for phone auth */}
-        <div id="recaptcha-container" />
-
-        {SOCIAL_AUTH_ENABLED.phone && phoneStep === 'idle' ? (
-          <AppButton
-            label="Continue with Phone"
-            onPress={() => { setPhoneStep('entering_phone'); setNotice(null); }}
-            disabled={isSubmitting}
-            style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#0f766e' }}
-          />
-        ) : null}
-
-        {SOCIAL_AUTH_ENABLED.phone && phoneStep === 'entering_phone' ? (
-          <View style={{ marginBottom: AppSpace.sm }}>
-            <AppInput
-              label="Phone Number"
-              placeholder="+233241234567"
-              value={phoneNumber}
-              onChangeText={setPhoneNumber}
-              keyboardType="phone-pad"
-              editable={!isSubmitting}
-            />
-            <AppButton
-              label="Send Verification Code"
-              onPress={handleSendPhoneCode}
-              loading={isSubmitting}
-              disabled={!phoneNumber.trim()}
-              style={{ borderRadius: 12, backgroundColor: '#0f766e', marginBottom: AppSpace.xs }}
-            />
-            <TouchableOpacity onPress={() => { setPhoneStep('idle'); setPhoneNumber(''); setNotice(null); }}>
-              <Text style={{ textAlign: 'center', color: '#64748b', fontSize: 13, paddingVertical: 4 }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {SOCIAL_AUTH_ENABLED.phone && phoneStep === 'entering_code' ? (
-          <View style={{ marginBottom: AppSpace.sm }}>
-            <AppInput
-              label="Verification Code"
-              placeholder="Enter 6-digit code"
-              value={verificationCode}
-              onChangeText={setVerificationCode}
-              keyboardType="number-pad"
-              editable={!isSubmitting}
-            />
-            <AppButton
-              label="Verify & Sign In"
-              onPress={handleVerifyPhoneCode}
-              loading={isSubmitting}
-              disabled={!verificationCode.trim()}
-              style={{ borderRadius: 12, backgroundColor: '#0f766e', marginBottom: AppSpace.xs }}
-            />
-            <TouchableOpacity onPress={() => { setPhoneStep('entering_phone'); setVerificationCode(''); setNotice(null); }}>
-              <Text style={{ textAlign: 'center', color: '#4338ca', fontSize: 13, paddingVertical: 4 }}>Resend code</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {SOCIAL_AUTH_ENABLED.facebook ? (
           <AppButton
             label="Continue with Facebook"
             onPress={() => handleSocialAuth('facebook')}
