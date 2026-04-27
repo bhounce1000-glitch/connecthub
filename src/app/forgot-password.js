@@ -15,6 +15,7 @@ export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
+  const webBaseUrl = (process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://connecthub-1873e.web.app').replace(/\/+$/, '');
 
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -33,11 +34,14 @@ export default function ForgotPasswordScreen() {
     setNotice(null);
 
     try {
-      await sendPasswordResetEmail(auth, normalizedEmail);
+      await sendPasswordResetEmail(auth, normalizedEmail, {
+        url: `${webBaseUrl}/reset-password`,
+        handleCodeInApp: true,
+      });
       setNotice({
         tone: 'success',
         title: 'Password reset requested',
-        message: 'If this email is registered, a password reset link will arrive shortly.',
+        message: 'If this email is registered, a reset link will arrive shortly. Open it to set a new password.',
       });
     } catch (error) {
       const code = error?.code || '';
