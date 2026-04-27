@@ -10,9 +10,9 @@ import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tok
 
 // Firebase
 import {
-    AppleAuthProvider,
     FacebookAuthProvider,
     GoogleAuthProvider,
+    OAuthProvider,
     createUserWithEmailAndPassword,
     sendPasswordResetEmail,
     signInWithEmailAndPassword,
@@ -21,13 +21,23 @@ import {
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
-const socialProviders = {
-  google: new GoogleAuthProvider(),
-  apple: new AppleAuthProvider(),
-  facebook: new FacebookAuthProvider(),
-};
+function getSocialProvider(providerKey) {
+  if (providerKey === 'google') {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    return provider;
+  }
 
-socialProviders.google.setCustomParameters({ prompt: 'select_account' });
+  if (providerKey === 'apple') {
+    return new OAuthProvider('apple.com');
+  }
+
+  if (providerKey === 'facebook') {
+    return new FacebookAuthProvider();
+  }
+
+  return null;
+}
 
 export default function Auth() {
   const router = useRouter();
@@ -170,7 +180,7 @@ export default function Auth() {
       return;
     }
 
-    const provider = socialProviders[providerKey];
+    const provider = getSocialProvider(providerKey);
     if (!provider) {
       return;
     }
