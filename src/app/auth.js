@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Text, TouchableOpacity } from 'react-native';
+import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppInput from '../components/ui/app-input';
@@ -9,9 +9,25 @@ import FormScreen from '../components/ui/form-screen';
 import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tokens';
 
 // Firebase
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import {
+    AppleAuthProvider,
+    FacebookAuthProvider,
+    GoogleAuthProvider,
+    createUserWithEmailAndPassword,
+    sendPasswordResetEmail,
+    signInWithEmailAndPassword,
+    signInWithPopup,
+} from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+
+const socialProviders = {
+  google: new GoogleAuthProvider(),
+  apple: new AppleAuthProvider(),
+  facebook: new FacebookAuthProvider(),
+};
+
+socialProviders.google.setCustomParameters({ prompt: 'select_account' });
 
 export default function Auth() {
   const router = useRouter();
@@ -24,6 +40,23 @@ export default function Auth() {
   const [notice, setNotice] = useState(null);
 
   const normalizedEmail = email.trim().toLowerCase();
+
+  const ensureUserDocument = async (authUser) => {
+    const normalizedUserEmail = String(authUser?.email || '').trim().toLowerCase();
+    if (!normalizedUserEmail) {
+      throw new Error('missing_user_email');
+    }
+
+    await setDoc(
+      doc(db, 'users', normalizedUserEmail),
+      {
+        email: normalizedUserEmail,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      { merge: true }
+    );
+  };
 
   const validateForm = () => {
     const nextErrors = {};
@@ -100,17 +133,10 @@ export default function Auth() {
     setNotice(null);
 
     try {
-      await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+      const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
       // Seed a user document so profile data is immediately available
-      await setDoc(
-        doc(db, 'users', normalizedEmail),
-        {
-          email: normalizedEmail,
-          createdAt: new Date(),
-        },
-        { merge: true }
-      );
+      await ensureUserDocument(credential.user);
 
       router.replace('/home');
     } catch (error) {
@@ -128,6 +154,86 @@ export default function Auth() {
         tone: 'error',
         title: 'Signup failed',
         message: signupMessage,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSocialAuth = async (providerKey) => {
+    if (Platform.OS !== 'web') {
+      setNotice({
+        tone: 'warning',
+        title: 'Provider sign-in currently on web',
+        message: 'Google, Apple, and Facebook sign-in are enabled for web now. Native mobile support can be added next.',
+      });
+      return;
+    }
+
+    const provider = socialProviders[providerKey];
+    if (!provider) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setNotice(null);
+
+    try {
+      const credential = await signInWithPopup(auth, provider);
+      await ensureUserDocument(credential.user);
+      router.replace('/home');
+    } catch (error) {
+      const code = error?.code || '';
+      let message = 'Unable to continue with this provider right now. Please try again.';
+      if (code === 'auth/popup-closed-by-user') {
+        message = 'Sign-in popup was closed before completion.';
+      } else if (code === 'auth/account-exists-with-different-credential') {
+        message = 'This email is already linked to a different sign-in method.';
+      } else if (code === 'auth/operation-not-allowed') {
+        message = 'This provider is not enabled yet in Firebase Authentication settings.';
+      }
+      setNotice({
+        tone: 'error',
+        title: 'Social sign-in failed',
+        message,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (!normalizedEmail || !emailPattern.test(normalizedEmail)) {
+      setNotice({
+        tone: 'warning',
+        title: 'Enter your email first',
+        message: 'Type the email address for your account, then tap reset password.',
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setNotice(null);
+
+    try {
+      await sendPasswordResetEmail(auth, normalizedEmail);
+      // Keep response generic to avoid exposing whether an account exists.
+      setNotice({
+        tone: 'success',
+        title: 'Password reset requested',
+        message: 'If this email is registered, you will receive a password reset link shortly.',
+      });
+    } catch (error) {
+      const code = error?.code || '';
+      let message = 'Could not start password reset right now. Please try again.';
+      if (code === 'auth/too-many-requests') {
+        message = 'Too many reset attempts. Please wait a few minutes and try again.';
+      }
+      setNotice({
+        tone: 'error',
+        title: 'Reset failed',
+        message,
       });
     } finally {
       setIsSubmitting(false);
@@ -202,6 +308,45 @@ export default function Auth() {
           disabled={!normalizedEmail || !password}
           loading={isSubmitting}
           style={{ marginBottom: AppSpace.sm, borderRadius: 12 }}
+        />
+
+        {isLogin ? (
+          <TouchableOpacity
+            style={{ paddingVertical: AppSpace.xs }}
+            onPress={handleResetPassword}
+            disabled={isSubmitting}
+          >
+            <Text style={{ textAlign: 'center', color: AppColors.blue700, fontWeight: '600' }}>
+              Forgot password? Reset it
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: AppSpace.md }}>
+          <View style={{ flex: 1, height: 1, backgroundColor: '#cbd5e1' }} />
+          <Text style={{ marginHorizontal: 10, color: '#64748b', fontSize: 12, fontWeight: '700' }}>OR CONTINUE WITH</Text>
+          <View style={{ flex: 1, height: 1, backgroundColor: '#cbd5e1' }} />
+        </View>
+
+        <AppButton
+          label="Continue with Google"
+          onPress={() => handleSocialAuth('google')}
+          disabled={isSubmitting}
+          style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1d4ed8' }}
+        />
+
+        <AppButton
+          label="Continue with Apple"
+          onPress={() => handleSocialAuth('apple')}
+          disabled={isSubmitting}
+          style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#111827' }}
+        />
+
+        <AppButton
+          label="Continue with Facebook"
+          onPress={() => handleSocialAuth('facebook')}
+          disabled={isSubmitting}
+          style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1877f2' }}
         />
 
         <TouchableOpacity
