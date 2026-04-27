@@ -126,7 +126,8 @@ service cloud.firestore {
     }
 
     match /users/{userEmail} {
-      allow read: if isSignedIn();
+      // Users can only read their own profile. Admins can read any.
+      allow read: if isSignedIn() && (userEmail == email() || isAdmin());
       allow create, update: if isSignedIn() && userEmail == email();
       allow delete: if false;
     }
@@ -135,15 +136,9 @@ service cloud.firestore {
       // Only the recipient can read their own notifications
       allow read: if isSignedIn() && resource.data.user == email();
 
-      // Any signed-in user can create a notification for another user
-      // (e.g. provider → owner on accept, owner → provider on pay)
-      allow create: if isSignedIn()
-        && request.resource.data.keys().hasAll(['user', 'text', 'createdAt', 'read'])
-        && request.resource.data.user is string
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
-        && request.resource.data.text.size() <= 500
-        && request.resource.data.read == false;
+      // All notifications are created exclusively by the backend admin SDK,
+      // which bypasses these rules. No client-side creation is permitted.
+      allow create: if false;
 
       // Recipients can only flip the read flag
       allow update: if isSignedIn()

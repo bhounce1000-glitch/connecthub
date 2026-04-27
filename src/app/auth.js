@@ -72,10 +72,19 @@ export default function Auth() {
       await signInWithEmailAndPassword(auth, normalizedEmail, password);
       router.replace('/home');
     } catch (error) {
+      // Map Firebase error codes to generic messages to prevent user enumeration.
+      // Never expose whether an email exists or not.
+      const code = error?.code || '';
+      let loginMessage = 'Incorrect email or password. Please try again.';
+      if (code === 'auth/too-many-requests') {
+        loginMessage = 'Too many attempts. Please wait a few minutes and try again.';
+      } else if (code === 'auth/network-request-failed') {
+        loginMessage = 'Network error. Check your connection and try again.';
+      }
       setNotice({
         tone: 'error',
         title: 'Login failed',
-        message: error.message || 'Unable to log in with those credentials.',
+        message: loginMessage,
       });
     } finally {
       setIsSubmitting(false);
@@ -105,10 +114,20 @@ export default function Auth() {
 
       router.replace('/home');
     } catch (error) {
+      const code = error?.code || '';
+      let signupMessage = 'Unable to create your account right now. Please try again.';
+      if (code === 'auth/email-already-in-use') {
+        // Intentionally vague — do not confirm the email is registered
+        signupMessage = 'Unable to create an account with those details. Try logging in instead.';
+      } else if (code === 'auth/too-many-requests') {
+        signupMessage = 'Too many attempts. Please wait a few minutes and try again.';
+      } else if (code === 'auth/network-request-failed') {
+        signupMessage = 'Network error. Check your connection and try again.';
+      }
       setNotice({
         tone: 'error',
         title: 'Signup failed',
-        message: error.message || 'Unable to create your account right now.',
+        message: signupMessage,
       });
     } finally {
       setIsSubmitting(false);

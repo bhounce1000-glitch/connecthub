@@ -7,24 +7,29 @@ service firebase.storage {
     }
 
     function isImageUpload() {
+      // Require an explicit image content type — do not allow null/missing.
       return request.resource != null
-        && (
-          request.resource.contentType == null
-          || request.resource.contentType.matches('image/.*')
-        );
+        && request.resource.contentType != null
+        && request.resource.contentType.matches('image/.*');
     }
 
-    // Profile pictures - any signed-in user can read; owner can write
+    // Profile pictures - any signed-in user can read; owner can write (max 5 MB)
     match /profile-pictures/{userId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && request.auth.uid == userId && isImageUpload();
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && isImageUpload()
+        && request.resource.size < 5 * 1024 * 1024;
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
-    // Request images - any signed-in user can read; owner can write
+    // Request images - any signed-in user can read; owner can write (max 10 MB)
     match /request-images/{userId}/{fileName} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn() && request.auth.uid == userId && isImageUpload();
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && isImageUpload()
+        && request.resource.size < 10 * 1024 * 1024;
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
