@@ -6,12 +6,20 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://connecthub-backend.onrender.com",
+        "EXPO_PUBLIC_WEB_BASE_URL": "https://connecthub-1873e.web.app"
+      },
       "android": {
         "buildType": "apk"
       }
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://connecthub-backend.onrender.com",
+        "EXPO_PUBLIC_WEB_BASE_URL": "https://connecthub-1873e.web.app"
+      },
       "android": {
         "buildType": "apk"
       },
@@ -21,6 +29,10 @@
     },
     "production": {
       "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://connecthub-backend.onrender.com",
+        "EXPO_PUBLIC_WEB_BASE_URL": "https://connecthub-1873e.web.app"
+      },
       "android": {
         "buildType": "app-bundle"
       },

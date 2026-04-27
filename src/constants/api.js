@@ -1,2 +1,2 @@
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3001';
-export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'http://localhost:8081';
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-backend.onrender.com';
+export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://connecthub-1873e.web.app';
