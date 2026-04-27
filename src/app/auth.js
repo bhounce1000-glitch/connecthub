@@ -23,8 +23,8 @@ import { auth, db } from '../firebase';
 
 const SOCIAL_AUTH_ENABLED = {
   google: (process.env.EXPO_PUBLIC_AUTH_GOOGLE || 'true').toLowerCase() === 'true',
-  apple: (process.env.EXPO_PUBLIC_AUTH_APPLE || 'false').toLowerCase() === 'true',
-  facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'false').toLowerCase() === 'true',
+  apple: (process.env.EXPO_PUBLIC_AUTH_APPLE || 'true').toLowerCase() === 'true',
+  facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'true').toLowerCase() === 'true',
 };
 
 function getSocialProvider(providerKey) {
