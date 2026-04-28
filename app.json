@@ -37,7 +37,8 @@
       "permissions": [
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -45,8 +46,9 @@
       "bundler": "metro"
     },
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "connecthub"
+        "projectId": "d4466a6c-bba0-4058-b023-3a29905f133b"
       }
     },
     "plugins": [
@@ -57,6 +59,7 @@
           "photosPermission": "ConnectHub needs access to your photo library to set a profile picture."
         }
       ]
-    ]
+    ],
+    "owner": "connecthub"
   }
 }
