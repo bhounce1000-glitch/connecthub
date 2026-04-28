@@ -9,6 +9,7 @@
   "hosting": {
     "public": "dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "predeploy": ["node scripts/copy-privacy.js"],
     "rewrites": [
       { "source": "**", "destination": "/index.html" }
     ]
