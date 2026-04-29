@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 
 (async () => {
-  const baseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:3001').replace(/\/+$/, '');
+  const baseUrl = (process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com').replace(/\/+$/, '');
   const fetchFn = global.fetch
     ? global.fetch.bind(global)
     : (await import('node-fetch')).default;

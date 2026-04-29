@@ -112,6 +112,7 @@ export default function PayReturn() {
       accentColor="#1f2937"
       accentTextColor="#dbeafe"
       backgroundColor="#f4f6f8"
+      scroll
     >
       <AppCard
         style={{

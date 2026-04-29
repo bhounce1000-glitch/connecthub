@@ -8,7 +8,7 @@ export default function FormScreen({
   accentColor,
   accentTextColor,
   backgroundColor,
-  scroll = false,
+  scroll = true,
   cardStyle = null,
   footer = null,
   children,

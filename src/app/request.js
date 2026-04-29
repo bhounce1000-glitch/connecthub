@@ -27,6 +27,7 @@ export default function Request() {
   }, [isAuthReady, router, user]);
 
   const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [price, setPrice] = useState('');
   const [imageUri, setImageUri] = useState(null);   // local preview
@@ -37,6 +38,7 @@ export default function Request() {
   const [notice, setNotice] = useState(null);
 
   const normalizedTitle = title.trim();
+  const normalizedDescription = description.trim();
   const normalizedLocation = location.trim();
   const normalizedPrice = price.trim();
   const parsedPrice = Number(normalizedPrice);
@@ -105,6 +107,10 @@ export default function Request() {
       nextErrors.title = 'Title must be 100 characters or fewer.';
     }
 
+    if (normalizedDescription.length > 1000) {
+      nextErrors.description = 'Description must be 1,000 characters or fewer.';
+    }
+
     if (!normalizedLocation) {
       nextErrors.location = 'Add the service location.';
     } else if (normalizedLocation.length > 200) {
@@ -145,6 +151,7 @@ export default function Request() {
     try {
       await addDoc(collection(db, 'requests'), {
         title: normalizedTitle,
+        description: normalizedDescription || '',
         location: normalizedLocation,
         price: normalizedPrice,
         image: imageUrl,
@@ -191,11 +198,23 @@ export default function Request() {
 
         <AppInput
           label="Title"
-          placeholder="Title"
+          placeholder="e.g. Fix leaking tap"
           value={title}
           onChangeText={setTitle}
           editable={!isSaving}
           error={fieldErrors.title}
+        />
+
+        <AppInput
+          label="Description (optional)"
+          placeholder="Describe what you need in detail…"
+          value={description}
+          onChangeText={setDescription}
+          editable={!isSaving}
+          error={fieldErrors.description}
+          multiline
+          numberOfLines={3}
+          inputStyle={{ minHeight: 72, textAlignVertical: 'top' }}
         />
 
         <AppInput

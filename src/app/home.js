@@ -332,6 +332,11 @@ export default function Home() {
             return (
               <AppCard style={{ marginBottom: 14 }}>
                 <Text style={{ fontWeight: '700', fontSize: 17, color: '#111827' }}>{item.title}</Text>
+                {item.description ? (
+                  <Text style={{ marginTop: 4, color: '#475569', fontSize: 13, lineHeight: 18 }} numberOfLines={2}>
+                    {item.description}
+                  </Text>
+                ) : null}
                 <Text style={{ marginTop: 5, color: '#334155' }}>Location: {item.location}</Text>
                 <Text style={{ marginTop: 5, color: '#334155' }}>Amount: GHS {item.price}</Text>
                 <Text style={{ marginTop: 7, color, fontWeight: '700' }}>Status: {STATUS_LABELS[status] || status}</Text>

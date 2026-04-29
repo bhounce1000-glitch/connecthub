@@ -13,7 +13,7 @@ import { AppColors } from '../constants/design-tokens';
 import useAuthUser from '../hooks/use-auth-user';
 
 // Firebase
-import { collection, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '../firebase';
 
@@ -110,24 +110,26 @@ export default function Profile() {
     }
 
     const fetchStats = async () => {
-      const snapshot = await getDocs(collection(db, 'requests'));
+      // Only fetch requests where the current user is the provider — avoids a full collection scan
+      const q = query(collection(db, 'requests'), where('acceptedBy', '==', currentEmail));
+      const snapshot = await getDocs(q);
 
       let jobs = 0;
       let totalRating = 0;
       let ratingCount = 0;
       let earned = 0;
 
-      snapshot.forEach((doc) => {
-        const data = doc.data();
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
 
-        // Jobs completed (accepted + paid)
-        if (data.acceptedBy === currentEmail && data.paid) {
+        // Jobs completed (paid)
+        if (data.paid) {
           jobs++;
           earned += Number(data.price || 0);
         }
 
         // Ratings received
-        if (data.acceptedBy === currentEmail && data.rating) {
+        if (data.rating) {
           totalRating += data.rating;
           ratingCount++;
         }
@@ -165,6 +167,7 @@ export default function Profile() {
       subtitle={currentEmail || 'Unavailable'}
       accentColor="#0f172a"
       accentTextColor="#cbd5e1"
+      scroll
     >
       {isLoading ? (
         <AppCard>

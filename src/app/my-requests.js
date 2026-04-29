@@ -10,7 +10,7 @@ import LoadingSkeleton from '../components/ui/loading-skeleton';
 import useAuthUser from '../hooks/use-auth-user';
 
 // Firebase
-import { collection, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
+import { collection, deleteDoc, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { REQUEST_STATUS, STATUS_LABELS } from '../constants/access';
 import { AppColors, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
@@ -51,13 +51,13 @@ export default function MyRequests() {
       return undefined;
     }
 
-    const unsubscribe = onSnapshot(collection(db, 'requests'), (snapshot) => {
+    const q = query(collection(db, 'requests'), where('user', '==', currentEmail));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs
-        .map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }))
-        .filter((item) => item.user === currentEmail);
+        .map((docSnap) => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+        }));
 
       setMyRequests(data);
       setIsLoading(false);
@@ -161,6 +161,12 @@ export default function MyRequests() {
               <Text style={{ fontWeight: '700', fontSize: 16, color: AppColors.ink900 }}>
                 {item.title}
               </Text>
+
+              {item.description ? (
+                <Text style={{ color: AppColors.ink500, marginTop: 3, fontSize: 13, lineHeight: 18 }} numberOfLines={2}>
+                  {item.description}
+                </Text>
+              ) : null}
 
               <Text style={{ color: AppColors.ink700, marginTop: 4 }}>Location: {item.location}</Text>
               <Text style={{ color: AppColors.ink700, marginTop: 2 }}>Amount: GHS {item.price}</Text>
