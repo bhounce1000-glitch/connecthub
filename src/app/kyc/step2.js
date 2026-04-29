@@ -2,8 +2,7 @@
  * KYC Step 2 — Contact & Identity Documents
  * Collects: phone, alt phone, ID type, ID number, ID front photo, ID back photo
  */
-import { useRouter } from 'expo-router';
-import { getAuth } from 'firebase/auth';
+import { Redirect, useRouter } from 'expo-router';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
@@ -14,6 +13,7 @@ import AppInput from '../../components/ui/app-input';
 import AppNotice from '../../components/ui/app-notice';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db, storage } from '../../firebase';
+import useAuthUser from '../../hooks/use-auth-user';
 
 const ID_TYPES = ["National ID", "Passport", "Driver's Licence", "Voter ID", "NHIS Card"];
 
@@ -36,7 +36,6 @@ function StepIndicator({ current }) {
                   width: 28,
                   height: 28,
                   borderRadius: 14,
-                  backgroundColor: done ? '#6366f1' : active ? '#6366f1' : '#e2e8f0',
                   alignItems: 'center',
                   justifyContent: 'center',
                   borderWidth: active ? 2 : 0,
@@ -88,6 +87,7 @@ async function pickAndUpload(email, fieldName) {
 
 export default function KycStep2() {
   const router = useRouter();
+  const { user, isAuthReady } = useAuthUser();
 
   const [form, setForm] = useState({
     phone: '',
@@ -103,11 +103,15 @@ export default function KycStep2() {
   const [uploading, setUploading] = useState({ front: false, back: false });
 
   useEffect(() => {
+    if (isAuthReady && !user?.email) {
+      router.replace('/auth');
+    }
+  }, [isAuthReady, router, user]);
+
+  useEffect(() => {
     (async () => {
+      if (!user?.email) return;
       try {
-        const auth = getAuth();
-        const user = auth.currentUser;
-        if (!user) return;
         const email = (user.email || '').trim().toLowerCase();
         const snap = await getDoc(doc(db, 'kyc_submissions', email));
         if (snap.exists()) {
@@ -126,7 +130,7 @@ export default function KycStep2() {
         // silent
       }
     })();
-  }, []);
+  }, [user?.email]);
 
   const set = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -137,9 +141,7 @@ export default function KycStep2() {
     setUploading((prev) => ({ ...prev, [side]: true }));
     setErrors((prev) => ({ ...prev, [`id${side === 'front' ? 'Front' : 'Back'}Url`]: undefined }));
     try {
-      const auth = getAuth();
-      const user = auth.currentUser;
-      if (!user) throw new Error('Not authenticated');
+      if (!user?.email) throw new Error('Not authenticated');
       const email = (user.email || '').trim().toLowerCase();
       const fieldName = `id-${side}`;
       const url = await pickAndUpload(email, fieldName);
@@ -171,9 +173,7 @@ export default function KycStep2() {
     if (!validate()) return;
     setLoading(true);
     try {
-      const auth = getAuth();
-      const user = auth.currentUser;
-      if (!user) throw new Error('Not authenticated');
+      if (!user?.email) throw new Error('Not authenticated');
       const email = (user.email || '').trim().toLowerCase();
 
       await setDoc(
@@ -200,6 +200,14 @@ export default function KycStep2() {
   };
 
   const maxW = 520;
+
+  if (!isAuthReady) {
+    return null;
+  }
+
+  if (!user?.email) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: AppColors.ink900 }}>

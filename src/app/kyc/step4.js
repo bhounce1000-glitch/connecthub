@@ -99,7 +99,7 @@ export default function KycStep4() {
       try {
         const auth = getAuth();
         const user = auth.currentUser;
-        if (!user) { router.replace('/auth'); return; }
+        if (!user?.email) { router.replace('/auth'); return; }
         const email = (user.email || '').trim().toLowerCase();
         const snap = await getDoc(doc(db, 'kyc_submissions', email));
         if (!snap.exists()) { router.replace('/kyc/step1'); return; }
@@ -117,7 +117,7 @@ export default function KycStep4() {
     try {
       const auth = getAuth();
       const user = auth.currentUser;
-      if (!user) throw new Error('Not authenticated');
+      if (!user?.email) throw new Error('Not authenticated');
       const email = (user.email || '').trim().toLowerCase();
 
       // Mark KYC submission as pending_verification

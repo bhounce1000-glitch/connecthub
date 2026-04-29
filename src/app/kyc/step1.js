@@ -2,8 +2,7 @@
  * KYC Step 1 — Personal Information
  * Collects: full name, DOB, gender, nationality, country of residence, city, home address, occupation
  */
-import { useRouter } from 'expo-router';
-import { getAuth } from 'firebase/auth';
+import { Redirect, useRouter } from 'expo-router';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -13,6 +12,7 @@ import AppInput from '../../components/ui/app-input';
 import AppNotice from '../../components/ui/app-notice';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db } from '../../firebase';
+import useAuthUser from '../../hooks/use-auth-user';
 
 const GENDERS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
 
@@ -62,6 +62,7 @@ function StepIndicator({ current }) {
 
 export default function KycStep1() {
   const router = useRouter();
+  const { user, isAuthReady } = useAuthUser();
 
   const [form, setForm] = useState({
     fullName: '',
@@ -77,13 +78,17 @@ export default function KycStep1() {
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (isAuthReady && !user?.email) {
+      router.replace('/auth');
+    }
+  }, [isAuthReady, router, user]);
+
   // Pre-fill from any existing draft
   useEffect(() => {
     (async () => {
+      if (!user?.email) return;
       try {
-        const auth = getAuth();
-        const user = auth.currentUser;
-        if (!user) return;
         const email = (user.email || '').trim().toLowerCase();
         const snap = await getDoc(doc(db, 'kyc_submissions', email));
         if (snap.exists()) {
@@ -104,7 +109,7 @@ export default function KycStep1() {
         // silent — proceed with blank form
       }
     })();
-  }, []);
+  }, [user?.email]);
 
   const set = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -130,9 +135,7 @@ export default function KycStep1() {
     if (!validate()) return;
     setLoading(true);
     try {
-      const auth = getAuth();
-      const user = auth.currentUser;
-      if (!user) throw new Error('Not authenticated');
+      if (!user?.email) throw new Error('Not authenticated');
       const email = (user.email || '').trim().toLowerCase();
 
       await setDoc(
@@ -161,6 +164,14 @@ export default function KycStep1() {
   };
 
   const maxW = 520;
+
+  if (!isAuthReady) {
+    return null;
+  }
+
+  if (!user?.email) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: AppColors.ink900 }}>

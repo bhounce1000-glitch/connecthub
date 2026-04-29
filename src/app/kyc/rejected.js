@@ -2,7 +2,7 @@
  * KYC Rejected screen — shown when kycStatus = rejected
  * Allows user to resubmit from step 1.
  */
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
@@ -11,17 +11,22 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import AppButton from '../../components/ui/app-button';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db } from '../../firebase';
+import useAuthUser from '../../hooks/use-auth-user';
 
 export default function KycRejected() {
   const router = useRouter();
+  const { user, isAuthReady } = useAuthUser();
   const [rejectionReason, setRejectionReason] = useState('');
 
   useEffect(() => {
+    if (isAuthReady && !user?.email) {
+      router.replace('/auth');
+      return;
+    }
+
     (async () => {
       try {
-        const auth = getAuth();
-        const user = auth.currentUser;
-        if (!user) return;
+        if (!user?.email) return;
         const email = (user.email || '').trim().toLowerCase();
         const snap = await getDoc(doc(db, 'kyc_submissions', email));
         if (snap.exists()) {
@@ -31,11 +36,19 @@ export default function KycRejected() {
         // silent
       }
     })();
-  }, []);
+  }, [isAuthReady, router, user]);
 
   const handleResubmit = () => {
     router.replace('/kyc/step1');
   };
+
+  if (!isAuthReady) {
+    return null;
+  }
+
+  if (!user?.email) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <ScrollView

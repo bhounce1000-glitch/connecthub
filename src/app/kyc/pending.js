@@ -1,7 +1,7 @@
 /**
  * KYC Pending screen — shown when kycStatus = pending_verification
  */
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useEffect } from 'react';
@@ -10,15 +10,19 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { KYC_STATUS } from '../../constants/access';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db } from '../../firebase';
+import useAuthUser from '../../hooks/use-auth-user';
 
 export default function KycPending() {
   const router = useRouter();
+  const { user, isAuthReady } = useAuthUser();
 
   // Auto-redirect once admin approves or rejects
   useEffect(() => {
-    const auth = getAuth();
-    const user = auth.currentUser;
-    if (!user) return;
+    if (isAuthReady && !user?.email) {
+      router.replace('/auth');
+      return;
+    }
+    if (!user?.email) return;
     const email = (user.email || '').trim().toLowerCase();
 
     const unsub = onSnapshot(doc(db, 'users', email), (snap) => {
@@ -32,7 +36,15 @@ export default function KycPending() {
     });
 
     return unsub;
-  }, []);
+  }, [isAuthReady, router, user]);
+
+  if (!isAuthReady) {
+    return null;
+  }
+
+  if (!user?.email) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: AppColors.ink900, alignItems: 'center', justifyContent: 'center', padding: AppSpace.xl }}>

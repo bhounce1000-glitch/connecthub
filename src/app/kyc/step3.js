@@ -2,8 +2,7 @@
  * KYC Step 3 — Payment Details (Problem 3)
  * Collects: Mobile Money OR Bank Account payout details
  */
-import { useRouter } from 'expo-router';
-import { getAuth } from 'firebase/auth';
+import { Redirect, useRouter } from 'expo-router';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -13,6 +12,7 @@ import AppInput from '../../components/ui/app-input';
 import AppNotice from '../../components/ui/app-notice';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db } from '../../firebase';
+import useAuthUser from '../../hooks/use-auth-user';
 
 const PAYMENT_METHODS = [
   { key: 'mobile_money', label: 'Mobile Money', icon: '📱' },
@@ -72,6 +72,7 @@ function maskNumber(n = '') {
 
 export default function KycStep3() {
   const router = useRouter();
+  const { user, isAuthReady } = useAuthUser();
 
   const [method, setMethod] = useState('mobile_money');
   const [momoProvider, setMomoProvider] = useState('');
@@ -86,11 +87,15 @@ export default function KycStep3() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (isAuthReady && !user?.email) {
+      router.replace('/auth');
+    }
+  }, [isAuthReady, router, user]);
+
+  useEffect(() => {
     (async () => {
+      if (!user?.email) return;
       try {
-        const auth = getAuth();
-        const user = auth.currentUser;
-        if (!user) return;
         const email = (user.email || '').trim().toLowerCase();
         const snap = await getDoc(doc(db, 'kyc_submissions', email));
         if (snap.exists()) {
@@ -108,7 +113,7 @@ export default function KycStep3() {
         // silent
       }
     })();
-  }, []);
+  }, [user?.email]);
 
   const clearErr = (field) => setErrors((prev) => ({ ...prev, [field]: undefined }));
 
@@ -133,9 +138,7 @@ export default function KycStep3() {
     if (!validate()) return;
     setLoading(true);
     try {
-      const auth = getAuth();
-      const user = auth.currentUser;
-      if (!user) throw new Error('Not authenticated');
+      if (!user?.email) throw new Error('Not authenticated');
       const email = (user.email || '').trim().toLowerCase();
 
       const payload = {
@@ -173,6 +176,14 @@ export default function KycStep3() {
   };
 
   const maxW = 520;
+
+  if (!isAuthReady) {
+    return null;
+  }
+
+  if (!user?.email) {
+    return <Redirect href="/auth" />;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: AppColors.ink900 }}>
