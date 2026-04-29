@@ -130,9 +130,8 @@ export default function Auth() {
         setIsSubmitting(false);
         return;
       }
-      // Mark onboarding done for returning users who skipped it
-      await setDoc(doc(db, 'users', normalizedEmail), { onboardingDone: true, updatedAt: new Date() }, { merge: true }).catch(() => {});
-      router.replace('/home');
+      // Route through index so KYC gate is evaluated for providers
+      router.replace('/');
     } catch (error) {
       // Map Firebase error codes to generic messages to prevent user enumeration.
       // Never expose whether an email exists or not.
@@ -219,7 +218,7 @@ export default function Auth() {
     try {
       const credential = await signInWithPopup(auth, provider);
       await ensureUserDocument(credential.user);
-      router.replace('/home');
+      router.replace('/');
     } catch (error) {
       const code = error?.code || '';
       let message = 'Unable to continue with this provider right now. Please try again.';

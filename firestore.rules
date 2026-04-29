@@ -48,17 +48,14 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       allow create: if isSignedIn()
-        && request.resource.data.keys().hasAll(['title', 'location', 'price', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
-        && request.resource.data.keys().hasOnly(['title', 'location', 'price', 'image', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
+        && request.resource.data.keys().hasAll(['title', 'location', 'price', 'user', 'acceptedBy', 'status', 'paid', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['title', 'location', 'price', 'image', 'description', 'category', 'urgency', 'preferredDate', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
         && request.resource.data.title is string
         && request.resource.data.location is string
-        && request.resource.data.price is string
         && (!('image' in request.resource.data) || request.resource.data.image is string)
         && request.resource.data.user == email()
         && request.resource.data.paid == false
         && request.resource.data.acceptedBy == null
-        && request.resource.data.rating == null
-        && request.resource.data.review is string
         && request.resource.data.createdAt is timestamp
         && request.resource.data.status == 'open'
         && validStatus(request.resource.data.status);
