@@ -16,6 +16,7 @@ export default function AppButton({
   variant = 'primary',
   disabled = false,
   loading = false,
+  loadingLabel = null,
   style = null,
   textStyle = null,
 }) {
@@ -41,7 +42,7 @@ export default function AppButton({
       ]}
     >
       <Text style={[{ color: AppColors.white, textAlign: 'center', fontWeight: '700', fontSize: AppType.body, letterSpacing: 0.2 }, textStyle]}>
-        {loading ? 'Working...' : label}
+        {loading ? (loadingLabel || 'Working...') : label}
       </Text>
     </TouchableOpacity>
   );

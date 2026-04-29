@@ -111,6 +111,7 @@ export default function ForgotPasswordScreen() {
         onPress={handleResetPassword}
         disabled={!normalizedEmail}
         loading={isSubmitting}
+        loadingLabel="Sending reset link..."
         style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#0f766e' }}
       />
 

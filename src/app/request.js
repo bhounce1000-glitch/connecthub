@@ -250,6 +250,7 @@ export default function Request() {
           onPress={pickImage}
           disabled={isSaving || isUploadingImage}
           loading={isUploadingImage}
+          loadingLabel="Uploading..."
           style={{ marginBottom: 16 }}
         />
 
@@ -259,6 +260,7 @@ export default function Request() {
           onPress={submitRequest}
           disabled={!normalizedTitle || !normalizedLocation || !normalizedPrice || isUploadingImage}
           loading={isSaving}
+          loadingLabel="Submitting request..."
         />
     </FormScreen>
   );

@@ -326,6 +326,7 @@ export default function Auth() {
           onPress={isLogin ? handleLogin : handleSignup}
           disabled={!normalizedEmail || !password}
           loading={isSubmitting}
+          loadingLabel={isLogin ? 'Signing in...' : 'Creating account...'}
           style={{ marginBottom: AppSpace.sm, borderRadius: 12 }}
         />
 

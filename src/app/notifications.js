@@ -1,16 +1,20 @@
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { FlatList, Text } from 'react-native';
 
+import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import ListScreen from '../components/ui/list-screen.js';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
 import useAuthUser from '../hooks/use-auth-user';
+import { toDisplayDateTime } from '../utils/date-time';
 
 // Firebase
 import { collection, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export default function Notifications() {
+  const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
   const currentEmail = user?.email || '';
   const [notifications, setNotifications] = useState([]);
@@ -56,6 +60,7 @@ export default function Notifications() {
       subtitle="Stay on top of request and payment activity."
       accentColor="#1d4ed8"
       accentTextColor="#dbeafe"
+      toolbar={<AppButton label="Back to Home" variant="neutral" onPress={() => router.replace('/home')} style={{ marginBottom: 12 }} />}
       isLoading={isLoading}
       loadingView={(
         <AppCard>
@@ -84,13 +89,7 @@ export default function Notifications() {
               </Text>
 
               <Text style={{ color: '#64748b', fontSize: 12 }}>
-                {item.createdAt
-                  ? new Date(
-                      item.createdAt.seconds
-                        ? item.createdAt.seconds * 1000
-                        : item.createdAt,
-                    ).toLocaleString()
-                  : ''}
+                {toDisplayDateTime(item.createdAt)}
               </Text>
             </AppCard>
           )}
