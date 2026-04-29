@@ -1,3 +1,26 @@
+export const USER_ROLES = {
+  CUSTOMER: 'customer',
+  PROVIDER: 'provider',
+};
+
+export const COMMISSION_RATE = parseFloat(process.env.EXPO_PUBLIC_COMMISSION_RATE || '0.10');
+
+export const CATEGORY_ICONS = {
+  'Plumbing': '🔧',
+  'Electrical': '⚡',
+  'Cleaning': '🧹',
+  'Carpentry': '🪚',
+  'Painting': '🎨',
+  'Moving & Transport': '🚛',
+  'Gardening & Landscaping': '🌿',
+  'Tech & IT Support': '💻',
+  'Tutoring & Teaching': '📚',
+  'Tailoring & Fashion': '🧵',
+  'Cooking & Catering': '🍳',
+  'Security': '🔒',
+  'Other': '✨',
+};
+
 export const REQUEST_STATUS = {
   OPEN: 'open',
   ACCEPTED: 'accepted',

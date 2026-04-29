@@ -2,15 +2,16 @@ import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { addDoc, collection, deleteDoc, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { FlatList, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import AppNotice from '../components/ui/app-notice';
 import Avatar from '../components/ui/avatar';
+import JobStepper from '../components/ui/job-stepper';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
-import { REQUEST_STATUS, STATUS_LABELS, isAdminEmail } from '../constants/access';
-import { AppColors, AppSpace } from '../constants/design-tokens';
+import { CATEGORY_ICONS, REQUEST_STATUS, isAdminEmail } from '../constants/access';
+import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 
@@ -34,11 +35,14 @@ export default function Home() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
   const [requests, setRequests] = useState([]);
+  const [providers, setProviders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [userProfiles, setUserProfiles] = useState({});
+  const [searchText, setSearchText] = useState('');
+  const [activeCategory, setActiveCategory] = useState('All');
   const profileFetchQueue = useRef(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
   const currentEmail = user?.email || '';
@@ -241,61 +245,210 @@ export default function Home() {
     router.push({ pathname: '/rate', params: { requestId: item.id, providerEmail: item.acceptedBy || '' } });
   };
 
-  return (
-    <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: 18 }}>
-      <View style={{ backgroundColor: '#0f172a', borderRadius: 18, padding: 18, marginBottom: 14 }}>
-        <Text style={{ fontSize: 14, color: '#93c5fd', letterSpacing: 0.5, fontFamily: 'serif' }}>CONNECTHUB</Text>
+  const CATEGORIES = ['All', ...Object.keys(CATEGORY_ICONS)];
+
+  const visibleRequests = useMemo(() => {
+    return requests.filter((item) => {
+      if (!item.title || !item.location || !item.price) return false;
+      const status = getEffectiveStatus(item);
+      if (status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED) return false;
+      const isOwner = item.user === currentEmail;
+      const isProvider = item.acceptedBy === currentEmail;
+      const isOpen = status === REQUEST_STATUS.OPEN;
+      if (!isOwner && !isProvider && !(isOpen && !isOwner)) return false;
+      // Search filter
+      const q = searchText.trim().toLowerCase();
+      if (q) {
+        const match =
+          (item.title || '').toLowerCase().includes(q) ||
+          (item.location || '').toLowerCase().includes(q) ||
+          (item.description || '').toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      // Category filter
+      if (activeCategory !== 'All' && item.category !== activeCategory) return false;
+      return true;
+    });
+  }, [requests, currentEmail, searchText, activeCategory]);
+
+  const renderListHeader = () => (
+    <View>
+      {/* Hero header */}
+      <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: AppSpace.md }}>
+        <Text style={{ fontSize: 13, color: '#93c5fd', letterSpacing: 1, fontWeight: '700' }}>CONNECTHUB</Text>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-          <Text style={{ fontSize: 30, fontWeight: '800', color: '#f8fafc' }}>Dashboard</Text>
-          <Avatar src={userProfiles[currentEmail]?.profilePicture} email={currentEmail} size={48} style={{ borderColor: '#334155' }} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 26, fontWeight: '800', color: '#f8fafc' }}>Dashboard</Text>
+            <Text style={{ color: '#94a3b8', marginTop: 2, fontSize: 13 }}>{currentEmail || 'Guest'}</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            {unreadCount > 0 && (
+              <TouchableOpacity onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
+                <Text style={{ fontSize: 22 }}>🔔</Text>
+                <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: '#dc2626', borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            <Avatar src={userProfiles[currentEmail]?.profilePicture} email={currentEmail} size={44} />
+          </View>
         </View>
-        <Text style={{ color: '#cbd5e1', marginTop: 6 }}>{currentEmail || 'Guest'}</Text>
       </View>
 
-      <View style={{ flexDirection: 'row', marginBottom: AppSpace.sm }}>
-        <AppButton label="+ New Request" variant="primary" onPress={() => router.push('/request')} style={{ flex: 1, marginRight: 8 }} />
-        <AppButton label="Payments" variant="neutral" onPress={() => router.push('/payments')} style={{ flex: 1 }} />
+      {/* Search bar */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 10, marginBottom: AppSpace.md }}>
+        <Text style={{ marginRight: 8, fontSize: 16 }}>🔍</Text>
+        <TextInput
+          placeholder="Search requests by title, location..."
+          placeholderTextColor="#94a3b8"
+          value={searchText}
+          onChangeText={setSearchText}
+          style={{ flex: 1, fontSize: 14, color: AppColors.ink900 }}
+        />
+        {searchText.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchText('')}>
+            <Text style={{ color: '#94a3b8', fontSize: 16, paddingLeft: 8 }}>✕</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      <View style={{ flexDirection: 'row', marginBottom: AppSpace.sm }}>
-        <AppButton label="My Requests" variant="neutral" onPress={() => router.push('/my-requests')} style={{ flex: 1, marginRight: 8 }} />
-        <View style={{ flex: 1, marginRight: 8, position: 'relative' }}>
-          <AppButton label="Notifications" variant="neutral" onPress={() => router.push('/notifications')} />
-          {unreadCount > 0 ? (
-            <View style={{ position: 'absolute', top: -6, right: -6, backgroundColor: '#dc2626', borderRadius: 10, minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 }}>
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-            </View>
-          ) : null}
-        </View>
-        <AppButton label="Profile" variant="neutral" onPress={() => router.push('/profile')} style={{ flex: 1 }} />
+      {/* Quick actions */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
+        <TouchableOpacity onPress={() => router.push('/request-wizard')} style={{ flex: 1, backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center' }}>
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>＋ Post a Job</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/my-requests')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 13 }}>My Jobs</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/wallet')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 13 }}>💰 Wallet</Text>
+        </TouchableOpacity>
       </View>
 
-      <View style={{ flexDirection: 'row', marginBottom: AppSpace.sm }}>
-        <AppButton label="Browse Providers" onPress={() => router.push('/providers')} style={{ flex: 1, marginRight: 8, backgroundColor: '#4f46e5' }} />
-        <AppButton label="Offer Services" variant="neutral" onPress={() => router.push('/provider-setup')} style={{ flex: 1 }} />
+      {/* More navigation */}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
+        <TouchableOpacity onPress={() => router.push('/providers')} style={{ flex: 1, backgroundColor: '#ede9fe', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
+          <Text style={{ color: '#4f46e5', fontWeight: '700', fontSize: 12 }}>🔎 Browse Providers</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/provider-setup')} style={{ flex: 1, backgroundColor: '#ecfdf5', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
+          <Text style={{ color: '#059669', fontWeight: '700', fontSize: 12 }}>🛠 Offer Services</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/notifications')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🔔 Alerts</Text>
+        </TouchableOpacity>
       </View>
 
-      {isAdmin ? (
-        <AppButton label="Admin Moderation" variant="warning" onPress={() => router.push('/admin')} style={{ marginBottom: AppSpace.sm }} />
-      ) : null}
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
+        <TouchableOpacity onPress={() => router.push('/profile')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>👤 Profile</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/payments')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>💳 Payments</Text>
+        </TouchableOpacity>
+        {isAdmin ? (
+          <TouchableOpacity onPress={() => router.push('/admin')} style={{ flex: 1, backgroundColor: '#fef3c7', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
+            <Text style={{ color: '#92400e', fontWeight: '700', fontSize: 12 }}>⚙ Admin</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity onPress={handleLogout} style={{ flex: 1, backgroundColor: '#fff0f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
+            <Text style={{ color: '#be123c', fontWeight: '700', fontSize: 12 }}>⬠ Logout</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
-      <AppButton label="Logout" variant="danger" onPress={handleLogout} style={{ marginBottom: 15 }} />
+      {isAdmin && (
+        <TouchableOpacity onPress={handleLogout} style={{ backgroundColor: '#fff0f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', marginBottom: AppSpace.md }}>
+          <Text style={{ color: '#be123c', fontWeight: '700' }}>Logout</Text>
+        </TouchableOpacity>
+      )}
 
       <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
 
-      <Text style={{ fontSize: 20, marginBottom: 10, color: '#0f172a', fontWeight: '700' }}>Service Requests</Text>
-      <Text style={{ fontSize: 13, color: '#64748b', marginBottom: 12, marginTop: -6 }}>
-        Showing open jobs you can accept, plus your own requests and jobs you are working on.
-      </Text>
+      {/* Featured Providers */}
+      {providers.length > 0 && (
+        <View style={{ marginBottom: AppSpace.md }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>⭐ Featured Providers</Text>
+            <TouchableOpacity onPress={() => router.push('/providers')}>
+              <Text style={{ color: '#4f46e5', fontWeight: '600', fontSize: 13 }}>See all →</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {providers.map((p) => (
+              <TouchableOpacity
+                key={p.id}
+                onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
+                style={{ width: 170, marginRight: 12 }}
+              >
+                <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, padding: 14, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                  <Avatar src={p.profilePicture} email={p.email} size={48} />
+                  <Text style={{ fontWeight: '700', fontSize: 14, color: AppColors.ink900, marginTop: 8 }} numberOfLines={1}>
+                    {p.name || p.email}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#4f46e5', fontWeight: '600', marginTop: 2 }} numberOfLines={1}>
+                    {p.category || 'Provider'}
+                  </Text>
+                  {p.avgRating ? (
+                    <Text style={{ fontSize: 12, color: AppColors.ink500, marginTop: 4 }}>⭐ {Number(p.avgRating).toFixed(1)}</Text>
+                  ) : (
+                    <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>New provider</Text>
+                  )}
+                  {p.startingPrice ? (
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#059669', marginTop: 4 }}>From GHS {p.startingPrice}</Text>
+                  ) : null}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
 
+      {/* Category filter */}
+      <View style={{ marginBottom: AppSpace.md }}>
+        <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 10 }}>Live Requests</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {CATEGORIES.map((cat) => {
+            const active = cat === activeCategory;
+            return (
+              <TouchableOpacity
+                key={cat}
+                onPress={() => setActiveCategory(cat)}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: AppRadius.md,
+                  backgroundColor: active ? '#4f46e5' : '#fff',
+                  borderWidth: 1,
+                  borderColor: active ? '#4f46e5' : '#e2e8f0',
+                  marginRight: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                {cat !== 'All' && <Text style={{ fontSize: 12 }}>{CATEGORY_ICONS[cat] || '✨'}</Text>}
+                <Text style={{ fontWeight: '600', fontSize: 13, color: active ? '#fff' : AppColors.ink700 }}>{cat}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: AppSpace.lg }}>
       {isLoading ? (
         <View>
+          <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: AppSpace.md }}>
+            <LoadingSkeleton height={14} width="30%" style={{ marginBottom: 8 }} />
+            <LoadingSkeleton height={26} width="55%" />
+          </View>
           {[1, 2, 3].map((n) => (
             <AppCard key={n} style={{ marginBottom: 14 }}>
               <LoadingSkeleton height={18} width="65%" style={{ marginBottom: 10 }} />
               <LoadingSkeleton height={14} width="45%" style={{ marginBottom: 8 }} />
               <LoadingSkeleton height={14} width="35%" style={{ marginBottom: 8 }} />
-              <LoadingSkeleton height={14} width="40%" style={{ marginBottom: 12 }} />
               <LoadingSkeleton height={42} width="100%" />
             </AppCard>
           ))}
@@ -303,22 +456,20 @@ export default function Home() {
       ) : (
         <FlatList
           style={{ flex: 1 }}
-          data={requests.filter((item) => {
-            if (!item.title || !item.location || !item.price) return false;
-            const status = getEffectiveStatus(item);
-            // Never show finished requests on the dashboard
-            if (status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED) return false;
-            const isOwner = item.user === currentEmail;
-            const isProvider = item.acceptedBy === currentEmail;
-            const isOpen = status === REQUEST_STATUS.OPEN;
-            // Show open jobs others posted (to accept), or active jobs the user owns/works on
-            return isOwner || isProvider || (isOpen && !isOwner);
-          })}
+          data={visibleRequests}
           keyExtractor={(item) => item.id}
+          ListHeaderComponent={renderListHeader}
           ListEmptyComponent={
-            <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-              <Text style={{ fontSize: 16, color: '#64748b', textAlign: 'center', marginBottom: 6 }}>No active requests right now.</Text>
-              <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>Post a new request or check back later.</Text>
+            <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>📭</Text>
+              <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>No active requests right now</Text>
+              <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>Post a new job or check back soon.</Text>
+              <TouchableOpacity
+                onPress={() => router.push('/request-wizard')}
+                style={{ marginTop: 16, backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 12, paddingHorizontal: 24 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800' }}>＋ Post a Job</Text>
+              </TouchableOpacity>
             </View>
           }
           renderItem={({ item }) => {
@@ -331,38 +482,53 @@ export default function Home() {
 
             return (
               <AppCard style={{ marginBottom: 14 }}>
-                <Text style={{ fontWeight: '700', fontSize: 17, color: '#111827' }}>{item.title}</Text>
+                {/* Header row with category badge */}
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                  <Text style={{ fontWeight: '700', fontSize: 16, color: '#111827', flex: 1 }}>{item.title}</Text>
+                  {item.category && (
+                    <View style={{ backgroundColor: '#ede9fe', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 8 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#4f46e5' }}>
+                        {CATEGORY_ICONS[item.category] || '✨'} {item.category}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
                 {item.description ? (
-                  <Text style={{ marginTop: 4, color: '#475569', fontSize: 13, lineHeight: 18 }} numberOfLines={2}>
+                  <Text style={{ marginTop: 2, color: '#475569', fontSize: 13, lineHeight: 18, marginBottom: 4 }} numberOfLines={2}>
                     {item.description}
                   </Text>
                 ) : null}
-                <Text style={{ marginTop: 5, color: '#334155' }}>Location: {item.location}</Text>
-                <Text style={{ marginTop: 5, color: '#334155' }}>Amount: GHS {item.price}</Text>
-                <Text style={{ marginTop: 7, color, fontWeight: '700' }}>Status: {STATUS_LABELS[status] || status}</Text>
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 7, gap: 8 }}>
-                  <Avatar src={userProfiles[item.user]?.profilePicture} email={item.user} size={24} />
-                  <Text style={{ color: '#4b5563', fontSize: 13 }}>Owner: {item.user || 'Unavailable'}</Text>
+                <Text style={{ color: '#334155', fontSize: 13 }}>📍 {item.location}</Text>
+                <Text style={{ color: '#334155', fontSize: 13, marginTop: 2 }}>💰 GHS {item.price}</Text>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6 }}>
+                  <Avatar src={userProfiles[item.user]?.profilePicture} email={item.user} size={20} />
+                  <Text style={{ color: '#6b7280', fontSize: 12 }}>{item.user || 'Unavailable'}</Text>
+                  {item.acceptedBy && (
+                    <>
+                      <Text style={{ color: '#d1d5db', fontSize: 12 }}>→</Text>
+                      <Avatar src={userProfiles[item.acceptedBy]?.profilePicture} email={item.acceptedBy} size={20} />
+                      <Text style={{ color: '#6b7280', fontSize: 12 }}>{item.acceptedBy}</Text>
+                    </>
+                  )}
                 </View>
 
-                {item.acceptedBy ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 }}>
-                    <Avatar src={userProfiles[item.acceptedBy]?.profilePicture} email={item.acceptedBy} size={24} />
-                    <Text style={{ color: '#4b5563', fontSize: 13 }}>Provider: {item.acceptedBy}</Text>
-                  </View>
-                ) : null}
+                {/* Visual status stepper */}
+                <JobStepper status={status} />
 
+                {/* Action buttons */}
                 {!item.acceptedBy && !isOwner && status === REQUEST_STATUS.OPEN ? (
-                  <AppButton label="Accept" variant="primary" onPress={() => handleAccept(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'accept'} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label="Accept Job" variant="primary" onPress={() => handleAccept(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'accept'} loadingLabel="Accepting..." style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {isProvider && status === REQUEST_STATUS.ACCEPTED ? (
-                  <AppButton label="Start Work" onPress={() => handleStartWork(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'start'} style={{ marginTop: AppSpace.sm, backgroundColor: AppColors.violet600 }} />
+                  <AppButton label="Start Work" onPress={() => handleStartWork(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'start'} loadingLabel="Updating..." style={{ marginTop: AppSpace.sm, backgroundColor: AppColors.violet600 }} />
                 ) : null}
 
                 {isProvider && status === REQUEST_STATUS.IN_PROGRESS ? (
-                  <AppButton label="Mark Completed" onPress={() => handleCompleteWork(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'complete'} style={{ marginTop: AppSpace.sm, backgroundColor: AppColors.teal700 }} />
+                  <AppButton label="Mark Completed" onPress={() => handleCompleteWork(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'complete'} loadingLabel="Completing..." style={{ marginTop: AppSpace.sm, backgroundColor: AppColors.teal700 }} />
                 ) : null}
 
                 {isOwner && status === REQUEST_STATUS.COMPLETED && !item.paid ? (
@@ -370,28 +536,30 @@ export default function Home() {
                 ) : null}
 
                 {isOwner && status === REQUEST_STATUS.OPEN ? (
-                  <AppButton label={isConfirmingDelete ? 'Tap Again To Delete' : 'Delete Request'} variant="danger" onPress={() => handleDelete(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'delete'} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label={isConfirmingDelete ? 'Tap Again To Confirm Delete' : 'Delete Request'} variant="danger" onPress={() => handleDelete(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'delete'} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {isOwner && status === REQUEST_STATUS.PAID && item.acceptedBy && !item.rating ? (
-                  <AppButton label="Rate Provider" variant="warning" onPress={() => openRateScreen(item)} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label="⭐ Rate Provider" variant="warning" onPress={() => openRateScreen(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {(isOwner || isProvider) && item.acceptedBy ? (
-                  <AppButton label="Open Chat" variant="neutral" onPress={() => router.push({ pathname: '/chat', params: { requestId: item.id } })} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label="💬 Open Chat" variant="neutral" onPress={() => router.push({ pathname: '/chat', params: { requestId: item.id } })} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
-                {item.paid ? (
+                {item.paid && item.commission != null ? (
                   <View style={{ marginTop: 10, padding: 12, borderRadius: 10, backgroundColor: '#ecfdf5' }}>
-                    <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 6 }}>Payment Completed</Text>
-                    <Text style={{ color: '#166534', marginBottom: 4 }}>Status: {item.paymentStatus || 'success'}</Text>
-                    <Text style={{ color: '#166534', marginBottom: 4 }}>Reference: {item.paymentReference || 'Unavailable'}</Text>
-                    <Text style={{ color: '#166534', marginBottom: 4 }}>Channel: {item.paymentChannel || 'Unavailable'}</Text>
-                    <Text style={{ color: '#166534', marginBottom: 4 }}>Paid at: {formatPaidAt(item.paidAt)}</Text>
-                    <Text style={{ color: '#166534', marginBottom: 4 }}>Gateway: {item.gatewayResponse || 'Unavailable'}</Text>
+                    <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 4 }}>✅ Payment Completed</Text>
+                    <Text style={{ color: '#166534', fontSize: 12 }}>Amount: GHS {item.price} | Platform fee: GHS {Number(item.commission).toFixed(2)} | Provider net: GHS {Number(item.providerNet).toFixed(2)}</Text>
+                    <Text style={{ color: '#166534', fontSize: 12 }}>Ref: {item.paymentReference || 'Unavailable'} · {formatPaidAt(item.paidAt)}</Text>
                     {item.rating ? (
-                      <Text style={{ color: '#166534' }}>Review: {item.rating}/5{item.review ? ` - ${item.review}` : ''}</Text>
+                      <Text style={{ color: '#166534', fontSize: 12 }}>Review: {item.rating}/5{item.review ? ` — "${item.review}"` : ''}</Text>
                     ) : null}
+                  </View>
+                ) : item.paid ? (
+                  <View style={{ marginTop: 10, padding: 12, borderRadius: 10, backgroundColor: '#ecfdf5' }}>
+                    <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 4 }}>✅ Payment Completed</Text>
+                    <Text style={{ color: '#166534', fontSize: 12 }}>Ref: {item.paymentReference || 'Unavailable'} · {formatPaidAt(item.paidAt)}</Text>
                   </View>
                 ) : null}
               </AppCard>

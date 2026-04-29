@@ -20,6 +20,7 @@ import {
     signOut,
 } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
+import { USER_ROLES } from '../constants/access';
 import { auth, db } from '../firebase';
 
 const SOCIAL_AUTH_ENABLED = {
@@ -47,15 +48,14 @@ export default function Auth() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLogin, setIsLogin] = useState(true);
+  const [role, setRole] = useState(USER_ROLES.CUSTOMER);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [notice, setNotice] = useState(null);
 
-
-
   const normalizedEmail = email.trim().toLowerCase();
 
-  const ensureUserDocument = async (authUser) => {
+  const ensureUserDocument = async (authUser, extraFields = {}) => {
     const normalizedUserEmail = String(authUser?.email || '').trim().toLowerCase();
     if (!normalizedUserEmail) {
       throw new Error('missing_user_email');
@@ -67,6 +67,7 @@ export default function Auth() {
         email: normalizedUserEmail,
         createdAt: new Date(),
         updatedAt: new Date(),
+        ...extraFields,
       },
       { merge: true }
     );
@@ -129,6 +130,8 @@ export default function Auth() {
         setIsSubmitting(false);
         return;
       }
+      // Mark onboarding done for returning users who skipped it
+      await setDoc(doc(db, 'users', normalizedEmail), { onboardingDone: true, updatedAt: new Date() }, { merge: true }).catch(() => {});
       router.replace('/home');
     } catch (error) {
       // Map Firebase error codes to generic messages to prevent user enumeration.
@@ -161,8 +164,8 @@ export default function Auth() {
     try {
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
-      // Seed a user document so profile data is immediately available
-      await ensureUserDocument(credential.user);
+      // Seed a user document so profile data is immediately available (role stored here)
+      await ensureUserDocument(credential.user, { role, onboardingDone: false });
 
       // Send email verification — free Firebase feature, no upgrade needed
       await sendEmailVerification(credential.user);
@@ -290,6 +293,43 @@ export default function Auth() {
         <Text style={{ fontSize: AppType.body, color: '#475569', marginBottom: AppSpace.lg }}>
           Use the same credentials across requests, payments, chat, and ratings.
         </Text>
+
+        {/* Role picker — shown only during sign-up */}
+        {!isLogin && (
+          <View style={{ marginBottom: AppSpace.md }}>
+            <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 8, fontSize: 14 }}>
+              I want to…
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {[
+                { label: '🙋 Hire a provider', value: USER_ROLES.CUSTOMER },
+                { label: '🛠 Offer my services', value: USER_ROLES.PROVIDER },
+              ].map((opt) => {
+                const active = role === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    onPress={() => setRole(opt.value)}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 12,
+                      paddingHorizontal: 8,
+                      borderRadius: AppRadius.md,
+                      borderWidth: 2,
+                      borderColor: active ? '#4338ca' : '#e2e8f0',
+                      backgroundColor: active ? '#eef2ff' : '#f8fafc',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontWeight: '700', fontSize: 13, color: active ? '#4338ca' : AppColors.ink700, textAlign: 'center' }}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         <AppNotice
           tone={notice?.tone}

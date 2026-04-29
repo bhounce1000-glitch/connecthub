@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ScrollView, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppInput from '../components/ui/app-input';
@@ -41,6 +41,8 @@ export default function ProviderSetup() {
   const [phone, setPhone] = useState('');
   const [startingPrice, setStartingPrice] = useState('');
   const [experience, setExperience] = useState('');
+  const [skills, setSkills] = useState([]);
+  const [skillInput, setSkillInput] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -69,6 +71,7 @@ export default function ProviderSetup() {
           setPhone(data.phone || '');
           setStartingPrice(data.startingPrice || '');
           setExperience(data.experience || '');
+          setSkills(Array.isArray(data.skills) ? data.skills : []);
           setIsAvailable(data.isAvailable !== false);
         }
       } catch {
@@ -161,6 +164,7 @@ export default function ProviderSetup() {
           phone: phone.trim(),
           startingPrice: startingPrice.trim(),
           experience: experience.trim(),
+          skills: skills.filter((s) => s.trim().length > 0),
           isAvailable,
           updatedAt: new Date(),
           createdAt: new Date(),
@@ -340,6 +344,83 @@ export default function ProviderSetup() {
             keyboardType="numeric"
             containerStyle={{ marginBottom: 0 }}
           />
+
+          {/* Skills section */}
+          <View style={{ marginTop: 20, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 20 }}>
+            <Text style={{ fontWeight: '700', fontSize: 14, color: AppColors.ink900, marginBottom: 8 }}>
+              🏆 Skills & Tags (optional)
+            </Text>
+            <Text style={{ fontSize: 12, color: AppColors.ink500, marginBottom: 12 }}>
+              Add skills to help clients find you. Press Enter to add.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TextInput
+                value={skillInput}
+                onChangeText={setSkillInput}
+                placeholder="e.g. Pipe Repair, Gas Fitting, Leaks"
+                placeholderTextColor="#94a3b8"
+                style={{
+                  flex: 1,
+                  borderWidth: 1,
+                  borderColor: '#e2e8f0',
+                  borderRadius: AppRadius.md,
+                  paddingHorizontal: 10,
+                  paddingVertical: 8,
+                  fontSize: 13,
+                  color: AppColors.ink900,
+                }}
+                editable={!isSaving}
+                onSubmitEditing={() => {
+                  if (skillInput.trim() && !skills.includes(skillInput.trim())) {
+                    setSkills([...skills, skillInput.trim()]);
+                    setSkillInput('');
+                  }
+                }}
+              />
+              <TouchableOpacity
+                onPress={() => {
+                  if (skillInput.trim() && !skills.includes(skillInput.trim())) {
+                    setSkills([...skills, skillInput.trim()]);
+                    setSkillInput('');
+                  }
+                }}
+                disabled={!skillInput.trim()}
+                style={{
+                  backgroundColor: skillInput.trim() ? '#4f46e5' : '#cbd5e1',
+                  borderRadius: AppRadius.md,
+                  paddingHorizontal: 14,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Add</Text>
+              </TouchableOpacity>
+            </View>
+            {skills.length > 0 && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {skills.map((skill, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    onPress={() => setSkills(skills.filter((_, i) => i !== idx))}
+                    style={{
+                      backgroundColor: '#eef2ff',
+                      borderRadius: 16,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      borderWidth: 1,
+                      borderColor: '#4f46e5',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <Text style={{ color: '#4f46e5', fontWeight: '600', fontSize: 12 }}>{skill}</Text>
+                    <Text style={{ color: '#4f46e5', fontWeight: '800', fontSize: 12 }}>×</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
         </View>
 
         <AppButton

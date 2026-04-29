@@ -35,6 +35,7 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 const ADMIN_BOOTSTRAP_SECRET = process.env.ADMIN_BOOTSTRAP_SECRET || '';
+const COMMISSION_RATE = parseFloat(process.env.COMMISSION_RATE || '0.10');
 
 function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -230,12 +231,19 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
     };
   }
 
+  const requestPrice = Number(beforeData?.price || 0);
+  const commission = parseFloat((requestPrice * COMMISSION_RATE).toFixed(2));
+  const providerNet = parseFloat((requestPrice * (1 - COMMISSION_RATE)).toFixed(2));
+
   const payload = {
     paid: true,
     status: 'paid',
     paymentReference,
     paymentStatus: 'success',
     paidAt: new Date().toISOString(),
+    commission,
+    providerNet,
+    commissionRate: COMMISSION_RATE,
     ...extraFields,
   };
 
