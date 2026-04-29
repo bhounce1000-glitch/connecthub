@@ -1,7 +1,7 @@
 services:
   - type: web
     name: connecthub-backend
-    env: node
+    runtime: node
     plan: free
     rootDir: .
     buildCommand: npm install
@@ -23,10 +23,10 @@ services:
       - key: ADMIN_BOOTSTRAP_SECRET
         sync: false
       - key: CORS_ALLOWED_ORIGINS
-        sync: false
+        value: https://connecthub-1873e.web.app
       - key: PAYSTACK_CALLBACK_BASE_URL
-        sync: false
+        value: https://connecthub-1873e.web.app
       - key: BACKEND_PUBLIC_URL
-        sync: false
+        value: https://connecthub-backend.onrender.com
       - key: EXPO_PUBLIC_WEB_BASE_URL
-        sync: false
+        value: https://connecthub-1873e.web.app

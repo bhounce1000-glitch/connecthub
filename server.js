@@ -23,9 +23,9 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const CALLBACK_BASE_URL = process.env.PAYSTACK_CALLBACK_BASE_URL || 'http://localhost:8081';
-const PUBLIC_SERVER_BASE_URL = process.env.BACKEND_PUBLIC_URL || `http://localhost:${PORT}`;
-const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'http://localhost:8081';
+const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://connecthub-1873e.web.app';
+const CALLBACK_BASE_URL = process.env.PAYSTACK_CALLBACK_BASE_URL || WEB_BASE_URL;
+const PUBLIC_SERVER_BASE_URL = process.env.BACKEND_PUBLIC_URL || 'https://connecthub-backend.onrender.com';
 const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || `${WEB_BASE_URL},${CALLBACK_BASE_URL}`)
   .split(',')
   .map((item) => item.trim())
