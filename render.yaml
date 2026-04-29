@@ -27,6 +27,6 @@ services:
       - key: PAYSTACK_CALLBACK_BASE_URL
         value: https://connecthub-1873e.web.app
       - key: BACKEND_PUBLIC_URL
-        value: https://connecthub-backend.onrender.com
+        value: https://connecthub-yrox.onrender.com
       - key: EXPO_PUBLIC_WEB_BASE_URL
         value: https://connecthub-1873e.web.app
