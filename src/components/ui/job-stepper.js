@@ -7,11 +7,13 @@ const STEPS = [
   { key: REQUEST_STATUS.OPEN,        short: 'Open',     color: '#d97706' },
   { key: REQUEST_STATUS.ACCEPTED,    short: 'Accepted', color: '#1d4ed8' },
   { key: REQUEST_STATUS.IN_PROGRESS, short: 'Working',  color: '#7c3aed' },
+  { key: REQUEST_STATUS.PENDING_CONFIRMATION, short: 'Confirm', color: '#ca8a04' },
   { key: REQUEST_STATUS.COMPLETED,   short: 'Done',     color: '#0f766e' },
   { key: REQUEST_STATUS.PAID,        short: 'Paid',     color: '#166534' },
 ];
 
 export default function JobStepper({ status }) {
+  const isDisputed = status === REQUEST_STATUS.DISPUTED;
   const currentIndex = STEPS.findIndex((s) => s.key === status);
   const safeIndex = currentIndex < 0 ? 0 : currentIndex;
 
@@ -83,6 +85,12 @@ export default function JobStepper({ status }) {
           );
         })}
       </View>
+
+      {isDisputed ? (
+        <Text style={{ marginTop: 6, fontSize: 11, fontWeight: '700', color: '#b91c1c' }}>
+          Disputed
+        </Text>
+      ) : null}
     </View>
   );
 }

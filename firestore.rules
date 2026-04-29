@@ -20,7 +20,7 @@ service cloud.firestore {
     }
 
     function validStatus(value) {
-      return value in ['open', 'accepted', 'in_progress', 'completed', 'paid', 'cancelled'];
+      return value in ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid', 'disputed', 'cancelled'];
     }
 
     function changedKeysOnly(keys) {
@@ -63,8 +63,7 @@ service cloud.firestore {
         && request.resource.data.status == 'open'
         && validStatus(request.resource.data.status);
 
-      allow delete: if isAdmin()
-        || (isOwner() && resource.data.status == 'open' && resource.data.paid == false);
+      allow delete: if false;
 
       allow update: if isSignedIn() && (
         isAdmin()
@@ -88,8 +87,30 @@ service cloud.firestore {
         || (
           resource.data.acceptedBy == email()
           && resource.data.status == 'in_progress'
-          && request.resource.data.status == 'completed'
+          && request.resource.data.status == 'pending_confirmation'
           && changedKeysOnly(['status', 'completedAt'])
+        )
+
+        || (
+          isOwner()
+          && resource.data.status == 'open'
+          && request.resource.data.status == 'cancelled'
+          && changedKeysOnly(['status', 'cancelledAt'])
+        )
+
+        || (
+          isOwner()
+          && resource.data.status == 'pending_confirmation'
+          && request.resource.data.status == 'disputed'
+          && changedKeysOnly([
+            'status',
+            'disputeOpenedAt',
+            'disputeOpenedBy',
+            'disputeReason',
+            'disputeComment',
+            'disputeEvidenceUrls',
+            'paymentHold'
+          ])
         )
 
         || (
@@ -123,7 +144,29 @@ service cloud.firestore {
 
     match /users/{userEmail} {
       allow read: if isSignedIn() && (userEmail == email() || isAdmin());
-      allow create, update: if isSignedIn() && userEmail == email();
+      allow create: if isSignedIn() && userEmail == email();
+      allow update: if isSignedIn() && (
+        (userEmail == email() && !('kycStatus' in request.resource.data.diff(resource.data).changedKeys()))
+        || isAdmin()
+      );
+      allow delete: if false;
+    }
+
+    match /kyc_submissions/{userEmail} {
+      allow read: if isSignedIn() && (userEmail == email() || isAdmin());
+
+      // User can create/update their own submission but cannot directly self-verify/reject
+      allow create, update: if isSignedIn()
+        && userEmail == email()
+        && (
+          !('kycStatus' in request.resource.data)
+          || request.resource.data.kycStatus in ['not_submitted', 'pending_verification']
+        )
+        && (!('reviewedBy' in request.resource.data) || request.resource.data.reviewedBy == null)
+        && (!('rejectionReason' in request.resource.data) || request.resource.data.rejectionReason is string);
+
+      // Admin can fully review and set final status
+      allow update: if isSignedIn() && isAdmin();
       allow delete: if false;
     }
 
@@ -145,6 +188,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly([
             'email', 'name', 'bio', 'category', 'location', 'phone',
             'startingPrice', 'experience', 'isAvailable',
+            'skills',
             'profilePicture', 'avgRating', 'jobsCompleted',
             'createdAt', 'updatedAt'
           ])
@@ -155,6 +199,7 @@ service cloud.firestore {
         && request.resource.data.bio is string
         && request.resource.data.bio.size() <= 500
         && request.resource.data.category is string
+        && (!('skills' in request.resource.data) || request.resource.data.skills is list)
         && request.resource.data.location is string
         && request.resource.data.location.size() <= 200
         && request.resource.data.isAvailable is bool

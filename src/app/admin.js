@@ -1,15 +1,16 @@
 import { useRouter } from 'expo-router';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
+import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import ListScreen from '../components/ui/list-screen';
-import { REQUEST_STATUS, STATUS_LABELS, isAdminEmail } from '../constants/access';
+import { KYC_STATUS, REQUEST_STATUS, STATUS_LABELS, isAdminEmail } from '../constants/access';
 import { API_BASE_URL } from '../constants/api';
-import { AppColors, AppSpace } from '../constants/design-tokens';
+import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiDelete, apiPost, assertApiSuccess } from '../utils/api-client';
@@ -19,13 +20,14 @@ export default function Admin() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
   const [requests, setRequests] = useState([]);
+  const [kycSubmissions, setKycSubmissions] = useState([]);
+  const [activeTab, setActiveTab] = useState('requests');
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
-  // Redirect unauthenticated users or non-admins
   useEffect(() => {
     if (!isAuthReady) return;
     if (!user) {
@@ -38,9 +40,7 @@ export default function Admin() {
   }, [isAuthReady, isAdmin, router, user]);
 
   useEffect(() => {
-    if (!isAdmin) {
-      return undefined;
-    }
+    if (!isAdmin) return undefined;
 
     return onSnapshot(collection(db, 'requests'), (snapshot) => {
       const rows = snapshot.docs
@@ -55,17 +55,27 @@ export default function Admin() {
     });
   }, [isAdmin]);
 
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+
+    return onSnapshot(collection(db, 'kyc_submissions'), (snapshot) => {
+      const rows = snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')));
+      setKycSubmissions(rows);
+    });
+  }, [isAdmin]);
+
   const setStatus = async (item, nextStatus) => {
     setPendingAction(`${item.id}:${nextStatus}`);
     setNotice(null);
 
     try {
-      const { response, data } = await apiPost(`${API_BASE_URL}/admin/requests/${item.id}/moderate`, {
-        status: nextStatus,
-        note: 'Updated from admin screen',
-      }, {
-        requireAuth: true,
-      });
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/requests/${item.id}/moderate`,
+        { status: nextStatus, note: 'Updated from admin screen' },
+        { requireAuth: true }
+      );
       assertApiSuccess(response, data, 'Moderation request failed');
       setNotice({
         tone: 'success',
@@ -88,8 +98,8 @@ export default function Admin() {
       setConfirmDeleteId(item.id);
       setNotice({
         tone: 'warning',
-        title: 'Confirm deletion',
-        message: `Tap delete again to permanently remove "${item.title || item.id}".`,
+        title: 'Confirm cancellation',
+        message: `Tap again to cancel "${item.title || item.id}". Record will remain for audit/history.`,
       });
       return;
     }
@@ -102,17 +112,44 @@ export default function Admin() {
       const { response, data } = await apiDelete(`${API_BASE_URL}/admin/requests/${item.id}`, {
         requireAuth: true,
       });
-      assertApiSuccess(response, data, 'Delete request failed');
+      assertApiSuccess(response, data, 'Cancel request failed');
       setNotice({
         tone: 'success',
-        title: 'Request deleted',
-        message: `${item.title || item.id} was removed successfully.`,
+        title: 'Request cancelled',
+        message: `${item.title || item.id} was cancelled successfully.`,
       });
     } catch (error) {
       setNotice({
         tone: 'error',
-        title: 'Delete failed',
-        message: formatApiMessage({ message: error.message }, 'Could not delete this request.'),
+        title: 'Cancel failed',
+        message: formatApiMessage({ message: error.message }, 'Could not cancel this request.'),
+      });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const reviewKyc = async (email, action, reason = '') => {
+    const key = `kyc:${email}:${action}`;
+    setPendingAction(key);
+    setNotice(null);
+
+    try {
+      const endpoint = `${API_BASE_URL}/admin/kyc/${encodeURIComponent(email)}/${action}`;
+      const payload = action === 'reject' ? { reason } : {};
+      const { response, data } = await apiPost(endpoint, payload, { requireAuth: true });
+      assertApiSuccess(response, data, `KYC ${action} failed`);
+
+      setNotice({
+        tone: 'success',
+        title: action === 'approve' ? 'KYC approved' : 'KYC rejected',
+        message: `${email} has been ${action === 'approve' ? 'verified' : 'rejected'}.`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: `KYC ${action} failed`,
+        message: formatApiMessage({ message: error.message }, `Could not ${action} KYC for ${email}.`),
       });
     } finally {
       setPendingAction(null);
@@ -130,82 +167,221 @@ export default function Admin() {
     );
   }
 
+  const pendingKycCount = kycSubmissions.filter((k) => k.kycStatus === KYC_STATUS.PENDING_VERIFICATION).length;
+
   return (
     <ListScreen
       eyebrow="ADMIN DESK"
       title="Moderation"
-      subtitle="Manage status and moderate request records."
+      subtitle="Manage requests and verify user identities."
       accentColor="#111827"
       accentTextColor="#cbd5e1"
       toolbar={(
-        <AppNotice
-          tone={notice?.tone}
-          title={notice?.title}
-          message={notice?.message}
-        />
+        <>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
+            <TouchableOpacity
+              onPress={() => setActiveTab('requests')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'requests' ? '#6366f1' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'requests' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Requests ({requests.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('kyc')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'kyc' ? '#6366f1' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'kyc' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                KYC ({pendingKycCount} pending)
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
+        </>
       )}
-      hasItems={requests.length > 0}
-      emptyTitle="No requests found"
-      emptyDescription="Requests will appear here once they are created."
+      hasItems={activeTab === 'requests' ? requests.length > 0 : kycSubmissions.length > 0}
+      emptyTitle={activeTab === 'requests' ? 'No requests found' : 'No KYC submissions'}
+      emptyDescription={activeTab === 'requests' ? 'Requests will appear here once they are created.' : 'KYC submissions will appear here.'}
     >
       <ScrollView showsVerticalScrollIndicator={false}>
-        {requests.map((item) => (
-          <AppCard key={item.id} style={{ marginBottom: 12 }}>
-            <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>
-            <Text>ID: {item.id}</Text>
-            <Text>User: {item.user || 'Unavailable'}</Text>
-            <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
-            <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
-            <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
-
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm }}>
-              <AppButton
-                label="Reopen"
-                variant="primary"
-                onPress={() => setStatus(item, REQUEST_STATUS.OPEN)}
-                disabled={Boolean(pendingAction)}
-                loading={pendingAction === `${item.id}:${REQUEST_STATUS.OPEN}`}
-                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+        {activeTab === 'kyc'
+          ? kycSubmissions.map((item) => (
+              <KycReviewCard
+                key={item.id}
+                item={item}
+                pendingAction={pendingAction}
+                onApprove={() => reviewKyc(item.email, 'approve')}
+                onReject={(reason) => reviewKyc(item.email, 'reject', reason)}
               />
+            ))
+          : requests.map((item) => (
+              <AppCard key={item.id} style={{ marginBottom: 12 }}>
+                <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>
+                <Text>ID: {item.id}</Text>
+                <Text>User: {item.user || 'Unavailable'}</Text>
+                <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
+                <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
+                <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
 
-              <AppButton
-                label="Complete"
-                onPress={() => setStatus(item, REQUEST_STATUS.COMPLETED)}
-                disabled={Boolean(pendingAction)}
-                loading={pendingAction === `${item.id}:${REQUEST_STATUS.COMPLETED}`}
-                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: AppColors.teal700 }}
-              />
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm }}>
+                  <AppButton
+                    label="Reopen"
+                    variant="primary"
+                    onPress={() => setStatus(item, REQUEST_STATUS.OPEN)}
+                    disabled={Boolean(pendingAction)}
+                    loading={pendingAction === `${item.id}:${REQUEST_STATUS.OPEN}`}
+                    style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                  />
 
-              <AppButton
-                label="Mark Paid"
-                variant="success"
-                onPress={() => setStatus(item, REQUEST_STATUS.PAID)}
-                disabled={Boolean(pendingAction)}
-                loading={pendingAction === `${item.id}:${REQUEST_STATUS.PAID}`}
-                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
-              />
+                  <AppButton
+                    label="Complete"
+                    onPress={() => setStatus(item, REQUEST_STATUS.COMPLETED)}
+                    disabled={Boolean(pendingAction)}
+                    loading={pendingAction === `${item.id}:${REQUEST_STATUS.COMPLETED}`}
+                    style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: AppColors.teal700 }}
+                  />
 
-              <AppButton
-                label="Cancel"
-                variant="danger"
-                onPress={() => setStatus(item, REQUEST_STATUS.CANCELLED)}
-                disabled={Boolean(pendingAction)}
-                loading={pendingAction === `${item.id}:${REQUEST_STATUS.CANCELLED}`}
-                style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#b91c1c' }}
-              />
+                  <AppButton
+                    label="Need Confirm"
+                    onPress={() => setStatus(item, REQUEST_STATUS.PENDING_CONFIRMATION)}
+                    disabled={Boolean(pendingAction)}
+                    loading={pendingAction === `${item.id}:${REQUEST_STATUS.PENDING_CONFIRMATION}`}
+                    style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#ca8a04' }}
+                  />
 
-              <AppButton
-                label={confirmDeleteId === item.id ? 'Tap Again To Delete' : 'Delete'}
-                variant="danger"
-                onPress={() => deleteRequest(item)}
-                disabled={Boolean(pendingAction)}
-                loading={pendingAction === `${item.id}:delete`}
-                style={{ marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#7f1d1d' }}
-              />
-            </View>
-          </AppCard>
-        ))}
+                  <AppButton
+                    label="Dispute"
+                    variant="danger"
+                    onPress={() => setStatus(item, REQUEST_STATUS.DISPUTED)}
+                    disabled={Boolean(pendingAction)}
+                    loading={pendingAction === `${item.id}:${REQUEST_STATUS.DISPUTED}`}
+                    style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#b91c1c' }}
+                  />
+
+                  <AppButton
+                    label="Mark Paid"
+                    variant="success"
+                    onPress={() => setStatus(item, REQUEST_STATUS.PAID)}
+                    disabled={Boolean(pendingAction)}
+                    loading={pendingAction === `${item.id}:${REQUEST_STATUS.PAID}`}
+                    style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                  />
+
+                  <AppButton
+                    label="Cancel"
+                    variant="danger"
+                    onPress={() => setStatus(item, REQUEST_STATUS.CANCELLED)}
+                    disabled={Boolean(pendingAction)}
+                    loading={pendingAction === `${item.id}:${REQUEST_STATUS.CANCELLED}`}
+                    style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#b91c1c' }}
+                  />
+
+                  <AppButton
+                    label={confirmDeleteId === item.id ? 'Tap Again To Cancel' : 'Cancel'}
+                    variant="danger"
+                    onPress={() => deleteRequest(item)}
+                    disabled={Boolean(pendingAction)}
+                    loading={pendingAction === `${item.id}:delete`}
+                    style={{ marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#7f1d1d' }}
+                  />
+                </View>
+              </AppCard>
+            ))}
       </ScrollView>
     </ListScreen>
+  );
+}
+
+function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectForm, setShowRejectForm] = useState(false);
+
+  const kycBadgeColor =
+    item.kycStatus === KYC_STATUS.VERIFIED
+      ? '#16a34a'
+      : item.kycStatus === KYC_STATUS.REJECTED
+        ? '#b91c1c'
+        : '#d97706';
+
+  return (
+    <AppCard style={{ marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+        <Text style={{ fontWeight: '700', flex: 1 }}>{item.fullName || item.email}</Text>
+        <View style={{ backgroundColor: kycBadgeColor, paddingHorizontal: 8, paddingVertical: 3, borderRadius: AppRadius.sm }}>
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+            {item.kycStatus === KYC_STATUS.VERIFIED
+              ? 'Verified'
+              : item.kycStatus === KYC_STATUS.REJECTED
+                ? 'Rejected'
+                : 'Pending'}
+          </Text>
+        </View>
+      </View>
+
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Email: {item.email}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Phone: {item.phone || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>ID Type: {item.idType || 'N/A'} - {item.idNumber || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>
+        Payment: {item.paymentMethod === 'bank' ? `Bank - ${item.bankName || 'N/A'}` : `MoMo - ${item.momoProvider || 'N/A'}`}
+      </Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 4 }}>
+        Submitted: {item.submittedAt ? String(item.submittedAt).slice(0, 10) : 'N/A'}
+      </Text>
+
+      {item.kycStatus === KYC_STATUS.PENDING_VERIFICATION && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm, gap: 8 }}>
+          <AppButton
+            label={pendingAction === `kyc:${item.email}:approve` ? 'Approving...' : 'Approve'}
+            onPress={onApprove}
+            disabled={Boolean(pendingAction)}
+            style={{ paddingHorizontal: 14, paddingVertical: 9, backgroundColor: '#15803d' }}
+          />
+          <AppButton
+            label={showRejectForm ? 'Cancel Reject' : 'Reject'}
+            onPress={() => setShowRejectForm((v) => !v)}
+            disabled={Boolean(pendingAction)}
+            style={{ paddingHorizontal: 14, paddingVertical: 9, backgroundColor: '#b91c1c' }}
+          />
+        </View>
+      )}
+
+      {showRejectForm && item.kycStatus === KYC_STATUS.PENDING_VERIFICATION && (
+        <View style={{ marginTop: AppSpace.sm }}>
+          <AppInput
+            label="Rejection reason"
+            placeholder="Explain why this was rejected"
+            value={rejectReason}
+            onChangeText={setRejectReason}
+            multiline
+          />
+          <AppButton
+            label={pendingAction === `kyc:${item.email}:reject` ? 'Rejecting...' : 'Confirm Rejection'}
+            onPress={() => {
+              const reason = rejectReason.trim();
+              if (!reason) return;
+              onReject(reason);
+              setShowRejectForm(false);
+              setRejectReason('');
+            }}
+            disabled={!rejectReason.trim() || Boolean(pendingAction)}
+            style={{ backgroundColor: '#7f1d1d' }}
+          />
+        </View>
+      )}
+    </AppCard>
   );
 }

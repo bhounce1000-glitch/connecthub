@@ -25,8 +25,10 @@ export const REQUEST_STATUS = {
   OPEN: 'open',
   ACCEPTED: 'accepted',
   IN_PROGRESS: 'in_progress',
+  PENDING_CONFIRMATION: 'pending_confirmation',
   COMPLETED: 'completed',
   PAID: 'paid',
+  DISPUTED: 'disputed',
   CANCELLED: 'cancelled',
 };
 
@@ -34,9 +36,18 @@ export const STATUS_LABELS = {
   [REQUEST_STATUS.OPEN]: 'Open',
   [REQUEST_STATUS.ACCEPTED]: 'Accepted',
   [REQUEST_STATUS.IN_PROGRESS]: 'In Progress',
+  [REQUEST_STATUS.PENDING_CONFIRMATION]: 'Pending Confirmation',
   [REQUEST_STATUS.COMPLETED]: 'Completed',
   [REQUEST_STATUS.PAID]: 'Paid',
+  [REQUEST_STATUS.DISPUTED]: 'Disputed',
   [REQUEST_STATUS.CANCELLED]: 'Cancelled',
+};
+
+export const KYC_STATUS = {
+  NOT_SUBMITTED: 'not_submitted',
+  PENDING_VERIFICATION: 'pending_verification',
+  VERIFIED: 'verified',
+  REJECTED: 'rejected',
 };
 
 const adminEmailList = (process.env.EXPO_PUBLIC_ADMIN_EMAILS || 'bhounce1000@gmail.com')

@@ -10,7 +10,7 @@ import LoadingSkeleton from '../components/ui/loading-skeleton';
 import useAuthUser from '../hooks/use-auth-user';
 
 // Firebase
-import { collection, deleteDoc, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { REQUEST_STATUS, STATUS_LABELS } from '../constants/access';
 import { AppColors, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
@@ -26,8 +26,8 @@ export default function MyRequests() {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [tab, setTab] = useState('active'); // 'active' | 'history'
 
-  const ACTIVE_STATUSES = [REQUEST_STATUS.OPEN, REQUEST_STATUS.ACCEPTED, REQUEST_STATUS.IN_PROGRESS];
-  const HISTORY_STATUSES = [REQUEST_STATUS.COMPLETED, REQUEST_STATUS.PAID];
+  const ACTIVE_STATUSES = [REQUEST_STATUS.OPEN, REQUEST_STATUS.ACCEPTED, REQUEST_STATUS.IN_PROGRESS, REQUEST_STATUS.PENDING_CONFIRMATION];
+  const HISTORY_STATUSES = [REQUEST_STATUS.COMPLETED, REQUEST_STATUS.PAID, REQUEST_STATUS.DISPUTED, REQUEST_STATUS.CANCELLED];
 
   const visibleRequests = useMemo(() => {
     return myRequests.filter((item) => {
@@ -66,15 +66,15 @@ export default function MyRequests() {
     return unsubscribe;
   }, [currentEmail, isAuthReady]);
 
-  const handleDelete = async (item) => {
+  const handleCancel = async (item) => {
     try {
       const status = item.status || REQUEST_STATUS.OPEN;
 
       if (status !== REQUEST_STATUS.OPEN || item.paid) {
         setNotice({
           tone: 'warning',
-          title: 'Delete blocked',
-          message: 'Only open and unpaid requests can be deleted.',
+          title: 'Cancel blocked',
+          message: 'Only open and unpaid requests can be cancelled.',
         });
         return;
       }
@@ -83,26 +83,29 @@ export default function MyRequests() {
         setConfirmDeleteId(item.id);
         setNotice({
           tone: 'warning',
-          title: 'Confirm deletion',
-          message: `Tap delete again to permanently remove ${item.title}.`,
+          title: 'Confirm cancellation',
+          message: `Tap again to cancel ${item.title}. It will remain in history.`,
         });
         return;
       }
 
       setPendingDeleteId(item.id);
       setNotice(null);
-      await deleteDoc(doc(db, 'requests', item.id));
+      await updateDoc(doc(db, 'requests', item.id), {
+        status: REQUEST_STATUS.CANCELLED,
+        cancelledAt: new Date().toISOString(),
+      });
       setConfirmDeleteId(null);
       setNotice({
         tone: 'success',
-        title: 'Request deleted',
-        message: `${item.title} was removed successfully.`,
+        title: 'Request cancelled',
+        message: `${item.title} was cancelled and saved in your history.`,
       });
     } catch (error) {
       setNotice({
         tone: 'error',
-        title: 'Delete failed',
-        message: error.message || 'Could not delete this request.',
+        title: 'Cancel failed',
+        message: error.message || 'Could not cancel this request.',
       });
     } finally {
       setPendingDeleteId(null);
@@ -185,11 +188,21 @@ export default function MyRequests() {
               {(!item.status || item.status === REQUEST_STATUS.OPEN) && !item.paid ? (
                 <View style={{ marginTop: AppSpace.sm }}>
                   <AppButton
-                    label={confirmDeleteId === item.id ? 'Tap Again To Delete' : 'Delete'}
+                    label={confirmDeleteId === item.id ? 'Tap Again To Cancel' : 'Cancel'}
                     variant="danger"
-                    onPress={() => handleDelete(item)}
+                    onPress={() => handleCancel(item)}
                     disabled={Boolean(pendingDeleteId)}
                     loading={pendingDeleteId === item.id}
+                  />
+                </View>
+              ) : null}
+
+              {item.status === REQUEST_STATUS.PENDING_CONFIRMATION ? (
+                <View style={{ marginTop: AppSpace.sm }}>
+                  <AppButton
+                    label="Review Work & Confirm"
+                    variant="success"
+                    onPress={() => router.push({ pathname: '/confirm-completion', params: { requestId: item.id } })}
                   />
                 </View>
               ) : null}

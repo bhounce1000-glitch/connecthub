@@ -454,6 +454,197 @@ app.post('/paystack/webhook', async (req, res) => {
   }
 });
 
+app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+    const numericRating = Number(req.body?.rating);
+    const comment = String(req.body?.comment || '').trim();
+
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    }
+
+    if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+      return sendError(res, req, 400, 'invalid_rating', 'Rating must be an integer between 1 and 5');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const snap = await requestRef.get();
+
+    if (!snap.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const beforeData = snap.data() || {};
+    const ownerEmail = String(beforeData.user || '').toLowerCase();
+
+    if (!ownerEmail || ownerEmail !== actorEmail) {
+      return sendError(res, req, 403, 'owner_access_required', 'Only the job owner can confirm completion');
+    }
+
+    if (beforeData.status !== 'pending_confirmation') {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Job is not pending customer confirmation');
+    }
+
+    const completionPatch = {
+      status: 'completed',
+      completionConfirmedAt: new Date().toISOString(),
+      completionConfirmedBy: actorEmail,
+      rating: numericRating,
+      review: comment,
+      ratedAt: new Date().toISOString(),
+    };
+
+    await requestRef.set(completionPatch, { merge: true });
+
+    const escrowReference = `escrow_release_${requestId}_${Date.now()}`;
+    const paymentUpdate = await markRequestPaid(requestId, escrowReference, {
+      paymentChannel: 'escrow_release',
+      gatewayResponse: 'Escrow released after customer confirmation',
+      source: 'customer_confirmation',
+    });
+
+    if (!paymentUpdate.updated) {
+      return sendError(res, req, 409, 'payment_release_failed', 'Could not release escrow payment', paymentUpdate);
+    }
+
+    if (beforeData.acceptedBy) {
+      await writeNotification(
+        beforeData.acceptedBy,
+        `Job "${beforeData.title || requestId}" was confirmed by the customer and paid successfully.`
+      );
+    }
+    if (beforeData.user) {
+      await writeNotification(
+        beforeData.user,
+        `Job "${beforeData.title || requestId}" completed successfully. Payment has been released.`
+      );
+    }
+
+    await writeAuditLog({
+      actorEmail,
+      actorUid: req.user?.uid || null,
+      eventType: 'customer_confirmed_completion',
+      requestId,
+      before: beforeData,
+      after: { ...beforeData, ...completionPatch, status: 'paid' },
+      metadata: {
+        rating: numericRating,
+        paymentReference: escrowReference,
+      },
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Job confirmed and payment released',
+      data: {
+        id: requestId,
+        status: 'paid',
+        paymentReference: escrowReference,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'CONFIRM_COMPLETION_ERROR');
+    return sendError(res, req, 500, 'confirm_completion_failed', 'Could not confirm completion');
+  }
+});
+
+app.post('/jobs/:id/dispute', requireAuth, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+    const reason = String(req.body?.reason || '').trim();
+    const comment = String(req.body?.comment || '').trim();
+    const evidenceUrls = Array.isArray(req.body?.evidenceUrls) ? req.body.evidenceUrls.filter((item) => typeof item === 'string') : [];
+
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    }
+
+    if (!reason) {
+      return sendError(res, req, 400, 'missing_dispute_reason', 'Dispute reason is required');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const snap = await requestRef.get();
+
+    if (!snap.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const beforeData = snap.data() || {};
+    const ownerEmail = String(beforeData.user || '').toLowerCase();
+
+    if (!ownerEmail || ownerEmail !== actorEmail) {
+      return sendError(res, req, 403, 'owner_access_required', 'Only the job owner can open a dispute');
+    }
+
+    if (beforeData.status !== 'pending_confirmation') {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Job is not pending customer confirmation');
+    }
+
+    const patch = {
+      status: 'disputed',
+      disputeOpenedAt: new Date().toISOString(),
+      disputeOpenedBy: actorEmail,
+      disputeReason: reason,
+      disputeComment: comment,
+      disputeEvidenceUrls: evidenceUrls,
+      paymentHold: true,
+    };
+
+    await requestRef.set(patch, { merge: true });
+
+    const disputeDoc = {
+      requestId,
+      title: beforeData.title || null,
+      customerEmail: beforeData.user || null,
+      providerEmail: beforeData.acceptedBy || null,
+      reason,
+      comment,
+      evidenceUrls,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await adminDb.collection('disputes').add(disputeDoc);
+
+    if (beforeData.acceptedBy) {
+      await writeNotification(beforeData.acceptedBy, `A dispute was opened for job "${beforeData.title || requestId}". Payment is on hold.`);
+    }
+    if (beforeData.user) {
+      await writeNotification(beforeData.user, `Your dispute for "${beforeData.title || requestId}" has been submitted for admin review.`);
+    }
+    for (const adminEmail of ADMIN_EMAILS) {
+      await writeNotification(adminEmail, `New dispute requires review: "${beforeData.title || requestId}".`);
+    }
+
+    await writeAuditLog({
+      actorEmail,
+      actorUid: req.user?.uid || null,
+      eventType: 'customer_opened_dispute',
+      requestId,
+      before: beforeData,
+      after: { ...beforeData, ...patch },
+      metadata: {
+        reason,
+        evidenceCount: evidenceUrls.length,
+      },
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Dispute opened successfully',
+      data: {
+        id: requestId,
+        status: 'disputed',
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'OPEN_DISPUTE_ERROR');
+    return sendError(res, req, 500, 'open_dispute_failed', 'Could not open dispute');
+  }
+});
+
 // ✅ START SERVER
 app.listen(PORT, '0.0.0.0', () => {
   logger.info({ url: PUBLIC_SERVER_BASE_URL, allowedOrigins: Array.from(allowedOriginSet) }, 'SERVER_STARTED');
@@ -544,7 +735,7 @@ app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, 
     const requestId = req.params.id;
     const { status, note } = req.body || {};
 
-    const allowedStatuses = ['open', 'accepted', 'in_progress', 'completed', 'paid', 'cancelled'];
+    const allowedStatuses = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid', 'disputed', 'cancelled'];
 
     if (!requestId) {
       return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
@@ -619,26 +810,152 @@ app.delete('/admin/requests/:id', requireAuth, requireAdmin, async (req, res) =>
     }
 
     const beforeData = existingSnapshot.data();
-    await requestRef.delete();
+    const patch = {
+      status: 'cancelled',
+      cancelledAt: new Date().toISOString(),
+      cancelledBy: req.user?.email || null,
+      cancellationReason: req.body?.reason || 'Admin cancellation',
+    };
+
+    await requestRef.set(patch, { merge: true });
 
     await writeAuditLog({
       actorEmail: req.user?.email || null,
       actorUid: req.user?.uid || null,
-      eventType: 'admin_delete_request',
+      eventType: 'admin_cancel_request',
       requestId,
       before: beforeData,
-      after: null,
+      after: { ...beforeData, ...patch },
       metadata: {
-        reason: req.body?.reason || null,
+        reason: req.body?.reason || 'Admin cancellation',
       },
     });
 
     return sendSuccess(res, req, {
-      message: 'Request deleted successfully',
-      data: { id: requestId },
+      message: 'Request cancelled successfully',
+      data: { id: requestId, ...patch },
     });
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_DELETE_ERROR');
     return sendError(res, req, 500, 'admin_delete_failed', 'Delete failed');
+  }
+});
+
+// ── KYC ADMIN ENDPOINTS ──────────────────────────────────────────────────────
+
+/**
+ * GET /admin/kyc — list all KYC submissions
+ * Optional ?status=pending_verification|verified|rejected
+ */
+app.get('/admin/kyc', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = adminDb.collection('kyc_submissions').orderBy('submittedAt', 'desc').limit(200);
+    if (status) {
+      q = adminDb.collection('kyc_submissions').where('kycStatus', '==', String(status)).orderBy('submittedAt', 'desc').limit(200);
+    }
+    const snap = await q.get();
+    const submissions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return sendSuccess(res, req, { submissions });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_KYC_LIST_ERROR');
+    return sendError(res, req, 500, 'admin_kyc_list_failed', 'Could not load KYC submissions');
+  }
+});
+
+/**
+ * POST /admin/kyc/:email/approve — approve a KYC submission
+ */
+app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const targetEmail = decodeURIComponent(req.params.email).trim().toLowerCase();
+    if (!targetEmail) return sendError(res, req, 400, 'missing_email', 'Missing email');
+
+    const submissionRef = adminDb.collection('kyc_submissions').doc(targetEmail);
+    const snap = await submissionRef.get();
+    if (!snap.exists) return sendError(res, req, 404, 'submission_not_found', 'KYC submission not found');
+
+    const now = new Date().toISOString();
+    const patch = {
+      kycStatus: 'verified',
+      reviewedBy: req.user?.email || null,
+      reviewedAt: now,
+      updatedAt: now,
+    };
+
+    await submissionRef.set(patch, { merge: true });
+    await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'verified', updatedAt: now }, { merge: true });
+
+    // Notify user
+    await adminDb.collection('notifications').add({
+      userId: targetEmail,
+      message: 'Your identity verification has been approved. You can now access all ConnectHub features.',
+      type: 'kyc_approved',
+      read: false,
+      createdAt: now,
+    });
+
+    await writeAuditLog({
+      actorEmail: req.user?.email || null,
+      actorUid: req.user?.uid || null,
+      eventType: 'admin_kyc_approved',
+      metadata: { targetEmail },
+    });
+
+    return sendSuccess(res, req, { message: 'KYC approved', email: targetEmail });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_KYC_APPROVE_ERROR');
+    return sendError(res, req, 500, 'admin_kyc_approve_failed', 'KYC approval failed');
+  }
+});
+
+/**
+ * POST /admin/kyc/:email/reject — reject a KYC submission
+ * Body: { reason: string }
+ */
+app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const targetEmail = decodeURIComponent(req.params.email).trim().toLowerCase();
+    if (!targetEmail) return sendError(res, req, 400, 'missing_email', 'Missing email');
+
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) return sendError(res, req, 400, 'missing_reason', 'A rejection reason is required');
+
+    const submissionRef = adminDb.collection('kyc_submissions').doc(targetEmail);
+    const snap = await submissionRef.get();
+    if (!snap.exists) return sendError(res, req, 404, 'submission_not_found', 'KYC submission not found');
+
+    const now = new Date().toISOString();
+    const patch = {
+      kycStatus: 'rejected',
+      rejectionReason: reason,
+      reviewedBy: req.user?.email || null,
+      reviewedAt: now,
+      updatedAt: now,
+    };
+
+    await submissionRef.set(patch, { merge: true });
+    await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'rejected', updatedAt: now }, { merge: true });
+
+    // Notify user
+    await adminDb.collection('notifications').add({
+      userId: targetEmail,
+      message: `Your identity verification was not approved. Reason: ${reason}. Please resubmit with correct documents.`,
+      type: 'kyc_rejected',
+      read: false,
+      createdAt: now,
+    });
+
+    await writeAuditLog({
+      actorEmail: req.user?.email || null,
+      actorUid: req.user?.uid || null,
+      eventType: 'admin_kyc_rejected',
+      metadata: { targetEmail, reason },
+    });
+
+    return sendSuccess(res, req, { message: 'KYC rejected', email: targetEmail });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_KYC_REJECT_ERROR');
+    return sendError(res, req, 500, 'admin_kyc_reject_failed', 'KYC rejection failed');
   }
 });

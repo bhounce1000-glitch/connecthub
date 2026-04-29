@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -19,8 +19,10 @@ const STATUS_COLORS = {
   [REQUEST_STATUS.OPEN]: '#d97706',
   [REQUEST_STATUS.ACCEPTED]: '#1d4ed8',
   [REQUEST_STATUS.IN_PROGRESS]: '#7c3aed',
+  [REQUEST_STATUS.PENDING_CONFIRMATION]: '#ca8a04',
   [REQUEST_STATUS.COMPLETED]: '#0f766e',
   [REQUEST_STATUS.PAID]: '#166534',
+  [REQUEST_STATUS.DISPUTED]: '#b91c1c',
   [REQUEST_STATUS.CANCELLED]: '#b91c1c',
 };
 
@@ -214,26 +216,31 @@ export default function Home() {
 
   const handleCompleteWork = async (item) => {
     await runRequestAction(
-      item, 'complete', 'Work marked complete', `${item.title} is ready for payment.`,
+      item, 'complete', 'Completion submitted', `${item.title} is now awaiting customer confirmation.`,
       async () => {
         await updateDoc(doc(db, 'requests', item.id), {
-          status: REQUEST_STATUS.COMPLETED,
+          status: REQUEST_STATUS.PENDING_CONFIRMATION,
           completedAt: new Date().toISOString(),
         });
-        await createNotification(item.user, `Work on "${item.title}" is complete. You can now pay your provider.`);
+        await createNotification(item.user, `Your service provider marked "${item.title}" as done. Please review and confirm completion.`);
       }
     );
   };
 
-  const handleDelete = async (item) => {
+  const handleCancel = async (item) => {
     if (confirmDeleteId !== item.id) {
       setConfirmDeleteId(item.id);
-      setNotice({ tone: 'warning', title: 'Confirm deletion', message: `Tap delete again to permanently remove ${item.title}.` });
+      setNotice({ tone: 'warning', title: 'Confirm cancellation', message: `Tap again to cancel ${item.title}. This keeps the job in history.` });
       return;
     }
     await runRequestAction(
-      item, 'delete', 'Request deleted', `${item.title} was removed successfully.`,
-      () => deleteDoc(doc(db, 'requests', item.id))
+      item, 'cancel', 'Request cancelled', `${item.title} was cancelled and moved to history.`,
+      async () => {
+        await updateDoc(doc(db, 'requests', item.id), {
+          status: REQUEST_STATUS.CANCELLED,
+          cancelledAt: new Date().toISOString(),
+        });
+      }
     );
   };
 
@@ -245,13 +252,17 @@ export default function Home() {
     router.push({ pathname: '/rate', params: { requestId: item.id, providerEmail: item.acceptedBy || '' } });
   };
 
+  const openRateCustomerScreen = (item) => {
+    router.push({ pathname: '/rate', params: { requestId: item.id, mode: 'customer' } });
+  };
+
   const CATEGORIES = ['All', ...Object.keys(CATEGORY_ICONS)];
 
   const visibleRequests = useMemo(() => {
     return requests.filter((item) => {
       if (!item.title || !item.location || !item.price) return false;
       const status = getEffectiveStatus(item);
-      if (status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED) return false;
+      if (status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED || status === REQUEST_STATUS.CANCELLED) return false;
       const isOwner = item.user === currentEmail;
       const isProvider = item.acceptedBy === currentEmail;
       const isOpen = status === REQUEST_STATUS.OPEN;
@@ -531,16 +542,36 @@ export default function Home() {
                   <AppButton label="Mark Completed" onPress={() => handleCompleteWork(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'complete'} loadingLabel="Completing..." style={{ marginTop: AppSpace.sm, backgroundColor: AppColors.teal700 }} />
                 ) : null}
 
+                {isProvider && status === REQUEST_STATUS.PENDING_CONFIRMATION ? (
+                  <View style={{ marginTop: AppSpace.sm, backgroundColor: '#fef9c3', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#facc15' }}>
+                    <Text style={{ color: '#a16207', fontWeight: '800', fontSize: 12 }}>Awaiting Customer Confirmation</Text>
+                    <Text style={{ color: '#a16207', fontSize: 12, marginTop: 2 }}>Payment remains locked until customer confirms.</Text>
+                  </View>
+                ) : null}
+
+                {isOwner && status === REQUEST_STATUS.PENDING_CONFIRMATION ? (
+                  <AppButton
+                    label="Review Work & Confirm"
+                    variant="success"
+                    onPress={() => router.push({ pathname: '/confirm-completion', params: { requestId: item.id } })}
+                    style={{ marginTop: AppSpace.sm }}
+                  />
+                ) : null}
+
                 {isOwner && status === REQUEST_STATUS.COMPLETED && !item.paid ? (
                   <AppButton label="Pay Provider" variant="success" onPress={() => handlePay(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {isOwner && status === REQUEST_STATUS.OPEN ? (
-                  <AppButton label={isConfirmingDelete ? 'Tap Again To Confirm Delete' : 'Delete Request'} variant="danger" onPress={() => handleDelete(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'delete'} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label={isConfirmingDelete ? 'Tap Again To Cancel Request' : 'Cancel Request'} variant="danger" onPress={() => handleCancel(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'cancel'} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {isOwner && status === REQUEST_STATUS.PAID && item.acceptedBy && !item.rating ? (
                   <AppButton label="⭐ Rate Provider" variant="warning" onPress={() => openRateScreen(item)} style={{ marginTop: AppSpace.sm }} />
+                ) : null}
+
+                {isProvider && status === REQUEST_STATUS.PAID && !item.customerRating ? (
+                  <AppButton label="⭐ Rate Customer" variant="warning" onPress={() => openRateCustomerScreen(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {(isOwner || isProvider) && item.acceptedBy ? (
