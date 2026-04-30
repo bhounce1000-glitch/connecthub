@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -9,9 +9,11 @@ import LoadingSkeleton from '../components/ui/loading-skeleton';
 import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tokens';
 
 // Firebase
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { API_BASE_URL } from '../constants/api';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
+import { apiPost, assertApiSuccess } from '../utils/api-client';
 
 function StatBox({ label, value }) {
   return (
@@ -38,6 +40,106 @@ function Badge({ label, color = '#e0e7ff', textColor = '#3730a3' }) {
   );
 }
 
+function StarRow({ value }) {
+  if (!value) return null;
+  const n = Math.min(5, Math.max(1, Number(value)));
+  return (
+    <Text style={{ color: '#d97706', fontSize: 15, letterSpacing: 1 }}>
+      {'★'.repeat(n)}{'☆'.repeat(5 - n)}
+    </Text>
+  );
+}
+
+function VoteButton({ emoji, count, active, disabled, onPress }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.75}
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 5,
+        paddingHorizontal: 10,
+        borderRadius: AppRadius.sm,
+        borderWidth: 1.5,
+        borderColor: active ? '#4f46e5' : '#e2e8f0',
+        backgroundColor: active ? '#eef2ff' : '#f8fafc',
+        marginRight: 8,
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <Text style={{ fontSize: 15 }}>{emoji}</Text>
+      <Text style={{ fontSize: 13, fontWeight: '700', color: active ? '#4f46e5' : AppColors.ink500, marginLeft: 4 }}>
+        {count}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+function ReviewCard({ review, myVote, onVote, isVoting, profiles }) {
+  const rawDate = review.ratedAt || review.completedAt || review.paidAt;
+  let formattedDate = '';
+  if (rawDate) {
+    try {
+      const d = typeof rawDate === 'string' ? new Date(rawDate) : rawDate.toDate?.();
+      if (d && !Number.isNaN(d.getTime())) formattedDate = d.toLocaleDateString();
+    } catch {}
+  }
+
+  const profile = review.user ? profiles[review.user] : null;
+  const displayName = profile?.name || review.user || 'Customer';
+
+  return (
+    <View style={{
+      borderTopWidth: 1,
+      borderTopColor: '#e2e8f0',
+      paddingTop: 14,
+      marginTop: 14,
+    }}>
+      {/* Reviewer identity + date */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+        <Avatar src={profile?.profilePicture || null} email={review.user} size={34} />
+        <View style={{ marginLeft: 10, flex: 1 }}>
+          <Text style={{ fontWeight: '700', color: AppColors.ink900, fontSize: 14 }}>{displayName}</Text>
+          <StarRow value={review.rating} />
+        </View>
+        {formattedDate ? (
+          <Text style={{ fontSize: 11, color: AppColors.ink500 }}>{formattedDate}</Text>
+        ) : null}
+      </View>
+
+      {/* Review text */}
+      {review.review ? (
+        <Text style={{ color: AppColors.ink700, fontSize: 14, lineHeight: 20, marginBottom: 10 }}>
+          {review.review}
+        </Text>
+      ) : null}
+
+      {/* Like / Dislike */}
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <VoteButton
+          emoji="👍"
+          count={review.providerReviewLikes || 0}
+          active={myVote === 'like'}
+          disabled={isVoting}
+          onPress={() => onVote(review.id, 'like')}
+        />
+        <VoteButton
+          emoji="👎"
+          count={review.providerReviewDislikes || 0}
+          active={myVote === 'dislike'}
+          disabled={isVoting}
+          onPress={() => onVote(review.id, 'dislike')}
+        />
+        {isVoting && (
+          <Text style={{ fontSize: 12, color: AppColors.ink500, marginLeft: 4 }}>Saving…</Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
 export default function ProviderDetail() {
   const router = useRouter();
   const { email } = useLocalSearchParams();
@@ -46,6 +148,14 @@ export default function ProviderDetail() {
   const [provider, setProvider] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+
+  const [reviews, setReviews] = useState([]);
+  const [liveStats, setLiveStats] = useState({ jobs: null, avgRating: null });
+  const [reviewerProfiles, setReviewerProfiles] = useState({});
+  const [myVotes, setMyVotes] = useState({});   // requestId -> 'like'|'dislike'
+  const [votingId, setVotingId] = useState(null);
+
+  const currentEmail = user?.email || '';
 
   useEffect(() => {
     if (isAuthReady && !user) {
@@ -69,10 +179,118 @@ export default function ProviderDetail() {
       } finally {
         setIsLoading(false);
       }
+
+      // Fetch all requests for this provider to compute live stats and reviews
+      try {
+        const providerEmail = Array.isArray(email) ? email[0] : email;
+        const reqSnap = await getDocs(
+          query(collection(db, 'requests'), where('acceptedBy', '==', providerEmail))
+        );
+
+        let totalJobs = 0;
+        let ratingSum = 0;
+        let ratingCount = 0;
+        const reviewDocs = [];
+
+        reqSnap.docs.forEach((d) => {
+          const data = d.data();
+          if (data.paid || data.status === 'completed') totalJobs++;
+          if (data.rating) {
+            ratingSum += data.rating;
+            ratingCount++;
+            reviewDocs.push({ id: d.id, ...data });
+          }
+        });
+
+        reviewDocs.sort((a, b) => {
+          const ts = (r) => r.ratedAt || r.paidAt || r.completedAt || '';
+          return String(ts(b)).localeCompare(String(ts(a)));
+        });
+
+        setLiveStats({
+          jobs: totalJobs,
+          avgRating: ratingCount ? (ratingSum / ratingCount).toFixed(1) : null,
+        });
+        setReviews(reviewDocs);
+
+        // Batch-fetch reviewer profile pictures
+        const customerEmails = new Set(reviewDocs.map((r) => r.user).filter(Boolean));
+        const profileMap = {};
+        await Promise.all([...customerEmails].map(async (e) => {
+          try {
+            const [uSnap, pSnap] = await Promise.all([
+              getDoc(doc(db, 'users', e)),
+              getDoc(doc(db, 'providers', e)),
+            ]);
+            profileMap[e] = {
+              name: pSnap.data()?.name || uSnap.data()?.name || null,
+              profilePicture: uSnap.data()?.profilePicture || pSnap.data()?.profilePicture || null,
+            };
+          } catch {}
+        }));
+        setReviewerProfiles(profileMap);
+
+        // Fetch current user's votes for each review (doc IDs are deterministic)
+        if (currentEmail) {
+          const sanitized = currentEmail.replace(/[@.]/g, '_');
+          const voteDocs = await Promise.all(
+            reviewDocs.map((r) => getDoc(doc(db, 'reviewVotes', `${r.id}_provider_${sanitized}`)))
+          );
+          const voteMap = {};
+          voteDocs.forEach((vSnap, i) => {
+            if (vSnap.exists()) voteMap[reviewDocs[i].id] = vSnap.data().vote;
+          });
+          setMyVotes(voteMap);
+        }
+      } catch {}
     };
 
     load();
-  }, [email]);
+  }, [email, currentEmail]);
+
+  const handleVote = async (requestId, vote) => {
+    if (!currentEmail || votingId) return;
+    const prev = myVotes[requestId];
+    if (prev === vote) return; // already voted same way
+
+    // Optimistic update
+    setVotingId(requestId);
+    setMyVotes((m) => ({ ...m, [requestId]: vote }));
+    setReviews((rs) => rs.map((r) => {
+      if (r.id !== requestId) return r;
+      const likeDelta   = vote === 'like'    ? 1 : (prev === 'like'    ? -1 : 0);
+      const dislikeDelta = vote === 'dislike' ? 1 : (prev === 'dislike' ? -1 : 0);
+      return {
+        ...r,
+        providerReviewLikes:    Math.max(0, (r.providerReviewLikes    || 0) + likeDelta),
+        providerReviewDislikes: Math.max(0, (r.providerReviewDislikes || 0) + dislikeDelta),
+      };
+    }));
+
+    try {
+      const { response, data } = await apiPost(
+        API_BASE_URL + '/reviews/' + requestId + '/vote',
+        { side: 'provider', vote },
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Could not record vote');
+    } catch {
+      // Revert optimistic update on failure
+      setMyVotes((m) => ({ ...m, [requestId]: prev || undefined }));
+      setReviews((rs) => rs.map((r) => {
+        if (r.id !== requestId) return r;
+        const likeDelta    = vote === 'like'    ? -1 : (prev === 'like'    ? 1 : 0);
+        const dislikeDelta = vote === 'dislike' ? -1 : (prev === 'dislike' ? 1 : 0);
+        return {
+          ...r,
+          providerReviewLikes:    Math.max(0, (r.providerReviewLikes    || 0) + likeDelta),
+          providerReviewDislikes: Math.max(0, (r.providerReviewDislikes || 0) + dislikeDelta),
+        };
+      }));
+    } finally {
+      setVotingId(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -103,8 +321,8 @@ export default function ProviderDetail() {
     );
   }
 
-  const rating = provider.avgRating ? Number(provider.avgRating).toFixed(1) : null;
-  const jobs = provider.jobsCompleted || 0;
+  const rating = liveStats.avgRating ?? (provider.avgRating ? Number(provider.avgRating).toFixed(1) : null);
+  const jobs = liveStats.jobs ?? provider.jobsCompleted ?? 0;
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#eef2ff' }}>
@@ -207,6 +425,25 @@ export default function ProviderDetail() {
             </View>
           ) : null}
         </AppCard>
+
+        {/* Reviews */}
+        {reviews.length > 0 && (
+          <AppCard style={{ marginBottom: AppSpace.md }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: AppColors.ink500, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Reviews ({reviews.length})
+            </Text>
+            {reviews.map((review) => (
+              <ReviewCard
+                key={review.id}
+                review={review}
+                myVote={myVotes[review.id]}
+                onVote={handleVote}
+                isVoting={votingId === review.id}
+                profiles={reviewerProfiles}
+              />
+            ))}
+          </AppCard>
+        )}
 
         {/* Action buttons */}
         <AppButton

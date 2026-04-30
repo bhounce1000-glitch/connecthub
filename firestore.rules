@@ -182,6 +182,13 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    match /reviewVotes/{voteId} {
+      // Voters can read their own vote records to restore button state client-side.
+      // Server (Admin SDK) handles all writes — no client write rules needed.
+      allow read: if isSignedIn() && (resource == null || resource.data.voterEmail == email());
+      allow write: if false;
+    }
+
     match /providers/{providerEmail} {
       allow read: if isSignedIn();
 

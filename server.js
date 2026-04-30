@@ -1140,3 +1140,81 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
     return sendError(res, req, 500, 'admin_dispute_resolution_failed', 'Could not resolve dispute');
   }
 });
+
+// POST /reviews/:requestId/vote
+// Body: { side: 'provider'|'customer', vote: 'like'|'dislike' }
+// Atomically records or changes the caller's like/dislike on a review and
+// keeps aggregate counts (providerReviewLikes etc.) on the request doc in sync.
+app.post('/reviews/:requestId/vote', requireAuth, async (req, res) => {
+  try {
+    const requestId = String(req.params.requestId || '').trim();
+    const side = String(req.body?.side || '').trim();
+    const vote = String(req.body?.vote || '').trim();
+    const voterEmail = req.user?.email || '';
+
+    if (!requestId) return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    if (!['provider', 'customer'].includes(side)) return sendError(res, req, 400, 'invalid_side', 'side must be provider or customer');
+    if (!['like', 'dislike'].includes(vote)) return sendError(res, req, 400, 'invalid_vote', 'vote must be like or dislike');
+    if (!voterEmail) return sendError(res, req, 401, 'missing_voter', 'Could not identify voter');
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const requestSnap = await requestRef.get();
+    if (!requestSnap.exists) return sendError(res, req, 404, 'request_not_found', 'Request not found');
+
+    const requestData = requestSnap.data() || {};
+
+    // Verify a review exists for the given side
+    const reviewField = side === 'provider' ? 'rating' : 'customerRating';
+    if (!requestData[reviewField]) {
+      return sendError(res, req, 404, 'review_not_found', 'No review found for this side');
+    }
+
+    // Authors cannot vote on reviews they wrote
+    if (side === 'provider' && requestData.user === voterEmail) {
+      return sendError(res, req, 403, 'cannot_vote_own_review', 'You cannot vote on a review you wrote');
+    }
+    if (side === 'customer' && requestData.acceptedBy === voterEmail) {
+      return sendError(res, req, 403, 'cannot_vote_own_review', 'You cannot vote on a review you wrote');
+    }
+
+    const likesField = side === 'provider' ? 'providerReviewLikes' : 'customerReviewLikes';
+    const dislikesField = side === 'provider' ? 'providerReviewDislikes' : 'customerReviewDislikes';
+
+    const sanitizedEmail = voterEmail.replace(/[@.]/g, '_');
+    const voteDocId = `${requestId}_${side}_${sanitizedEmail}`;
+    const voteRef = adminDb.collection('reviewVotes').doc(voteDocId);
+
+    await adminDb.runTransaction(async (tx) => {
+      const voteSnap = await tx.get(voteRef);
+      const now = new Date().toISOString();
+
+      let likeDelta = 0;
+      let dislikeDelta = 0;
+
+      if (!voteSnap.exists) {
+        tx.set(voteRef, { requestId, side, voterEmail, vote, createdAt: now, updatedAt: now });
+        if (vote === 'like') likeDelta = 1;
+        else dislikeDelta = 1;
+      } else {
+        const existing = voteSnap.data().vote;
+        if (existing !== vote) {
+          tx.update(voteRef, { vote, updatedAt: now });
+          if (vote === 'like') { likeDelta = 1; dislikeDelta = -1; }
+          else { likeDelta = -1; dislikeDelta = 1; }
+        }
+      }
+
+      if (likeDelta !== 0 || dislikeDelta !== 0) {
+        const updates = {};
+        if (likeDelta !== 0) updates[likesField] = admin.firestore.FieldValue.increment(likeDelta);
+        if (dislikeDelta !== 0) updates[dislikesField] = admin.firestore.FieldValue.increment(dislikeDelta);
+        tx.set(requestRef, updates, { merge: true });
+      }
+    });
+
+    return sendSuccess(res, req, { message: 'Vote recorded' });
+  } catch (error) {
+    logger.error({ err: error }, 'REVIEW_VOTE_ERROR');
+    return sendError(res, req, 500, 'review_vote_failed', 'Could not record vote');
+  }
+});
