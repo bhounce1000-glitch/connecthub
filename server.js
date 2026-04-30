@@ -285,6 +285,14 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
   };
 }
 
+function parseMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return 0;
+  }
+  return Math.max(0, parseFloat(amount.toFixed(2)));
+}
+
 // ✅ HEALTH CHECK
 app.get('/', (req, res) => {
   return sendSuccess(res, req, {
@@ -957,5 +965,178 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_KYC_REJECT_ERROR');
     return sendError(res, req, 500, 'admin_kyc_reject_failed', 'KYC rejection failed');
+  }
+});
+
+app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const disputeId = req.params.id;
+    const resolution = String(req.body?.resolution || '').trim();
+    const resolutionNote = String(req.body?.note || '').trim();
+    const splitPercentToWorkerRaw = Number(req.body?.splitPercentToWorker);
+
+    const allowedResolutions = ['release_to_worker', 'refund_customer', 'split'];
+    if (!disputeId) {
+      return sendError(res, req, 400, 'missing_dispute_id', 'Missing dispute id');
+    }
+
+    if (!allowedResolutions.includes(resolution)) {
+      return sendError(res, req, 400, 'invalid_dispute_resolution', 'Resolution must be release_to_worker, refund_customer, or split');
+    }
+
+    if (resolution === 'split' && (!Number.isFinite(splitPercentToWorkerRaw) || splitPercentToWorkerRaw <= 0 || splitPercentToWorkerRaw >= 100)) {
+      return sendError(res, req, 400, 'invalid_split_percentage', 'splitPercentToWorker must be between 1 and 99');
+    }
+
+    const disputeRef = adminDb.collection('disputes').doc(disputeId);
+    const disputeSnapshot = await disputeRef.get();
+
+    if (!disputeSnapshot.exists) {
+      return sendError(res, req, 404, 'dispute_not_found', 'Dispute not found');
+    }
+
+    const disputeData = disputeSnapshot.data() || {};
+    if (disputeData.status === 'resolved') {
+      return sendError(res, req, 409, 'dispute_already_resolved', 'This dispute has already been resolved');
+    }
+
+    const requestId = String(disputeData.requestId || '').trim();
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_reference', 'Dispute is missing request reference');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const requestSnapshot = await requestRef.get();
+    if (!requestSnapshot.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found for this dispute');
+    }
+
+    const beforeRequest = requestSnapshot.data() || {};
+    const now = new Date().toISOString();
+    const requestPrice = parseMoney(beforeRequest.price);
+    const splitPercentToWorker = Number.isFinite(splitPercentToWorkerRaw) ? parseFloat(splitPercentToWorkerRaw.toFixed(2)) : null;
+
+    let providerPayout = 0;
+    let customerRefund = 0;
+    let nextStatus = beforeRequest.status || 'disputed';
+    let paid = false;
+
+    if (resolution === 'release_to_worker') {
+      providerPayout = requestPrice;
+      customerRefund = 0;
+      nextStatus = 'paid';
+      paid = true;
+    } else if (resolution === 'refund_customer') {
+      providerPayout = 0;
+      customerRefund = requestPrice;
+      nextStatus = 'cancelled';
+      paid = false;
+    } else {
+      providerPayout = parseFloat((requestPrice * (splitPercentToWorker / 100)).toFixed(2));
+      customerRefund = parseFloat((requestPrice - providerPayout).toFixed(2));
+      nextStatus = 'paid';
+      paid = true;
+    }
+
+    const paymentReference = `dispute_${resolution}_${requestId}_${Date.now()}`;
+    const requestPatch = {
+      status: nextStatus,
+      paid,
+      paidAt: paid ? now : null,
+      paymentHold: false,
+      disputeResolvedAt: now,
+      disputeResolvedBy: req.user?.email || null,
+      disputeResolution: resolution,
+      disputeResolutionNote: resolutionNote || null,
+      providerPayout,
+      customerRefund,
+      paymentReference,
+      paymentStatus: resolution === 'refund_customer' ? 'refunded' : 'resolved',
+      paymentChannel: 'dispute_resolution',
+      gatewayResponse: resolution === 'release_to_worker'
+        ? 'Escrow released to provider by admin after dispute review'
+        : resolution === 'refund_customer'
+          ? 'Escrow refunded to customer by admin after dispute review'
+          : 'Escrow split between customer and provider by admin after dispute review',
+      splitPercentToWorker: resolution === 'split' ? splitPercentToWorker : null,
+      splitPercentToCustomer: resolution === 'split' ? parseFloat((100 - splitPercentToWorker).toFixed(2)) : null,
+      refundAmount: resolution === 'refund_customer' ? customerRefund : null,
+      refundedAt: resolution === 'refund_customer' ? now : null,
+    };
+
+    await requestRef.set(requestPatch, { merge: true });
+
+    const disputePatch = {
+      status: 'resolved',
+      resolution,
+      resolutionNote: resolutionNote || null,
+      splitPercentToWorker: resolution === 'split' ? splitPercentToWorker : null,
+      providerPayout,
+      customerRefund,
+      requestStatusAfterResolution: nextStatus,
+      resolvedAt: now,
+      resolvedBy: req.user?.email || null,
+      updatedAt: now,
+    };
+
+    await disputeRef.set(disputePatch, { merge: true });
+
+    const title = beforeRequest.title || requestId;
+    if (beforeRequest.acceptedBy) {
+      await writeNotification(
+        beforeRequest.acceptedBy,
+        resolution === 'refund_customer'
+          ? `Dispute resolved for "${title}": customer refunded. No payout released.`
+          : resolution === 'release_to_worker'
+            ? `Dispute resolved for "${title}": full payment released to you.`
+            : `Dispute resolved for "${title}": payout split. You receive GHS ${providerPayout.toFixed(2)}.`
+      );
+    }
+    if (beforeRequest.user) {
+      await writeNotification(
+        beforeRequest.user,
+        resolution === 'refund_customer'
+          ? `Dispute resolved for "${title}": full refund approved (GHS ${customerRefund.toFixed(2)}).`
+          : resolution === 'release_to_worker'
+            ? `Dispute resolved for "${title}": payment released to the provider.`
+            : `Dispute resolved for "${title}": split settlement approved. Refund: GHS ${customerRefund.toFixed(2)}.`
+      );
+    }
+
+    await writeAuditLog({
+      actorEmail: req.user?.email || null,
+      actorUid: req.user?.uid || null,
+      eventType: 'admin_resolved_dispute',
+      requestId,
+      before: {
+        request: beforeRequest,
+        dispute: disputeData,
+      },
+      after: {
+        request: { ...beforeRequest, ...requestPatch },
+        dispute: { ...disputeData, ...disputePatch },
+      },
+      metadata: {
+        disputeId,
+        resolution,
+        providerPayout,
+        customerRefund,
+      },
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Dispute resolved successfully',
+      data: {
+        disputeId,
+        requestId,
+        resolution,
+        providerPayout,
+        customerRefund,
+        status: nextStatus,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_DISPUTE_RESOLUTION_ERROR');
+    return sendError(res, req, 500, 'admin_dispute_resolution_failed', 'Could not resolve dispute');
   }
 });

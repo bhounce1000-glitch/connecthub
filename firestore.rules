@@ -177,6 +177,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /disputes/{disputeId} {
+      allow read: if isSignedIn() && isAdmin();
+      allow create, update, delete: if false;
+    }
+
     match /providers/{providerEmail} {
       allow read: if isSignedIn();
 

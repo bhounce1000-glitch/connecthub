@@ -33,6 +33,16 @@ service firebase.storage {
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
+    // Dispute evidence photos - uploader can write using their UID bucket (max 10 MB)
+    match /disputes/{userId}/{requestId}/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && isImageUpload()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
     // Catch-all deny
     match /{allPaths=**} {
       allow read, write: if false;

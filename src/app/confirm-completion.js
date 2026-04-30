@@ -12,7 +12,7 @@ import Avatar from '../components/ui/avatar';
 import { REQUEST_STATUS } from '../constants/access';
 import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
-import { db, storage } from '../firebase';
+import { auth, db, storage } from '../firebase';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
 
 export default function ConfirmCompletion() {
@@ -80,6 +80,12 @@ export default function ConfirmCompletion() {
 
   const uploadEvidence = async () => {
     try {
+      const uploaderUid = auth.currentUser?.uid;
+      if (!uploaderUid) {
+        setNotice({ tone: 'warning', title: 'Sign in required', message: 'Please sign in again before uploading evidence.' });
+        return;
+      }
+
       if (Platform.OS !== 'web') {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
@@ -104,7 +110,7 @@ export default function ConfirmCompletion() {
         const response = await fetch(asset.uri);
         const blob = await response.blob();
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
-        const fileRef = ref(storage, `disputes/${resolvedRequestId}/${fileName}`);
+        const fileRef = ref(storage, `disputes/${uploaderUid}/${resolvedRequestId}/${fileName}`);
         await uploadBytes(fileRef, blob);
         const url = await getDownloadURL(fileRef);
         uploaded.push(url);

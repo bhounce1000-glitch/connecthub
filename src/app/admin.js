@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -21,6 +21,7 @@ export default function Admin() {
   const { user, isAuthReady } = useAuthUser();
   const [requests, setRequests] = useState([]);
   const [kycSubmissions, setKycSubmissions] = useState([]);
+  const [disputes, setDisputes] = useState([]);
   const [activeTab, setActiveTab] = useState('requests');
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
@@ -52,6 +53,17 @@ export default function Admin() {
         });
 
       setRequests(rows);
+    });
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+
+    return onSnapshot(collection(db, 'disputes'), (snapshot) => {
+      const rows = snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      setDisputes(rows);
     });
   }, [isAdmin]);
 
@@ -156,6 +168,46 @@ export default function Admin() {
     }
   };
 
+  const resolveDispute = async ({ disputeId, resolution, splitPercentToWorker, note }) => {
+    const key = `dispute:${disputeId}:${resolution}`;
+    setPendingAction(key);
+    setNotice(null);
+
+    try {
+      const payload = {
+        resolution,
+        note,
+      };
+
+      if (resolution === 'split') {
+        payload.splitPercentToWorker = splitPercentToWorker;
+      }
+
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/disputes/${disputeId}/resolve`,
+        payload,
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Dispute resolution failed');
+
+      const providerPayout = Number(data?.data?.providerPayout || 0).toFixed(2);
+      const customerRefund = Number(data?.data?.customerRefund || 0).toFixed(2);
+      setNotice({
+        tone: 'success',
+        title: 'Dispute resolved',
+        message: `Resolved as ${resolution}. Provider: GHS ${providerPayout}, Customer: GHS ${customerRefund}.`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: 'Resolution failed',
+        message: formatApiMessage({ message: error.message }, 'Could not resolve dispute.'),
+      });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
@@ -168,6 +220,7 @@ export default function Admin() {
   }
 
   const pendingKycCount = kycSubmissions.filter((k) => k.kycStatus === KYC_STATUS.PENDING_VERIFICATION).length;
+  const openDisputeCount = disputes.filter((d) => (d.status || 'open') !== 'resolved').length;
 
   return (
     <ListScreen
@@ -208,14 +261,29 @@ export default function Admin() {
                 KYC ({pendingKycCount} pending)
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('disputes')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'disputes' ? '#dc2626' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'disputes' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Disputes ({openDisputeCount} open)
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
         </>
       )}
-      hasItems={activeTab === 'requests' ? requests.length > 0 : kycSubmissions.length > 0}
-      emptyTitle={activeTab === 'requests' ? 'No requests found' : 'No KYC submissions'}
-      emptyDescription={activeTab === 'requests' ? 'Requests will appear here once they are created.' : 'KYC submissions will appear here.'}
+      hasItems={activeTab === 'requests' ? requests.length > 0 : activeTab === 'kyc' ? kycSubmissions.length > 0 : disputes.length > 0}
+      emptyTitle={activeTab === 'requests' ? 'No requests found' : activeTab === 'kyc' ? 'No KYC submissions' : 'No disputes'}
+      emptyDescription={activeTab === 'requests' ? 'Requests will appear here once they are created.' : activeTab === 'kyc' ? 'KYC submissions will appear here.' : 'Disputes opened by customers will appear here.'}
     >
       <ScrollView showsVerticalScrollIndicator={false}>
         {activeTab === 'kyc'
@@ -228,6 +296,15 @@ export default function Admin() {
                 onReject={(reason) => reviewKyc(item.email, 'reject', reason)}
               />
             ))
+          : activeTab === 'disputes'
+            ? disputes.map((item) => (
+                <DisputeReviewCard
+                  key={item.id}
+                  item={item}
+                  pendingAction={pendingAction}
+                  onResolve={resolveDispute}
+                />
+              ))
           : requests.map((item) => (
               <AppCard key={item.id} style={{ marginBottom: 12 }}>
                 <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>
@@ -303,6 +380,103 @@ export default function Admin() {
             ))}
       </ScrollView>
     </ListScreen>
+  );
+}
+
+function DisputeReviewCard({ item, pendingAction, onResolve }) {
+  const [note, setNote] = useState('');
+  const [splitPercentToWorker, setSplitPercentToWorker] = useState('50');
+  const isResolved = item.status === 'resolved';
+
+  const runResolve = (resolution) => {
+    onResolve({
+      disputeId: item.id,
+      resolution,
+      note: note.trim(),
+      splitPercentToWorker: Number(splitPercentToWorker),
+    });
+  };
+
+  return (
+    <AppCard style={{ marginBottom: 12, borderColor: '#fecaca', borderWidth: 1 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+        <Text style={{ fontWeight: '700', flex: 1 }}>{item.title || item.requestId || item.id}</Text>
+        <View style={{ backgroundColor: isResolved ? '#15803d' : '#b91c1c', paddingHorizontal: 8, paddingVertical: 3, borderRadius: AppRadius.sm }}>
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{isResolved ? 'Resolved' : 'Open'}</Text>
+        </View>
+      </View>
+
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Request: {item.requestId || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Customer: {item.customerEmail || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Provider: {item.providerEmail || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink900, fontSize: 13, marginTop: 4, fontWeight: '700' }}>Reason</Text>
+      <Text style={{ color: AppColors.ink700, fontSize: 13 }}>{item.reason || 'No reason provided'}</Text>
+      {item.comment ? <Text style={{ color: AppColors.ink500, fontSize: 13, marginTop: 4 }}>Comment: {item.comment}</Text> : null}
+      <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 6 }}>Evidence files: {Array.isArray(item.evidenceUrls) ? item.evidenceUrls.length : 0}</Text>
+
+      {isResolved ? (
+        <View style={{ marginTop: AppSpace.sm }}>
+          <Text style={{ color: '#166534', fontWeight: '700' }}>Resolution: {item.resolution || 'N/A'}</Text>
+          <Text style={{ color: AppColors.ink500, marginTop: 2 }}>
+            Provider payout: GHS {Number(item.providerPayout || 0).toFixed(2)} | Customer refund: GHS {Number(item.customerRefund || 0).toFixed(2)}
+          </Text>
+          {item.resolutionNote ? <Text style={{ color: AppColors.ink500, marginTop: 2 }}>Note: {item.resolutionNote}</Text> : null}
+        </View>
+      ) : (
+        <View style={{ marginTop: AppSpace.sm }}>
+          <AppInput
+            label="Admin note (optional)"
+            placeholder="Add your reasoning for audit trail"
+            value={note}
+            onChangeText={setNote}
+            multiline
+          />
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <Text style={{ color: AppColors.ink700, marginRight: 8 }}>Split % to worker:</Text>
+            <TextInput
+              value={splitPercentToWorker}
+              onChangeText={setSplitPercentToWorker}
+              keyboardType="numeric"
+              style={{
+                minWidth: 72,
+                borderWidth: 1,
+                borderColor: '#cbd5e1',
+                borderRadius: AppRadius.sm,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                color: AppColors.ink900,
+              }}
+            />
+          </View>
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            <AppButton
+              label="Release To Worker"
+              onPress={() => runResolve('release_to_worker')}
+              disabled={Boolean(pendingAction)}
+              loading={pendingAction === `dispute:${item.id}:release_to_worker`}
+              style={{ paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#15803d' }}
+            />
+            <AppButton
+              label="Refund Customer"
+              variant="danger"
+              onPress={() => runResolve('refund_customer')}
+              disabled={Boolean(pendingAction)}
+              loading={pendingAction === `dispute:${item.id}:refund_customer`}
+              style={{ paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#b91c1c' }}
+            />
+            <AppButton
+              label="Split Amount"
+              onPress={() => runResolve('split')}
+              disabled={Boolean(pendingAction)}
+              loading={pendingAction === `dispute:${item.id}:split`}
+              style={{ paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#7c3aed' }}
+            />
+          </View>
+        </View>
+      )}
+    </AppCard>
   );
 }
 
