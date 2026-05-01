@@ -979,6 +979,71 @@ app.get('/admin/audit', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/admin/push-token/:email', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const targetEmail = decodeURIComponent(req.params.email || '').trim().toLowerCase();
+    if (!targetEmail) {
+      return sendError(res, req, 400, 'missing_email', 'Missing email');
+    }
+
+    const userDoc = await adminDb.collection('users').doc(targetEmail).get();
+    if (!userDoc.exists) {
+      return sendError(res, req, 404, 'user_not_found', 'User not found');
+    }
+
+    const pushToken = userDoc.data()?.pushToken || null;
+    const pushTokenUpdatedAt = userDoc.data()?.pushTokenUpdatedAt || null;
+
+    return sendSuccess(res, req, {
+      email: targetEmail,
+      hasPushToken: Boolean(pushToken),
+      pushToken,
+      pushTokenUpdatedAt,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_PUSH_TOKEN_READ_ERROR');
+    return sendError(res, req, 500, 'admin_push_token_read_failed', 'Could not read push token');
+  }
+});
+
+app.post('/admin/push-test', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const targetEmail = String(req.body?.email || '').trim().toLowerCase();
+    const title = String(req.body?.title || 'ConnectHub Test Notification').trim();
+    const body = String(req.body?.body || 'This is a test push notification from ConnectHub admin.').trim();
+
+    if (!targetEmail) {
+      return sendError(res, req, 400, 'missing_email', 'email is required');
+    }
+
+    const pushToken = await getPushTokenForUser(targetEmail);
+    if (!pushToken) {
+      return sendError(res, req, 404, 'push_token_not_found', 'No push token found for this user');
+    }
+
+    await sendPushNotification(pushToken, title, body);
+
+    await writeAuditLog({
+      actorEmail: req.user?.email || null,
+      actorUid: req.user?.uid || null,
+      eventType: 'admin_sent_push_test',
+      metadata: {
+        targetEmail,
+        title,
+      },
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Push test sent',
+      email: targetEmail,
+      title,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_PUSH_TEST_ERROR');
+    return sendError(res, req, 500, 'admin_push_test_failed', 'Could not send test push');
+  }
+});
+
 app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, res) => {
   try {
     const requestId = req.params.id;
