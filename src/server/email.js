@@ -114,4 +114,4 @@ async function sendKycRejectionEmail({ email, name, reason }) {
   await transporter.sendMail({ from: EMAIL_FROM, to: email, subject, html });
 }
 
-module.exports = { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail, isEmailConfigured };
+module.exports = { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail, isEmailConfigured, transporter, EMAIL_FROM };

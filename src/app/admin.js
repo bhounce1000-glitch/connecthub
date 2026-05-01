@@ -67,6 +67,8 @@ export default function Admin() {
   const [pushTitle, setPushTitle] = useState('ConnectHub Test Notification');
   const [pushBody, setPushBody] = useState('This is a test push notification from ConnectHub admin.');
   const [pushLookup, setPushLookup] = useState(null);
+  const [emailTestTarget, setEmailTestTarget] = useState('');
+  const [emailTestResult, setEmailTestResult] = useState(null);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -341,6 +343,29 @@ export default function Admin() {
     }
   };
 
+  const sendEmailTest = async () => {
+    const to = (emailTestTarget || currentEmail).trim().toLowerCase();
+    if (!to) {
+      setNotice({ tone: 'warning', title: 'Email required', message: 'Enter a destination email for the test.' });
+      return;
+    }
+    setPendingAction('email:test');
+    setNotice(null);
+    setEmailTestResult(null);
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/email-test`, { to }, { requireAuth: true });
+      assertApiSuccess(response, data, 'Email test failed');
+      setEmailTestResult({ ok: true, to });
+      setNotice({ tone: 'success', title: 'Email test sent', message: `Test email sent to ${to}. Check your inbox.` });
+    } catch (error) {
+      const msg = error?.message || '';
+      setEmailTestResult({ ok: false, error: msg });
+      setNotice({ tone: 'error', title: 'Email test failed', message: msg || 'Could not send test email. Check backend SMTP config.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
@@ -479,6 +504,7 @@ export default function Admin() {
               ))
             : activeTab === 'push'
               ? (
+                <>
                 <AppCard style={{ marginBottom: 12 }}>
                   <Text style={{ fontWeight: '700', marginBottom: 8 }}>Push Notification Debug Tools</Text>
                   <Text style={{ color: AppColors.ink500, marginBottom: 12 }}>
@@ -543,6 +569,54 @@ export default function Admin() {
                     </View>
                   ) : null}
                 </AppCard>
+
+                <AppCard style={{ marginBottom: 12 }}>
+                  <Text style={{ fontWeight: '700', marginBottom: 8 }}>Email Health Check</Text>
+                  <Text style={{ color: AppColors.ink500, marginBottom: 12, fontSize: 13 }}>
+                    Verify that the backend SMTP config is working. Sends a real test email.
+                  </Text>
+
+                  <AppInput
+                    label="Send test email to"
+                    placeholder={currentEmail || 'your@email.com'}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    value={emailTestTarget}
+                    onChangeText={setEmailTestTarget}
+                  />
+
+                  <AppButton
+                    label={pendingAction === 'email:test' ? 'Sending…' : 'Send Test Email'}
+                    onPress={sendEmailTest}
+                    loading={pendingAction === 'email:test'}
+                    disabled={Boolean(pendingAction)}
+                    style={{ backgroundColor: '#0891b2', marginTop: 4 }}
+                  />
+
+                  {emailTestResult ? (
+                    <View style={{
+                      marginTop: 10,
+                      padding: 10,
+                      borderRadius: AppRadius.md,
+                      borderWidth: 1,
+                      borderColor: emailTestResult.ok ? '#22c55e' : '#f87171',
+                      backgroundColor: emailTestResult.ok ? '#052e16' : '#450a0a',
+                    }}>
+                      <Text style={{ color: emailTestResult.ok ? '#4ade80' : '#fca5a5', fontWeight: '700' }}>
+                        {emailTestResult.ok ? `✅ Sent to ${emailTestResult.to}` : '❌ Delivery failed'}
+                      </Text>
+                      {emailTestResult.error ? (
+                        <Text style={{ color: '#fca5a5', fontSize: 12, marginTop: 4 }}>{emailTestResult.error}</Text>
+                      ) : null}
+                      {!emailTestResult.ok && (
+                        <Text style={{ color: '#fca5a5', fontSize: 12, marginTop: 6 }}>
+                          Fix: set EMAIL_USER and EMAIL_PASS in your Render environment variables, then redeploy.
+                        </Text>
+                      )}
+                    </View>
+                  ) : null}
+                </AppCard>
+                </>
                 )
           : requests.map((item) => (
               <AppCard key={item.id} style={{ marginBottom: 12 }}>

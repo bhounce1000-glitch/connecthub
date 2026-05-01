@@ -5,7 +5,7 @@ const cors = require('cors');
 const { rateLimit } = require('express-rate-limit');
 const admin = require('firebase-admin');
 const pino = require('pino');
-const { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail, isEmailConfigured } = require('./src/server/email');
+const { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail, isEmailConfigured, transporter: emailTransporter, EMAIL_FROM: emailFrom } = require('./src/server/email');
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -1030,6 +1030,44 @@ app.get('/admin/push-token/:email', requireAuth, requireAdmin, async (req, res) 
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_PUSH_TOKEN_READ_ERROR');
     return sendError(res, req, 500, 'admin_push_token_read_failed', 'Could not read push token');
+  }
+});
+
+/**
+ * POST /admin/email-test — send a test email from the backend SMTP config.
+ * Body: { to: string }
+ */
+app.post('/admin/email-test', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const to = String(req.body?.to || '').trim().toLowerCase();
+    if (!to) return sendError(res, req, 400, 'missing_to', 'Provide a destination email address');
+
+    if (!isEmailConfigured()) {
+      return sendError(res, req, 503, 'email_not_configured',
+        'EMAIL_USER and EMAIL_PASS environment variables are not set on this server. Add them in your Render dashboard under Environment.');
+    }
+
+    await emailTransporter.sendMail({
+      from: emailFrom || 'no-reply@connecthub.app',
+      to,
+      subject: 'ConnectHub Email Health Check',
+      html: `<h2>Email delivery confirmed ✅</h2>
+             <p>This test email was sent from the ConnectHub backend at <b>${new Date().toUTCString()}</b>.</p>
+             <p>SMTP is correctly configured and emails will be delivered.</p>`,
+    });
+
+    await writeAuditLog({
+      actorEmail: req.user?.email || null,
+      actorUid: req.user?.uid || null,
+      eventType: 'admin_email_test',
+      metadata: { to },
+    });
+
+    return sendSuccess(res, req, { message: 'Test email sent', to, configured: true });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_EMAIL_TEST_ERROR');
+    return sendError(res, req, 500, 'email_test_failed',
+      `Email test failed: ${error?.responseCode ? `SMTP error ${error.responseCode}` : (error?.message || 'unknown error')}`);
   }
 });
 
