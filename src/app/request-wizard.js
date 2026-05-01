@@ -70,7 +70,7 @@ export default function RequestWizard() {
         createdAt: serverTimestamp(),
       });
       setIsSuccess(true);
-    } catch (e) {
+    } catch (_e) {
       setError('Failed to post job. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -85,7 +85,7 @@ export default function RequestWizard() {
           Your job is live!
         </Text>
         <Text style={{ fontSize: 15, color: '#94a3b8', textAlign: 'center', marginBottom: 32 }}>
-          Providers will respond shortly. You'll get a notification when someone accepts.
+          Providers will respond shortly. You&apos;ll get a notification when someone accepts.
         </Text>
         <TouchableOpacity
           onPress={() => router.replace('/home')}
@@ -221,7 +221,7 @@ export default function RequestWizard() {
                   <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: isFlexible ? '#4f46e5' : '#e2e8f0', backgroundColor: isFlexible ? '#4f46e5' : '#fff', justifyContent: 'center', alignItems: 'center' }}>
                     {isFlexible && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>✓</Text>}
                   </View>
-                  <Text style={{ fontWeight: '600', color: AppColors.ink900, fontSize: 15 }}>I'm flexible on price</Text>
+                  <Text style={{ fontWeight: '600', color: AppColors.ink900, fontSize: 15 }}>I&apos;m flexible on price</Text>
                 </TouchableOpacity>
               </View>
 

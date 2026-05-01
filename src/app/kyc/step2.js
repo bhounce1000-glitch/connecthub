@@ -111,7 +111,7 @@ export default function KycStep2() {
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState({ front: false, back: false });
-  const [country, setCountry] = useState({ cca2: 'GH', callingCode: ['233'] });
+  const [, setCountry] = useState({ cca2: 'GH', callingCode: ['233'] });
 
   useEffect(() => {
     if (isAuthReady && !user?.email) {

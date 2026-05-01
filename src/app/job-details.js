@@ -79,9 +79,9 @@ export default function JobDetails() {
       <AppCard style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: '700', marginBottom: 8, color: AppColors.ink900 }}>Review Summary</Text>
         <Text style={{ color: AppColors.ink700 }}>Provider rating: {job.rating ? `${job.rating} ★` : 'Not yet rated'}</Text>
-        {job.review ? <Text style={{ color: AppColors.ink500, marginTop: 4 }}>"{job.review}"</Text> : null}
+        {job.review ? <Text style={{ color: AppColors.ink500, marginTop: 4 }}>&quot;{job.review}&quot;</Text> : null}
         <Text style={{ color: AppColors.ink700, marginTop: 8 }}>Customer rating: {job.customerRating ? `${job.customerRating} ★` : 'Not yet rated'}</Text>
-        {job.customerReview ? <Text style={{ color: AppColors.ink500, marginTop: 4 }}>"{job.customerReview}"</Text> : null}
+        {job.customerReview ? <Text style={{ color: AppColors.ink500, marginTop: 4 }}>&quot;{job.customerReview}&quot;</Text> : null}
       </AppCard>
 
       <AppButton label="Back" variant="neutral" onPress={() => router.back()} />

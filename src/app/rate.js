@@ -27,7 +27,6 @@ export default function Rate() {
   const [error, setError] = useState('');
 
   const isRatingProvider = rateMode !== 'customer';
-  const targetLabel = isRatingProvider ? (resolvedProviderEmail || 'Provider') : 'Customer';
   const title = isRatingProvider ? '⭐ Rate Provider' : '⭐ Rate Customer';
   const subtitle = isRatingProvider
     ? `How was your experience with ${resolvedProviderEmail || 'the provider'}?`

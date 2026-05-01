@@ -111,7 +111,7 @@ export default function KycStep4() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [router]);
 
   const handleSubmit = async () => {
     setSubmitting(true);

@@ -83,7 +83,7 @@ export default function KycPending() {
         </View>
 
         <Text style={{ color: AppColors.ink500, fontSize: 13, textAlign: 'center', marginBottom: AppSpace.xl }}>
-          You'll receive a notification once your account is verified. This page will update automatically.
+          You&apos;ll receive a notification once your account is verified. This page will update automatically.
         </Text>
 
         <TouchableOpacity

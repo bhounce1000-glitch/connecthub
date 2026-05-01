@@ -164,7 +164,7 @@ export default function Pay() {
       };
       try {
         await createTransactionRecord(tx);
-      } catch (e) {
+      } catch (_e) {
         // fail silently, do not block user
       }
 
@@ -189,7 +189,7 @@ export default function Pay() {
     } finally {
       setIsVerifying(false);
     }
-  }, [isVerifying, reference, router]);
+  }, [isVerifying, reference, requestId, router]);
 
   useEffect(() => {
     if (!callbackReference || callbackAttempted.current) {

@@ -13,7 +13,7 @@ import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
-import { apiDelete, apiPost, assertApiSuccess } from '../utils/api-client';
+import { apiDelete, apiGet, apiPost, assertApiSuccess } from '../utils/api-client';
 import { formatApiMessage } from '../utils/api-response';
 
 export default function Admin() {
@@ -26,6 +26,10 @@ export default function Admin() {
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [pushEmail, setPushEmail] = useState('');
+  const [pushTitle, setPushTitle] = useState('ConnectHub Test Notification');
+  const [pushBody, setPushBody] = useState('This is a test push notification from ConnectHub admin.');
+  const [pushLookup, setPushLookup] = useState(null);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -208,6 +212,87 @@ export default function Admin() {
     }
   };
 
+  const lookupPushToken = async () => {
+    const targetEmail = pushEmail.trim().toLowerCase();
+    if (!targetEmail) {
+      setNotice({
+        tone: 'warning',
+        title: 'Email required',
+        message: 'Enter an email address to inspect push token status.',
+      });
+      return;
+    }
+
+    setPendingAction('push:lookup');
+    setNotice(null);
+    setPushLookup(null);
+
+    try {
+      const { response, data } = await apiGet(
+        `${API_BASE_URL}/admin/push-token/${encodeURIComponent(targetEmail)}`,
+        { requireAuth: true }
+      );
+      const payload = assertApiSuccess(response, data, 'Could not fetch push token details');
+      setPushLookup(payload?.data || null);
+      setNotice({
+        tone: 'success',
+        title: 'Push token status loaded',
+        message: payload?.data?.hasPushToken
+          ? `Push token found for ${targetEmail}.`
+          : `No push token saved for ${targetEmail} yet.`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: 'Lookup failed',
+        message: formatApiMessage({ message: error.message }, 'Could not inspect push token status.'),
+      });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const sendPushTest = async () => {
+    const targetEmail = pushEmail.trim().toLowerCase();
+    if (!targetEmail) {
+      setNotice({
+        tone: 'warning',
+        title: 'Email required',
+        message: 'Enter a target email before sending a push test.',
+      });
+      return;
+    }
+
+    setPendingAction('push:send');
+    setNotice(null);
+
+    try {
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/push-test`,
+        {
+          email: targetEmail,
+          title: pushTitle.trim() || 'ConnectHub Test Notification',
+          body: pushBody.trim() || 'This is a test push notification from ConnectHub admin.',
+        },
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Push test failed');
+      setNotice({
+        tone: 'success',
+        title: 'Push test sent',
+        message: `Push notification queued for ${targetEmail}.`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: 'Push test failed',
+        message: formatApiMessage({ message: error.message }, 'Could not send push test.'),
+      });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   if (!isAdmin) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
@@ -276,14 +361,53 @@ export default function Admin() {
                 Disputes ({openDisputeCount} open)
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('push')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'push' ? '#2563eb' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'push' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Push Tools
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
         </>
       )}
-      hasItems={activeTab === 'requests' ? requests.length > 0 : activeTab === 'kyc' ? kycSubmissions.length > 0 : disputes.length > 0}
-      emptyTitle={activeTab === 'requests' ? 'No requests found' : activeTab === 'kyc' ? 'No KYC submissions' : 'No disputes'}
-      emptyDescription={activeTab === 'requests' ? 'Requests will appear here once they are created.' : activeTab === 'kyc' ? 'KYC submissions will appear here.' : 'Disputes opened by customers will appear here.'}
+      hasItems={
+        activeTab === 'requests'
+          ? requests.length > 0
+          : activeTab === 'kyc'
+            ? kycSubmissions.length > 0
+            : activeTab === 'disputes'
+              ? disputes.length > 0
+              : true
+      }
+      emptyTitle={
+        activeTab === 'requests'
+          ? 'No requests found'
+          : activeTab === 'kyc'
+            ? 'No KYC submissions'
+            : activeTab === 'disputes'
+              ? 'No disputes'
+              : 'Push tools unavailable'
+      }
+      emptyDescription={
+        activeTab === 'requests'
+          ? 'Requests will appear here once they are created.'
+          : activeTab === 'kyc'
+            ? 'KYC submissions will appear here.'
+            : activeTab === 'disputes'
+              ? 'Disputes opened by customers will appear here.'
+              : 'Refresh and try again.'
+      }
     >
       <ScrollView showsVerticalScrollIndicator={false}>
         {activeTab === 'kyc'
@@ -305,6 +429,73 @@ export default function Admin() {
                   onResolve={resolveDispute}
                 />
               ))
+            : activeTab === 'push'
+              ? (
+                <AppCard style={{ marginBottom: 12 }}>
+                  <Text style={{ fontWeight: '700', marginBottom: 8 }}>Push Notification Debug Tools</Text>
+                  <Text style={{ color: AppColors.ink500, marginBottom: 12 }}>
+                    Check whether a user has a saved Expo push token, then send a test notification.
+                  </Text>
+
+                  <AppInput
+                    label="User email"
+                    placeholder="bhounce1000@gmail.com"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    value={pushEmail}
+                    onChangeText={setPushEmail}
+                  />
+
+                  <AppInput
+                    label="Push title"
+                    placeholder="ConnectHub Test Notification"
+                    value={pushTitle}
+                    onChangeText={setPushTitle}
+                  />
+
+                  <AppInput
+                    label="Push body"
+                    placeholder="This is a test push notification"
+                    value={pushBody}
+                    onChangeText={setPushBody}
+                    multiline
+                  />
+
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+                    <AppButton
+                      label="Check Token"
+                      onPress={lookupPushToken}
+                      loading={pendingAction === 'push:lookup'}
+                      disabled={Boolean(pendingAction)}
+                      style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
+                    />
+                    <AppButton
+                      label="Send Test Push"
+                      onPress={sendPushTest}
+                      loading={pendingAction === 'push:send'}
+                      disabled={Boolean(pendingAction)}
+                      style={{ marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#2563eb' }}
+                    />
+                  </View>
+
+                  {pushLookup ? (
+                    <View style={{ marginTop: 8, borderWidth: 1, borderColor: '#cbd5e1', borderRadius: AppRadius.md, padding: 10 }}>
+                      <Text style={{ color: AppColors.ink900, fontWeight: '700', marginBottom: 4 }}>
+                        Token Status: {pushLookup.hasPushToken ? 'Available' : 'Missing'}
+                      </Text>
+                      <Text style={{ color: AppColors.ink500, fontSize: 13 }}>Email: {pushLookup.email || 'N/A'}</Text>
+                      <Text style={{ color: AppColors.ink500, fontSize: 13 }}>
+                        Updated: {pushLookup.pushTokenUpdatedAt ? String(pushLookup.pushTokenUpdatedAt) : 'N/A'}
+                      </Text>
+                      {pushLookup.pushToken ? (
+                        <Text style={{ color: AppColors.ink700, fontSize: 12, marginTop: 6 }} numberOfLines={3}>
+                          {pushLookup.pushToken}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </AppCard>
+                )
           : requests.map((item) => (
               <AppCard key={item.id} style={{ marginBottom: 12 }}>
                 <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>

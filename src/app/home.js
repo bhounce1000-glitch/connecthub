@@ -18,17 +18,6 @@ import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
 import { registerPushToken } from '../utils/notifications';
 
-const STATUS_COLORS = {
-  [REQUEST_STATUS.OPEN]: '#d97706',
-  [REQUEST_STATUS.ACCEPTED]: '#1d4ed8',
-  [REQUEST_STATUS.IN_PROGRESS]: '#7c3aed',
-  [REQUEST_STATUS.PENDING_CONFIRMATION]: '#ca8a04',
-  [REQUEST_STATUS.COMPLETED]: '#0f766e',
-  [REQUEST_STATUS.PAID]: '#166534',
-  [REQUEST_STATUS.DISPUTED]: '#b91c1c',
-  [REQUEST_STATUS.CANCELLED]: '#b91c1c',
-};
-
 function getEffectiveStatus(item) {
   if (item.status) return item.status;
   if (item.paid) return REQUEST_STATUS.PAID;
@@ -40,7 +29,7 @@ export default function Home() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
   const [requests, setRequests] = useState([]);
-  const [providers, setProviders] = useState([]);
+  const [providers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
@@ -489,7 +478,6 @@ export default function Home() {
           }
           renderItem={({ item }) => {
             const status = getEffectiveStatus(item);
-            const color = STATUS_COLORS[status] || '#d97706';
             const isOwner = item.user === currentEmail;
             const isProvider = item.acceptedBy === currentEmail;
             const activeAction = pendingAction?.startsWith(`${item.id}:`) ? pendingAction.split(':')[1] : null;
