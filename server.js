@@ -5,6 +5,7 @@ const cors = require('cors');
 const { rateLimit } = require('express-rate-limit');
 const admin = require('firebase-admin');
 const pino = require('pino');
+const { sendPaymentReceiptEmail } = require('./src/server/email');
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -18,7 +19,7 @@ let serviceAccount;
 if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
   serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
 } else {
-  serviceAccount = require('./serviceAccountKey.json.json');
+  serviceAccount = require('./serviceAccountKey.json');
 }
 
 const app = express();
@@ -301,6 +302,15 @@ app.get('/', (req, res) => {
   });
 });
 
+app.get('/health', (req, res) => {
+  res.json({
+    status: true,
+    message: 'Server is working',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Rate limiters
 const payInitLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -399,6 +409,7 @@ app.post('/pay/verify', payVerifyLimiter, requireAuth, async (req, res) => {
       reason: 'verification_not_successful',
     };
 
+
     if (data?.status && data?.data?.status === 'success') {
       paymentUpdate = await markRequestPaid(data?.data?.metadata?.requestId, data?.data?.reference, {
         paymentChannel: data?.data?.channel || null,
@@ -407,6 +418,42 @@ app.post('/pay/verify', payVerifyLimiter, requireAuth, async (req, res) => {
 
       if (!paymentUpdate.updated) {
         logger.warn({ paymentUpdate }, 'PAYMENT_UPDATE_SKIPPED');
+      } else {
+        // Fetch transaction and user info for email
+        try {
+          const adminDb = require('firebase-admin').firestore();
+          const requestId = data?.data?.metadata?.requestId;
+          const requestSnap = await adminDb.collection('requests').doc(requestId).get();
+          const request = requestSnap.exists ? requestSnap.data() : null;
+          if (request) {
+            const senderEmail = request.user;
+            const receiverEmail = request.acceptedBy;
+            // Fetch user profiles
+            const senderSnap = senderEmail ? await adminDb.collection('users').doc(senderEmail).get() : null;
+            const receiverSnap = receiverEmail ? await adminDb.collection('users').doc(receiverEmail).get() : null;
+            const sender = senderSnap && senderSnap.exists ? senderSnap.data() : {};
+            const receiver = receiverSnap && receiverSnap.exists ? receiverSnap.data() : {};
+            const txData = {
+              senderEmail,
+              senderName: sender.displayName || sender.fullName || senderEmail || '',
+              senderNumber: sender.phoneNumber || '',
+              receiverEmail,
+              receiverName: receiver.displayName || receiver.fullName || receiverEmail || '',
+              receiverNumber: receiver.phoneNumber || '',
+              jobTitle: request.title || '',
+              transactionId: data?.data?.reference,
+              amount: request.price,
+              commission: request.commission,
+              netAmount: request.providerNet,
+              paymentMethod: data?.data?.channel || 'Paystack',
+              timestamp: request.paidAt || new Date().toISOString(),
+              status: request.paymentStatus ? request.paymentStatus.toUpperCase() : 'SUCCESS',
+            };
+            await sendPaymentReceiptEmail(txData);
+          }
+        } catch (err) {
+          logger.error({ err }, 'SEND_PAYMENT_RECEIPT_EMAIL_ERROR');
+        }
       }
     }
 
@@ -657,6 +704,19 @@ app.post('/jobs/:id/dispute', requireAuth, async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   logger.info({ url: PUBLIC_SERVER_BASE_URL, allowedOrigins: Array.from(allowedOriginSet) }, 'SERVER_STARTED');
 });
+
+// ── Keep-alive: prevent Render free tier from sleeping ──────────────────────
+const KEEP_ALIVE_URL = (process.env.BACKEND_PUBLIC_URL || 'https://connecthub-yrox.onrender.com') + '/health';
+setInterval(async () => {
+  try {
+    const { default: nodeFetch } = await import('node-fetch').catch(() => ({ default: fetch }));
+    const fetchFn = typeof nodeFetch === 'function' ? nodeFetch : fetch;
+    await fetchFn(KEEP_ALIVE_URL);
+    logger.info({ ts: new Date().toISOString() }, '[keep-alive] pinged backend');
+  } catch (e) {
+    logger.warn({ err: e.message }, '[keep-alive] ping failed');
+  }
+}, 10 * 60 * 1000); // every 10 minutes
 
 app.post('/admin/sync-claims', requireAdminOrBootstrapSecret, async (req, res) => {
   try {

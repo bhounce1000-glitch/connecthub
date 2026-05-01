@@ -16,14 +16,30 @@
         { "fieldPath": "read", "order": "ASCENDING" }
       ]
     },
-    {
-      "collectionGroup": "disputes",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "requestId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
+      {
+        "collectionGroup": "disputes",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "requestId", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "DESCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "transactions",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "senderEmail", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "DESCENDING" }
+        ]
+      },
+      {
+        "collectionGroup": "transactions",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "receiverEmail", "order": "ASCENDING" },
+          { "fieldPath": "createdAt", "order": "DESCENDING" }
+        ]
+      },
     {
       "collectionGroup": "requests",
       "queryScope": "COLLECTION",

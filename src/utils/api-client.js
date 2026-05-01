@@ -1,5 +1,25 @@
+
 import { auth } from '../firebase';
 import { formatApiMessage, readApiResponse } from './api-response';
+
+// Retry and timeout wrapper for fetch
+export const fetchWithRetry = async (url, options = {}, retries = 3) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeout);
+    return response;
+  } catch (err) {
+    clearTimeout(timeout);
+    if (retries > 0) {
+      console.warn('Retrying request...', retries, 'left');
+      await new Promise(r => setTimeout(r, 2000));
+      return fetchWithRetry(url, options, retries - 1);
+    }
+    throw err;
+  }
+};
 
 export async function apiFetch(url, options = {}) {
   const { requireAuth = false, headers: originalHeaders = {}, ...restOptions } = options;
@@ -9,15 +29,13 @@ export async function apiFetch(url, options = {}) {
 
   if (requireAuth) {
     const token = await auth.currentUser?.getIdToken(true);
-
     if (!token) {
       throw new Error('You are not authenticated');
     }
-
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(url, {
     ...restOptions,
     headers,
   });

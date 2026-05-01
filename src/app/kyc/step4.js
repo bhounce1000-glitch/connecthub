@@ -5,8 +5,8 @@
 import { useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { useState as useCheckboxState, useEffect, useState } from 'react';
+import { Linking, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../../components/ui/app-button';
 import AppNotice from '../../components/ui/app-notice';
@@ -93,6 +93,7 @@ export default function KycStep4() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [confirmed, setConfirmed] = useCheckboxState(false);
 
   useEffect(() => {
     (async () => {
@@ -204,38 +205,51 @@ export default function KycStep4() {
             {d.paymentMethod === 'mobile_money' ? (
               <>
                 <ReviewRow label="Provider" value={d.momoProvider} />
-                <ReviewRow label="Number" value={maskNumber(d.momoNumber || '')} />
+                <ReviewRow label="Number" value={maskNumber(d.momoNumberMasked || '')} />
                 <ReviewRow label="Account Name" value={d.momoName} />
               </>
             ) : (
               <>
                 <ReviewRow label="Bank" value={d.bankName} />
-                <ReviewRow label="Account No." value={maskNumber(d.bankAccountNumber || '')} />
+                <ReviewRow label="Account No." value={maskNumber(d.bankAccountNumberMasked || '')} />
                 <ReviewRow label="Account Name" value={d.bankAccountName} />
                 {d.bankBranch ? <ReviewRow label="Branch" value={d.bankBranch} /> : null}
               </>
             )}
           </ReviewSection>
 
-          {/* Consent */}
-          <View style={{
-            backgroundColor: '#1e293b',
-            borderRadius: AppRadius.lg,
-            padding: AppSpace.md,
-            marginBottom: AppSpace.xl,
-            borderLeftWidth: 3,
-            borderLeftColor: '#6366f1',
-          }}>
-            <Text style={{ color: AppColors.slate200, fontSize: 13, lineHeight: 20 }}>
-              By submitting, I confirm that all information provided is accurate and I consent to ConnectHub verifying my identity. False information may result in account suspension.
+          {/* Consent Checkbox */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: AppSpace.md, marginTop: AppSpace.lg }}>
+            <TouchableOpacity
+              onPress={() => setConfirmed((v) => !v)}
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 6,
+                borderWidth: 2,
+                borderColor: confirmed ? '#16a34a' : '#64748b',
+                backgroundColor: confirmed ? '#16a34a' : 'transparent',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginRight: 12,
+                marginTop: 2,
+              }}
+            >
+              {confirmed ? <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>✓</Text> : null}
+            </TouchableOpacity>
+            <Text style={{ color: AppColors.ink500, fontSize: 13, flex: 1 }}>
+              I confirm all information is accurate and I agree to the{' '}
+              <Text style={{ color: '#6366f1', textDecorationLine: 'underline' }} onPress={() => Linking.openURL('/terms')}>Terms of Service</Text>
+              {' '}and{' '}
+              <Text style={{ color: '#6366f1', textDecorationLine: 'underline' }} onPress={() => Linking.openURL('/privacy-policy')}>Privacy Policy</Text>.
             </Text>
           </View>
 
           <AppButton
             label={submitting ? 'Submitting…' : '✓ Submit for Verification'}
             onPress={handleSubmit}
-            disabled={submitting}
-            style={{ backgroundColor: '#16a34a' }}
+            disabled={submitting || !confirmed}
+            style={{ backgroundColor: confirmed ? '#16a34a' : '#64748b' }}
           />
 
           <TouchableOpacity

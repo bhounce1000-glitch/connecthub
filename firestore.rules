@@ -1,6 +1,15 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Transaction records: allow read if sender or receiver, deny client writes
+    match /transactions/{txnId} {
+      allow read: if isSignedIn() && (
+        resource.data.senderEmail == email() ||
+        resource.data.receiverEmail == email()
+      );
+      allow write: if false; // Only server can write
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }

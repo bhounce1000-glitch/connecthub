@@ -43,6 +43,16 @@ service firebase.storage {
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
+    // KYC photos - owner can write (max 10 MB); admins read via backend
+    match /kyc_photos/{userId}/{fileName} {
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && isImageUpload()
+        && request.resource.size < 10 * 1024 * 1024;
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
     // Catch-all deny
     match /{allPaths=**} {
       allow read, write: if false;

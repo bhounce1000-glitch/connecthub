@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { doc, getDoc } from 'firebase/firestore';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text } from 'react-native';
+import { createTransactionRecord } from '../utils/transaction';
 
 import AppButton from '../components/ui/app-button';
 import AppNotice from '../components/ui/app-notice';
@@ -137,6 +138,34 @@ export default function Pay() {
           message: 'Payment is successful but this request is not in a payable state yet. Contact support if this is unexpected.',
         });
         return;
+      }
+
+      // Fetch job/request details for transaction record
+      let jobData = {};
+      try {
+        const snap = await getDoc(doc(db, 'requests', requestId));
+        if (snap.exists()) jobData = snap.data();
+      } catch {}
+
+      // Compose transaction record
+      const tx = {
+        transactionId: targetReference,
+        jobId: requestId,
+        jobTitle: jobData.title || '',
+        senderName: jobData.userName || jobData.user || '',
+        senderNumber: jobData.userPhone || '',
+        receiverName: jobData.providerName || jobData.acceptedBy || '',
+        receiverNumber: jobData.providerPhone || '',
+        amount: Number(jobData.price || 0),
+        commission: Number(jobData.commission || 0),
+        netAmount: Number(jobData.providerNet || 0),
+        paymentMethod: jobData.paymentChannel || 'Paystack',
+        status: 'SUCCESS',
+      };
+      try {
+        await createTransactionRecord(tx);
+      } catch (e) {
+        // fail silently, do not block user
       }
 
       setNotice({

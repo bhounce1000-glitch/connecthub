@@ -15,7 +15,7 @@ import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-
 import { db, storage } from '../../firebase';
 import useAuthUser from '../../hooks/use-auth-user';
 
-const ID_TYPES = ["National ID", "Passport", "Driver's Licence", "Voter ID", "NHIS Card"];
+const ID_TYPES = ["National ID", "Passport", "Driver's License", "Voter's ID"];
 
 const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Review'];
 
@@ -96,11 +96,13 @@ export default function KycStep2() {
     idNumber: '',
     idFrontUrl: '',
     idBackUrl: '',
+    countryCode: 'GH',
   });
   const [errors, setErrors] = useState({});
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState({ front: false, back: false });
+  const [country, setCountry] = useState({ cca2: 'GH', callingCode: ['233'] });
 
   useEffect(() => {
     if (isAuthReady && !user?.email) {
@@ -119,12 +121,13 @@ export default function KycStep2() {
           setForm((prev) => ({
             ...prev,
             phone: d.phone || '',
-            altPhone: d.altPhone || '',
+            countryCode: d.countryCode || 'GH',
             idType: d.idType || '',
             idNumber: d.idNumber || '',
             idFrontUrl: d.idFrontUrl || '',
             idBackUrl: d.idBackUrl || '',
           }));
+          setCountry({ cca2: d.countryCode || 'GH', callingCode: d.callingCode || ['233'] });
         }
       } catch {
         // silent
@@ -165,6 +168,7 @@ export default function KycStep2() {
     if (!form.idType) next.idType = 'Please select an ID type';
     if (!form.idNumber.trim()) next.idNumber = 'ID number is required';
     if (!form.idFrontUrl) next.idFrontUrl = 'Front photo of ID is required';
+    if (!form.countryCode) next.countryCode = 'Select country code';
     setErrors(next);
     return Object.keys(next).length === 0;
   };

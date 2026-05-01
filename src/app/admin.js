@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -515,6 +515,22 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 4 }}>
         Submitted: {item.submittedAt ? String(item.submittedAt).slice(0, 10) : 'N/A'}
       </Text>
+
+      {/* Document Photos */}
+      <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, marginBottom: 6 }}>
+        {item.idFrontUrl ? (
+          <View style={{ alignItems: 'center' }}>
+            <Image source={{ uri: item.idFrontUrl }} style={{ width: 80, height: 56, borderRadius: 6, borderWidth: 1, borderColor: '#6366f1' }} />
+            <Text style={{ color: AppColors.ink500, fontSize: 11, marginTop: 2 }}>Front</Text>
+          </View>
+        ) : null}
+        {item.idBackUrl ? (
+          <View style={{ alignItems: 'center' }}>
+            <Image source={{ uri: item.idBackUrl }} style={{ width: 80, height: 56, borderRadius: 6, borderWidth: 1, borderColor: '#6366f1' }} />
+            <Text style={{ color: AppColors.ink500, fontSize: 11, marginTop: 2 }}>Back</Text>
+          </View>
+        ) : null}
+      </View>
 
       {item.kycStatus === KYC_STATUS.PENDING_VERIFICATION && (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm, gap: 8 }}>

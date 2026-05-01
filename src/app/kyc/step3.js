@@ -2,10 +2,12 @@
  * KYC Step 3 — Payment Details (Problem 3)
  * Collects: Mobile Money OR Bank Account payout details
  */
+import CryptoJS from 'crypto-js';
 import { Redirect, useRouter } from 'expo-router';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+
 
 import AppButton from '../../components/ui/app-button';
 import AppInput from '../../components/ui/app-input';
@@ -76,6 +78,7 @@ export default function KycStep3() {
 
   const [method, setMethod] = useState('mobile_money');
   const [momoProvider, setMomoProvider] = useState('');
+  const [momoCountry, setMomoCountry] = useState('Ghana');
   const [momoNumber, setMomoNumber] = useState('');
   const [momoName, setMomoName] = useState('');
   const [bankName, setBankName] = useState('');
@@ -108,6 +111,7 @@ export default function KycStep3() {
           setBankAccountNumber(d.bankAccountNumber || '');
           setBankAccountName(d.bankAccountName || '');
           setBankBranch(d.bankBranch || '');
+          setMomoCountry(d.momoCountry || { cca2: 'GH', callingCode: ['233'] });
         }
       } catch {
         // silent
@@ -134,6 +138,11 @@ export default function KycStep3() {
     return Object.keys(next).length === 0;
   };
 
+  const ENCRYPTION_KEY = 'connecthub-kyc-2026'; // For demo only; use env var in prod
+  function encryptField(value) {
+    return CryptoJS.AES.encrypt(value, ENCRYPTION_KEY).toString();
+  }
+
   const handleNext = async () => {
     if (!validate()) return;
     setLoading(true);
@@ -150,17 +159,17 @@ export default function KycStep3() {
       if (method === 'mobile_money') {
         Object.assign(payload, {
           momoProvider: momoProvider,
-          momoNumber: momoNumber.trim(),
-          momoName: momoName.trim(),
-          // Mask for display; original stored here (backend handles sensitivity)
+          momoCountry: momoCountry,
+          momoNumber: encryptField(momoNumber.trim()),
+          momoName: encryptField(momoName.trim()),
           momoNumberMasked: maskNumber(momoNumber.trim()),
         });
       } else {
         Object.assign(payload, {
-          bankName: bankName.trim(),
-          bankAccountNumber: bankAccountNumber.trim(),
-          bankAccountName: bankAccountName.trim(),
-          bankBranch: bankBranch.trim(),
+          bankName: encryptField(bankName.trim()),
+          bankAccountNumber: encryptField(bankAccountNumber.trim()),
+          bankAccountName: encryptField(bankAccountName.trim()),
+          bankBranch: encryptField(bankBranch.trim()),
           bankAccountNumberMasked: maskNumber(bankAccountNumber.trim()),
         });
       }
@@ -275,13 +284,22 @@ export default function KycStep3() {
                 ))}
               </View>
 
+              {/* Country input and number */}
+              <Text style={{ color: AppColors.ink900, fontWeight: '600', marginBottom: 4 }}>Country</Text>
               <AppInput
-                label="Mobile Money Number"
-                placeholder="0200000000"
+                value={momoCountry}
+                onChangeText={setMomoCountry}
+                placeholder="Country"
+                style={{ marginBottom: AppSpace.md }}
+              />
+              <Text style={{ color: AppColors.ink900, fontWeight: '600', marginBottom: 4 }}>Mobile Money Number</Text>
+              <AppInput
                 value={momoNumber}
                 onChangeText={(v) => { setMomoNumber(v); clearErr('momoNumber'); }}
-                error={errors.momoNumber}
+                placeholder="Enter mobile money number"
                 keyboardType="phone-pad"
+                style={{ marginBottom: AppSpace.md }}
+                error={errors.momoNumber}
               />
 
               <AppInput
@@ -331,6 +349,8 @@ export default function KycStep3() {
                 onChangeText={(v) => { setBankBranch(v); clearErr('bankBranch'); }}
                 error={errors.bankBranch}
                 autoCapitalize="words"
+                accessibilityLabel="Bank Branch or Sort Code"
+                helperText="If your bank requires a branch or sort code for transfers, enter it here."
               />
             </>
           )}

@@ -1,11 +1,10 @@
 import { useRouter } from 'expo-router';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 
 import AppCard from '../components/ui/app-card';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
-import { REQUEST_STATUS } from '../constants/access';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
@@ -14,44 +13,38 @@ import { toDisplayDateTime } from '../utils/date-time';
 export default function Wallet() {
   const router = useRouter();
   const { user } = useAuthUser();
-  const [jobs, setJobs] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
 
+  const [transactions, setTransactions] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const currentEmail = user?.email || '';
 
   useEffect(() => {
     if (!currentEmail) return;
-    const q = query(collection(db, 'requests'), where('acceptedBy', '==', currentEmail));
-    return onSnapshot(q, (snap) => {
-      setJobs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    setIsLoading(true);
+    const q = query(
+      collection(db, 'transactions'),
+      where('receiverEmail', '==', currentEmail),
+      orderBy('timestamp', 'desc')
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setIsLoading(false);
-    }, () => setIsLoading(false));
+    });
+    return unsub;
   }, [currentEmail]);
 
   const stats = useMemo(() => {
     let totalEarned = 0;
     let pending = 0;
-    let jobsCompleted = 0;
-    let totalCommission = 0;
-    for (const j of jobs) {
-      if (j.paid) {
-        const net = Number(j.providerNet ?? j.price ?? 0);
-        const commission = Number(j.commission ?? 0);
-        totalEarned += net;
-        totalCommission += commission;
-        jobsCompleted += 1;
-      } else if (j.status === REQUEST_STATUS.COMPLETED || j.status === 'completed') {
-        pending += Number(j.price ?? 0);
+    for (const t of transactions) {
+      if (t.status === 'SUCCESS') {
+        totalEarned += Number(t.netAmount || 0);
+      } else if (t.status === 'PENDING') {
+        pending += Number(t.netAmount || 0);
       }
     }
-    return { totalEarned, pending, jobsCompleted, totalCommission };
-  }, [jobs]);
-
-  const transactions = useMemo(() => {
-    return jobs
-      .filter((j) => j.paid)
-      .sort((a, b) => (b.paidAt?.seconds ?? 0) - (a.paidAt?.seconds ?? 0));
-  }, [jobs]);
+    return { totalEarned, pending };
+  }, [transactions]);
 
   if (isLoading) {
     return (
@@ -84,10 +77,10 @@ export default function Wallet() {
             </View>
 
             {/* Stats row */}
+
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: AppSpace.md }}>
               <StatCard label="Total Earned" value={`GHS ${stats.totalEarned.toFixed(2)}`} color="#059669" bg="#ecfdf5" />
-              <StatCard label="Pending" value={`GHS ${stats.pending.toFixed(2)}`} color="#d97706" bg="#fffbeb" />
-              <StatCard label="Jobs Done" value={String(stats.jobsCompleted)} color="#4f46e5" bg="#eef2ff" />
+              <StatCard label="Pending Balance" value={`GHS ${stats.pending.toFixed(2)}`} color="#d97706" bg="#fffbeb" />
             </View>
 
             {stats.totalCommission > 0 && (
@@ -112,45 +105,39 @@ export default function Wallet() {
           </View>
         }
         ListEmptyComponent={
-          <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-            <Text style={{ fontSize: 40, marginBottom: 12 }}>📭</Text>
-            <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>No completed jobs yet</Text>
-            <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>
-              Accept jobs and complete them to see earnings here.
-            </Text>
-          </View>
+          isLoading ? (
+            <>
+              <AppCard style={{ marginBottom: 14 }}><LoadingSkeleton height={18} width="60%" style={{ marginBottom: 8 }} /><LoadingSkeleton height={14} width="40%" /></AppCard>
+              <AppCard style={{ marginBottom: 14 }}><LoadingSkeleton height={18} width="60%" style={{ marginBottom: 8 }} /><LoadingSkeleton height={14} width="40%" /></AppCard>
+            </>
+          ) : (
+            <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>📭</Text>
+              <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>No earnings yet</Text>
+              <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>
+                Payments you receive will appear here.
+              </Text>
+            </View>
+          )
         }
         renderItem={({ item }) => {
-          const net = Number(item.providerNet ?? item.price ?? 0);
-          const commission = Number(item.commission ?? 0);
-          const gross = Number(item.price ?? 0);
+          const badge = item.status === 'SUCCESS' ? { text: 'SUCCESS', bg: '#dcfce7', color: '#15803d' }
+            : item.status === 'PENDING' ? { text: 'PENDING', bg: '#fef9c3', color: '#b45309' }
+            : item.status === 'FAILED' ? { text: 'FAILED', bg: '#fee2e2', color: '#b91c1c' }
+            : { text: item.status || 'UNKNOWN', bg: '#f3f4f6', color: '#374151' };
           return (
             <AppCard style={{ marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: '700', fontSize: 15, color: AppColors.ink900 }} numberOfLines={1}>{item.title}</Text>
-                  <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>From: {item.user}</Text>
-                  {item.paidAt && (
-                    <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>{toDisplayDateTime(item.paidAt)}</Text>
-                  )}
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ fontWeight: '800', fontSize: 16, color: '#059669' }}>+GHS {net.toFixed(2)}</Text>
-                  {commission > 0 && (
-                    <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>fee: GHS {commission.toFixed(2)}</Text>
-                  )}
-                </View>
+              <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 3 }} numberOfLines={1}>{item.jobTitle || 'Job'}</Text>
+              <Text style={{ color: AppColors.ink700, marginBottom: 2, fontSize: 13 }}>From: {item.senderName || item.senderEmail}</Text>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Date: {toDisplayDateTime(item.timestamp)}</Text>
+              <Text style={{ color: AppColors.ink900, fontWeight: '700', marginTop: 6 }}>Amount: GHS {Number(item.amount || 0).toFixed(2)}</Text>
+              <Text style={{ color: '#b91c1c', fontSize: 12, marginTop: 2 }}>Commission: GHS {Number(item.commission || 0).toFixed(2)}</Text>
+              <Text style={{ color: '#15803d', fontSize: 12, marginTop: 2 }}>You received: GHS {Number(item.netAmount || 0).toFixed(2)}</Text>
+              <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Payment method: {item.paymentMethod || 'N/A'}</Text>
+              <View style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: badge.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
+                <Text style={{ color: badge.color, fontWeight: '700', fontSize: 12 }}>{badge.text}</Text>
               </View>
-              {gross > 0 && commission > 0 && (
-                <View style={{ marginTop: 8, backgroundColor: '#f8fafc', borderRadius: 8, padding: 10 }}>
-                  <Text style={{ color: AppColors.ink500, fontSize: 12 }}>
-                    Job price: GHS {gross.toFixed(2)} — 10% fee: GHS {commission.toFixed(2)} = Net: GHS {net.toFixed(2)}
-                  </Text>
-                </View>
-              )}
-              {item.paymentReference && (
-                <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4 }}>Ref: {item.paymentReference}</Text>
-              )}
+              <Text style={{ color: '#64748b', fontSize: 11, marginTop: 8 }}>Transaction ID: {item.transactionId}</Text>
             </AppCard>
           );
         }}

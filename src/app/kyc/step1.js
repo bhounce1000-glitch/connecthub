@@ -2,16 +2,17 @@
  * KYC Step 1 — Personal Information
  * Collects: full name, DOB, gender, nationality, country of residence, city, home address, occupation
  */
+import * as ImagePicker from 'expo-image-picker';
 import { Redirect, useRouter } from 'expo-router';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../../components/ui/app-button';
 import AppInput from '../../components/ui/app-input';
 import AppNotice from '../../components/ui/app-notice';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
-import { db } from '../../firebase';
+import { db, storage } from '../../firebase';
 import useAuthUser from '../../hooks/use-auth-user';
 
 const GENDERS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
@@ -73,7 +74,9 @@ export default function KycStep1() {
     city: '',
     homeAddress: '',
     occupation: '',
+    profilePhotoUrl: '',
   });
+  const [profilePhotoFile, setProfilePhotoFile] = useState(null); // File or {uri, name, type}
   const [errors, setErrors] = useState({});
   const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -103,6 +106,7 @@ export default function KycStep1() {
             city: d.city || '',
             homeAddress: d.homeAddress || '',
             occupation: d.occupation || '',
+            profilePhotoUrl: d.profilePhotoUrl || '',
           }));
         }
       } catch {
@@ -121,12 +125,21 @@ export default function KycStep1() {
     if (!form.fullName.trim()) next.fullName = 'Full legal name is required';
     if (!form.dob.trim()) next.dob = 'Date of birth is required';
     else if (!/^\d{4}-\d{2}-\d{2}$/.test(form.dob.trim())) next.dob = 'Use YYYY-MM-DD format';
+    else {
+      // Age validation (must be 18+)
+      const [year, month, day] = form.dob.split('-').map(Number);
+      const dobDate = new Date(year, month - 1, day);
+      const now = new Date();
+      const age = now.getFullYear() - dobDate.getFullYear() - (now.getMonth() < dobDate.getMonth() || (now.getMonth() === dobDate.getMonth() && now.getDate() < dobDate.getDate()) ? 1 : 0);
+      if (isNaN(age) || age < 18) next.dob = 'You must be at least 18 years old';
+    }
     if (!form.gender) next.gender = 'Please select a gender';
     if (!form.nationality.trim()) next.nationality = 'Nationality is required';
     if (!form.countryOfResidence.trim()) next.countryOfResidence = 'Country of residence is required';
     if (!form.city.trim()) next.city = 'City is required';
     if (!form.homeAddress.trim()) next.homeAddress = 'Home address is required';
     if (!form.occupation.trim()) next.occupation = 'Occupation is required';
+    if (!form.profilePhotoUrl) next.profilePhotoUrl = 'Profile photo is required';
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -137,6 +150,23 @@ export default function KycStep1() {
     try {
       if (!user?.email) throw new Error('Not authenticated');
       const email = (user.email || '').trim().toLowerCase();
+
+      let profilePhotoUrl = form.profilePhotoUrl;
+      // If a new file is selected, upload it
+      if (profilePhotoFile) {
+        const { ref: storageRef, uploadBytes, getDownloadURL } = await import('firebase/storage');
+        const fileRef = storageRef(storage, `kyc_photos/${user.uid}/profile`);
+        let uploadBlob;
+        if (Platform.OS === 'web') {
+          uploadBlob = profilePhotoFile;
+        } else {
+          // Mobile: fetch the file as blob
+          const response = await fetch(profilePhotoFile.uri);
+          uploadBlob = await response.blob();
+        }
+        await uploadBytes(fileRef, uploadBlob);
+        profilePhotoUrl = await getDownloadURL(fileRef);
+      }
 
       await setDoc(
         doc(db, 'kyc_submissions', email),
@@ -150,6 +180,7 @@ export default function KycStep1() {
           city: form.city.trim(),
           homeAddress: form.homeAddress.trim(),
           occupation: form.occupation.trim(),
+          profilePhotoUrl,
           updatedAt: new Date().toISOString(),
         },
         { merge: true }
@@ -173,6 +204,42 @@ export default function KycStep1() {
     return <Redirect href="/auth" />;
   }
 
+  // Cross-platform profile photo picker
+  const pickProfilePhoto = async () => {
+    if (Platform.OS === 'web') {
+      // Web: trigger file input
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          setProfilePhotoFile(file);
+          setForm(prev => ({ ...prev, profilePhotoUrl: URL.createObjectURL(file) }));
+        }
+      };
+      input.click();
+    } else {
+      // Mobile: use expo-image-picker
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission required', 'We need access to your photos to upload your profile picture.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        setProfilePhotoFile(asset);
+        setForm((prev) => ({ ...prev, profilePhotoUrl: asset.uri }));
+      }
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: AppColors.ink900 }}>
       <ScrollView
@@ -195,6 +262,28 @@ export default function KycStep1() {
           )}
 
           <Text style={sectionTitle}>Personal Information</Text>
+
+          {/* Profile Photo Upload */}
+          <Text style={{ fontSize: AppType.body, fontWeight: '600', color: AppColors.ink900, marginBottom: AppSpace.xs }}>
+            Profile Photo <Text style={{ color: '#f87171' }}>*</Text>
+          </Text>
+          {errors.profilePhotoUrl ? (
+            <Text style={{ color: '#b91c1c', fontSize: 13, marginBottom: AppSpace.xs }}>{errors.profilePhotoUrl}</Text>
+          ) : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: AppSpace.md }}>
+            {form.profilePhotoUrl ? (
+              <Image
+                source={{ uri: form.profilePhotoUrl }}
+                style={{ width: 64, height: 64, borderRadius: 32, marginRight: 16, borderWidth: 2, borderColor: '#6366f1' }}
+              />
+            ) : null}
+            <TouchableOpacity
+              onPress={pickProfilePhoto}
+              style={{ backgroundColor: '#6366f1', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700' }}>{form.profilePhotoUrl ? 'Replace Photo' : 'Upload Photo'}</Text>
+            </TouchableOpacity>
+          </View>
 
           <AppInput
             label="Full Legal Name"

@@ -1,9 +1,44 @@
-import { Stack, useRouter, type ErrorBoundaryProps } from 'expo-router';
-import { Text, View } from 'react-native';
 
+import { Stack, usePathname, useRouter, type ErrorBoundaryProps } from 'expo-router';
+import { useEffect } from 'react';
+import { ActivityIndicator, Text, View } from 'react-native';
 import AppButton from '../components/ui/app-button';
+import useAuthUser from '../hooks/use-auth-user';
+import { useUserProfile } from '../hooks/use-user-profile';
+
 
 export default function Layout() {
+  // Type workaround for JS hooks
+  const { user, isAuthReady } = useAuthUser() as any;
+  const pathname = usePathname();
+  const router = useRouter();
+  const email = (user?.email?.trim().toLowerCase?.() || null) as string | null;
+  const { profile, isLoading } = useUserProfile(email) as any;
+
+  // Allow all /kyc/* routes
+  const isKycRoute = pathname.startsWith('/kyc');
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+    if (!user?.email) {
+      if (!pathname.startsWith('/auth')) router.replace('/auth');
+      return;
+    }
+    if (!isLoading && profile && profile.kycStatus !== 'VERIFIED' && !isKycRoute) {
+      router.replace('/kyc/step1');
+    }
+  }, [isAuthReady, user, profile, isLoading, pathname, isKycRoute, router]);
+
+  // Show loading spinner while checking profile
+  if (!isAuthReady || (user?.email && isLoading && !isKycRoute)) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <ActivityIndicator size="large" color="#6366f1" />
+        <Text style={{ marginTop: 16, color: '#6366f1', fontWeight: '600' }}>Checking account status…</Text>
+      </View>
+    );
+  }
+
   return <Stack screenOptions={{ headerShown: false }} />;
 }
 
