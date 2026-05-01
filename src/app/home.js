@@ -11,9 +11,12 @@ import Avatar from '../components/ui/avatar';
 import JobStepper from '../components/ui/job-stepper';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
 import { CATEGORY_ICONS, REQUEST_STATUS, isAdminEmail } from '../constants/access';
+import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
+import { apiPost, assertApiSuccess } from '../utils/api-client';
+import { registerPushToken } from '../utils/notifications';
 
 const STATUS_COLORS = {
   [REQUEST_STATUS.OPEN]: '#d97706',
@@ -71,6 +74,14 @@ export default function Home() {
       where('read', '==', false),
     );
     return onSnapshot(q, (snap) => setUnreadCount(snap.size), () => setUnreadCount(0));
+  }, [currentEmail]);
+
+  useEffect(() => {
+    if (!currentEmail) return;
+
+    registerPushToken().catch(() => {
+      // Non-blocking: app should remain usable even if push registration fails.
+    });
   }, [currentEmail]);
 
   useEffect(() => {
@@ -191,12 +202,8 @@ export default function Home() {
     await runRequestAction(
       item, 'accept', 'Request accepted', `You are now assigned to ${item.title}.`,
       async () => {
-        await updateDoc(doc(db, 'requests', item.id), {
-          acceptedBy: currentEmail,
-          status: REQUEST_STATUS.ACCEPTED,
-          acceptedAt: new Date().toISOString(),
-        });
-        await createNotification(item.user, `${currentEmail} accepted your request "${item.title}".`);
+        const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/accept`, {}, { requireAuth: true });
+        assertApiSuccess(response, data, 'Could not accept this request');
       }
     );
   };
@@ -218,11 +225,8 @@ export default function Home() {
     await runRequestAction(
       item, 'complete', 'Completion submitted', `${item.title} is now awaiting customer confirmation.`,
       async () => {
-        await updateDoc(doc(db, 'requests', item.id), {
-          status: REQUEST_STATUS.PENDING_CONFIRMATION,
-          completedAt: new Date().toISOString(),
-        });
-        await createNotification(item.user, `Your service provider marked "${item.title}" as done. Please review and confirm completion.`);
+        const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/mark-complete`, {}, { requireAuth: true });
+        assertApiSuccess(response, data, 'Could not mark this job complete');
       }
     );
   };

@@ -151,6 +151,57 @@ async function writeNotification(userEmail, text) {
   }
 }
 
+async function sendPushNotification(token, title, body) {
+  if (!token || !title || !body) {
+    return;
+  }
+
+  try {
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: token,
+        title,
+        body,
+        sound: 'default',
+      }),
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      logger.warn({ status: response.status, responseText }, 'PUSH_SEND_NON_OK_RESPONSE');
+    }
+  } catch (error) {
+    logger.error({ err: error }, 'PUSH_SEND_ERROR');
+  }
+}
+
+async function getPushTokenForUser(userEmail) {
+  if (!userEmail) return null;
+  try {
+    const userDoc = await adminDb.collection('users').doc(String(userEmail).trim().toLowerCase()).get();
+    if (!userDoc.exists) return null;
+    const pushToken = userDoc.data()?.pushToken;
+    return typeof pushToken === 'string' && pushToken.trim() ? pushToken.trim() : null;
+  } catch (error) {
+    logger.error({ err: error, userEmail }, 'PUSH_TOKEN_LOOKUP_ERROR');
+    return null;
+  }
+}
+
+async function notifyUser(userEmail, text, pushTitle = 'ConnectHub') {
+  if (!userEmail || !text) return;
+
+  await writeNotification(userEmail, text);
+  const pushToken = await getPushTokenForUser(userEmail);
+  if (pushToken) {
+    await sendPushNotification(pushToken, pushTitle, text);
+  }
+}
+
 async function requireAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization || '';
@@ -509,6 +560,126 @@ app.post('/paystack/webhook', async (req, res) => {
   }
 });
 
+app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
+  try {
+    const requestId = String(req.params.id || '').trim();
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const snap = await requestRef.get();
+    if (!snap.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const beforeData = snap.data() || {};
+    if (beforeData.acceptedBy && String(beforeData.acceptedBy).toLowerCase() !== actorEmail) {
+      return sendError(res, req, 409, 'request_already_accepted', 'This request is already accepted by another provider');
+    }
+
+    const currentStatus = beforeData.status || 'open';
+    if (!['open', 'accepted'].includes(currentStatus)) {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Only open requests can be accepted');
+    }
+
+    const patch = {
+      acceptedBy: actorEmail,
+      status: 'accepted',
+      acceptedAt: new Date().toISOString(),
+    };
+
+    await requestRef.set(patch, { merge: true });
+
+    if (beforeData.user) {
+      await notifyUser(
+        beforeData.user,
+        `${actorEmail} accepted your request "${beforeData.title || requestId}".`,
+        'Job Accepted'
+      );
+    }
+
+    await writeAuditLog({
+      actorEmail,
+      actorUid: req.user?.uid || null,
+      eventType: 'provider_accepted_job',
+      requestId,
+      before: beforeData,
+      after: { ...beforeData, ...patch },
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Request accepted successfully',
+      data: { id: requestId, ...patch },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'JOB_ACCEPT_ERROR');
+    return sendError(res, req, 500, 'job_accept_failed', 'Could not accept request');
+  }
+});
+
+app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
+  try {
+    const requestId = String(req.params.id || '').trim();
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const snap = await requestRef.get();
+    if (!snap.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const beforeData = snap.data() || {};
+    const acceptedBy = String(beforeData.acceptedBy || '').toLowerCase();
+
+    if (!acceptedBy || acceptedBy !== actorEmail) {
+      return sendError(res, req, 403, 'provider_access_required', 'Only the assigned provider can mark this job complete');
+    }
+
+    if (!['accepted', 'in_progress'].includes(beforeData.status)) {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Job must be accepted or in progress to mark complete');
+    }
+
+    const patch = {
+      status: 'pending_confirmation',
+      completedAt: new Date().toISOString(),
+    };
+
+    await requestRef.set(patch, { merge: true });
+
+    if (beforeData.user) {
+      await notifyUser(
+        beforeData.user,
+        `Your service provider marked "${beforeData.title || requestId}" as done. Please review and confirm completion.`,
+        'Work Marked Complete'
+      );
+    }
+
+    await writeAuditLog({
+      actorEmail,
+      actorUid: req.user?.uid || null,
+      eventType: 'provider_marked_complete',
+      requestId,
+      before: beforeData,
+      after: { ...beforeData, ...patch },
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Job marked complete and pending confirmation',
+      data: { id: requestId, ...patch },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'JOB_MARK_COMPLETE_ERROR');
+    return sendError(res, req, 500, 'job_mark_complete_failed', 'Could not mark job complete');
+  }
+});
+
 app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
   try {
     const requestId = req.params.id;
@@ -565,15 +736,17 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
     }
 
     if (beforeData.acceptedBy) {
-      await writeNotification(
+      await notifyUser(
         beforeData.acceptedBy,
-        `Job "${beforeData.title || requestId}" was confirmed by the customer and paid successfully.`
+        `Job "${beforeData.title || requestId}" was confirmed by the customer and paid successfully.`,
+        'Job Confirmed and Paid'
       );
     }
     if (beforeData.user) {
-      await writeNotification(
+      await notifyUser(
         beforeData.user,
-        `Job "${beforeData.title || requestId}" completed successfully. Payment has been released.`
+        `Job "${beforeData.title || requestId}" completed successfully. Payment has been released.`,
+        'Payment Released'
       );
     }
 
@@ -665,13 +838,21 @@ app.post('/jobs/:id/dispute', requireAuth, async (req, res) => {
     await adminDb.collection('disputes').add(disputeDoc);
 
     if (beforeData.acceptedBy) {
-      await writeNotification(beforeData.acceptedBy, `A dispute was opened for job "${beforeData.title || requestId}". Payment is on hold.`);
+      await notifyUser(
+        beforeData.acceptedBy,
+        `A dispute was opened for job "${beforeData.title || requestId}". Payment is on hold.`,
+        'Dispute Opened'
+      );
     }
     if (beforeData.user) {
-      await writeNotification(beforeData.user, `Your dispute for "${beforeData.title || requestId}" has been submitted for admin review.`);
+      await notifyUser(
+        beforeData.user,
+        `Your dispute for "${beforeData.title || requestId}" has been submitted for admin review.`,
+        'Dispute Submitted'
+      );
     }
     for (const adminEmail of ADMIN_EMAILS) {
-      await writeNotification(adminEmail, `New dispute requires review: "${beforeData.title || requestId}".`);
+      await notifyUser(adminEmail, `New dispute requires review: "${beforeData.title || requestId}".`, 'Dispute Requires Review');
     }
 
     await writeAuditLog({
@@ -954,14 +1135,11 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
     await submissionRef.set(patch, { merge: true });
     await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'verified', updatedAt: now }, { merge: true });
 
-    // Notify user
-    await adminDb.collection('notifications').add({
-      userId: targetEmail,
-      message: 'Your identity verification has been approved. You can now access all ConnectHub features.',
-      type: 'kyc_approved',
-      read: false,
-      createdAt: now,
-    });
+    await notifyUser(
+      targetEmail,
+      'Your identity verification has been approved. You can now access all ConnectHub features.',
+      'KYC Approved'
+    );
 
     await writeAuditLog({
       actorEmail: req.user?.email || null,
@@ -1005,14 +1183,11 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
     await submissionRef.set(patch, { merge: true });
     await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'rejected', updatedAt: now }, { merge: true });
 
-    // Notify user
-    await adminDb.collection('notifications').add({
-      userId: targetEmail,
-      message: `Your identity verification was not approved. Reason: ${reason}. Please resubmit with correct documents.`,
-      type: 'kyc_rejected',
-      read: false,
-      createdAt: now,
-    });
+    await notifyUser(
+      targetEmail,
+      `Your identity verification was not approved. Reason: ${reason}. Please resubmit with correct documents.`,
+      'KYC Rejected'
+    );
 
     await writeAuditLog({
       actorEmail: req.user?.email || null,
