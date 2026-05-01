@@ -2,9 +2,13 @@
  * KYC Step 4 — Review & Submit
  * Shows a summary of all collected KYC data before final submission.
  */
+import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+import { API_BASE_URL } from '../../constants/api';
+import { apiPost } from '../../utils/api-client';
 import { useState as useCheckboxState, useEffect, useState } from 'react';
 import { Linking, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
@@ -87,6 +91,20 @@ function maskNumber(n = '') {
   return n.slice(0, 3) + '•'.repeat(Math.max(0, n.length - 6)) + n.slice(-3);
 }
 
+// Safely decrypt a field — returns plain text if value was not encrypted
+const ENCRYPTION_KEY = 'connecthub-kyc-2026';
+function safeDecrypt(value) {
+  if (!value) return '';
+  try {
+    const bytes = CryptoJS.AES.decrypt(value, ENCRYPTION_KEY);
+    const decoded = bytes.toString(CryptoJS.enc.Utf8);
+    // If decryption yields a non-empty string, it was encrypted; otherwise return as-is
+    return decoded || value;
+  } catch {
+    return value;
+  }
+}
+
 export default function KycStep4() {
   const router = useRouter();
   const [data, setData] = useState(null);
@@ -138,6 +156,9 @@ export default function KycStep4() {
         { kycStatus: KYC_STATUS.PENDING_VERIFICATION, updatedAt: new Date().toISOString() },
         { merge: true }
       );
+
+      // Send submission confirmation email (non-blocking — don't fail the flow if this errors)
+      apiPost(`${API_BASE_URL}/kyc/notify-submitted`, {}, { requireAuth: true }).catch(() => {});
 
       router.replace('/kyc/pending');
     } catch (err) {
@@ -206,14 +227,14 @@ export default function KycStep4() {
               <>
                 <ReviewRow label="Provider" value={d.momoProvider} />
                 <ReviewRow label="Number" value={maskNumber(d.momoNumberMasked || '')} />
-                <ReviewRow label="Account Name" value={d.momoName} />
+                <ReviewRow label="Account Name" value={safeDecrypt(d.momoName)} />
               </>
             ) : (
               <>
-                <ReviewRow label="Bank" value={d.bankName} />
+                <ReviewRow label="Bank" value={safeDecrypt(d.bankName)} />
                 <ReviewRow label="Account No." value={maskNumber(d.bankAccountNumberMasked || '')} />
-                <ReviewRow label="Account Name" value={d.bankAccountName} />
-                {d.bankBranch ? <ReviewRow label="Branch" value={d.bankBranch} /> : null}
+                <ReviewRow label="Account Name" value={safeDecrypt(d.bankAccountName)} />
+                {d.bankBranch ? <ReviewRow label="Branch" value={safeDecrypt(d.bankBranch)} /> : null}
               </>
             )}
           </ReviewSection>

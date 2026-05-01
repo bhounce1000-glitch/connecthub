@@ -3,6 +3,7 @@ import { Stack, usePathname, useRouter, type ErrorBoundaryProps } from 'expo-rou
 import { useEffect } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import AppButton from '../components/ui/app-button';
+import { KYC_STATUS, isAdminEmail } from '../constants/access';
 import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
 
@@ -15,8 +16,9 @@ export default function Layout() {
   const email = (user?.email?.trim().toLowerCase?.() || null) as string | null;
   const { profile, isLoading } = useUserProfile(email) as any;
 
-  // Allow all /kyc/* routes
+  // Allow all /kyc/* routes; always allow admins through regardless of KYC status
   const isKycRoute = pathname.startsWith('/kyc');
+  const isAdminUser = isAdminEmail(email || '');
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -24,10 +26,12 @@ export default function Layout() {
       if (!pathname.startsWith('/auth')) router.replace('/auth');
       return;
     }
-    if (!isLoading && profile && profile.kycStatus !== 'VERIFIED' && !isKycRoute) {
+    // Admins bypass the KYC gate so they can access /admin even while pending
+    if (isAdminUser) return;
+    if (!isLoading && profile && profile.kycStatus !== KYC_STATUS.VERIFIED && !isKycRoute) {
       router.replace('/kyc/step1');
     }
-  }, [isAuthReady, user, profile, isLoading, pathname, isKycRoute, router]);
+  }, [isAuthReady, user, profile, isLoading, pathname, isKycRoute, isAdminUser, router]);
 
   // Show loading spinner while checking profile
   if (!isAuthReady || (user?.email && isLoading && !isKycRoute)) {

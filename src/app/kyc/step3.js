@@ -160,16 +160,18 @@ export default function KycStep3() {
         Object.assign(payload, {
           momoProvider: momoProvider,
           momoCountry: momoCountry,
+          // Only encrypt the actual account number; name is non-sensitive
           momoNumber: encryptField(momoNumber.trim()),
-          momoName: encryptField(momoName.trim()),
+          momoName: momoName.trim(),
           momoNumberMasked: maskNumber(momoNumber.trim()),
         });
       } else {
         Object.assign(payload, {
-          bankName: encryptField(bankName.trim()),
+          // Only encrypt the account number; name/bank/branch are non-sensitive
+          bankName: bankName.trim(),
           bankAccountNumber: encryptField(bankAccountNumber.trim()),
-          bankAccountName: encryptField(bankAccountName.trim()),
-          bankBranch: encryptField(bankBranch.trim()),
+          bankAccountName: bankAccountName.trim(),
+          bankBranch: bankBranch.trim(),
           bankAccountNumberMasked: maskNumber(bankAccountNumber.trim()),
         });
       }

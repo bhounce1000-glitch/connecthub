@@ -64,4 +64,50 @@ async function sendPaymentReceiptEmail(data) {
   await transporter.sendMail(mailOptions);
 }
 
-module.exports = { sendPaymentReceiptEmail };
+async function sendKycSubmissionEmail({ email, name }) {
+  const displayName = name || email;
+  const subject = 'KYC Submitted — We\'ve received your verification';
+  const html = `
+    <h2>Identity Verification Received</h2>
+    <p>Hi ${displayName},</p>
+    <p>Thank you for submitting your identity verification on <b>ConnectHub</b>.</p>
+    <p>Our team will review your documents and notify you once the process is complete. This usually takes <b>1–2 business days</b>.</p>
+    <p>If you have any questions, reply to this email.</p>
+    <hr />
+    <p style="color:#888;font-size:12px;">ConnectHub · connecthub-1873e.web.app</p>
+  `;
+  await transporter.sendMail({ from: EMAIL_FROM, to: email, subject, html });
+}
+
+async function sendKycApprovalEmail({ email, name }) {
+  const displayName = name || email;
+  const subject = 'KYC Approved — You\'re verified on ConnectHub!';
+  const html = `
+    <h2>Identity Verification Approved ✅</h2>
+    <p>Hi ${displayName},</p>
+    <p>Great news! Your identity has been <b>verified</b> on ConnectHub.</p>
+    <p>You now have full access to all ConnectHub features — start exploring service providers or accepting jobs today.</p>
+    <a href="https://connecthub-1873e.web.app" style="display:inline-block;padding:10px 20px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Open ConnectHub</a>
+    <hr />
+    <p style="color:#888;font-size:12px;">ConnectHub · connecthub-1873e.web.app</p>
+  `;
+  await transporter.sendMail({ from: EMAIL_FROM, to: email, subject, html });
+}
+
+async function sendKycRejectionEmail({ email, name, reason }) {
+  const displayName = name || email;
+  const subject = 'KYC Update — Action required on ConnectHub';
+  const html = `
+    <h2>Identity Verification Not Approved</h2>
+    <p>Hi ${displayName},</p>
+    <p>Unfortunately, we were unable to verify your identity at this time.</p>
+    <p><b>Reason:</b> ${reason || 'Documents did not meet our verification requirements.'}</p>
+    <p>Please <a href="https://connecthub-1873e.web.app/kyc/step1">resubmit your KYC</a> with the correct documents.</p>
+    <p>If you believe this is an error, reply to this email.</p>
+    <hr />
+    <p style="color:#888;font-size:12px;">ConnectHub · connecthub-1873e.web.app</p>
+  `;
+  await transporter.sendMail({ from: EMAIL_FROM, to: email, subject, html });
+}
+
+module.exports = { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail };

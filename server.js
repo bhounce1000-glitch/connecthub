@@ -5,7 +5,7 @@ const cors = require('cors');
 const { rateLimit } = require('express-rate-limit');
 const admin = require('firebase-admin');
 const pino = require('pino');
-const { sendPaymentReceiptEmail } = require('./src/server/email');
+const { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail } = require('./src/server/email');
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -1155,6 +1155,31 @@ app.delete('/admin/requests/:id', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
+// ── KYC ENDPOINTS ────────────────────────────────────────────────────────────
+
+/**
+ * POST /kyc/notify-submitted — send submission confirmation email to the caller.
+ * Called by the client immediately after writing to Firestore.
+ */
+app.post('/kyc/notify-submitted', requireAuth, async (req, res) => {
+  try {
+    const email = (req.user?.email || '').trim().toLowerCase();
+    if (!email) return sendError(res, req, 400, 'missing_email', 'Cannot determine user email');
+
+    const userSnap = await adminDb.collection('users').doc(email).get();
+    const name = userSnap.exists ? (userSnap.data()?.name || email) : email;
+
+    await sendKycSubmissionEmail({ email, name }).catch((err) => {
+      logger.warn({ err, email }, 'KYC_SUBMIT_EMAIL_FAILED');
+    });
+
+    return sendSuccess(res, req, { message: 'Confirmation email sent' });
+  } catch (error) {
+    logger.error({ err: error }, 'KYC_NOTIFY_SUBMITTED_ERROR');
+    return sendError(res, req, 500, 'kyc_notify_failed', 'Could not send confirmation email');
+  }
+});
+
 // ── KYC ADMIN ENDPOINTS ──────────────────────────────────────────────────────
 
 /**
@@ -1206,6 +1231,12 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
       'KYC Approved'
     );
 
+    const approvedUser = await adminDb.collection('users').doc(targetEmail).get();
+    const approvedName = approvedUser.exists ? (approvedUser.data()?.name || targetEmail) : targetEmail;
+    await sendKycApprovalEmail({ email: targetEmail, name: approvedName }).catch((err) => {
+      logger.warn({ err, targetEmail }, 'KYC_APPROVAL_EMAIL_FAILED');
+    });
+
     await writeAuditLog({
       actorEmail: req.user?.email || null,
       actorUid: req.user?.uid || null,
@@ -1253,6 +1284,12 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
       `Your identity verification was not approved. Reason: ${reason}. Please resubmit with correct documents.`,
       'KYC Rejected'
     );
+
+    const rejectedUser = await adminDb.collection('users').doc(targetEmail).get();
+    const rejectedName = rejectedUser.exists ? (rejectedUser.data()?.name || targetEmail) : targetEmail;
+    await sendKycRejectionEmail({ email: targetEmail, name: rejectedName, reason }).catch((err) => {
+      logger.warn({ err, targetEmail }, 'KYC_REJECTION_EMAIL_FAILED');
+    });
 
     await writeAuditLog({
       actorEmail: req.user?.email || null,
