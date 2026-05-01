@@ -47,6 +47,7 @@
     "firebase": "^12.11.0",
     "firebase-admin": "^13.8.0",
     "node-fetch": "^3.3.2",
+    "nodemailer": "^8.0.7",
     "pino": "^10.3.1",
     "react": "19.2.0",
     "react-async-hook": "^4.0.0",
