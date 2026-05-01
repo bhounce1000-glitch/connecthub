@@ -5,7 +5,7 @@ const cors = require('cors');
 const { rateLimit } = require('express-rate-limit');
 const admin = require('firebase-admin');
 const pino = require('pino');
-const { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail } = require('./src/server/email');
+const { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail, isEmailConfigured } = require('./src/server/email');
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -139,9 +139,11 @@ async function writeAuditLog({ actorEmail = null, actorUid = null, eventType, re
 
 async function writeNotification(userEmail, text) {
   if (!userEmail || !text) return;
+  const normalizedEmail = String(userEmail).trim().toLowerCase();
   try {
     await adminDb.collection('notifications').add({
-      user: userEmail,
+      user: normalizedEmail,
+      userLower: normalizedEmail,
       text,
       read: false,
       createdAt: new Date().toISOString(),
@@ -193,13 +195,38 @@ async function getPushTokenForUser(userEmail) {
 }
 
 async function notifyUser(userEmail, text, pushTitle = 'ConnectHub') {
-  if (!userEmail || !text) return;
-
-  await writeNotification(userEmail, text);
-  const pushToken = await getPushTokenForUser(userEmail);
-  if (pushToken) {
-    await sendPushNotification(pushToken, pushTitle, text);
+  if (!userEmail || !text) {
+    return {
+      inAppNotificationStored: false,
+      pushAttempted: false,
+      pushDelivered: false,
+      pushTokenFound: false,
+    };
   }
+
+  const normalizedEmail = String(userEmail).trim().toLowerCase();
+  let inAppNotificationStored = false;
+  let pushAttempted = false;
+  let pushDelivered = false;
+  let pushTokenFound = false;
+
+  await writeNotification(normalizedEmail, text);
+  inAppNotificationStored = true;
+
+  const pushToken = await getPushTokenForUser(normalizedEmail);
+  if (pushToken) {
+    pushTokenFound = true;
+    pushAttempted = true;
+    await sendPushNotification(pushToken, pushTitle, text);
+    pushDelivered = true;
+  }
+
+  return {
+    inAppNotificationStored,
+    pushAttempted,
+    pushDelivered,
+    pushTokenFound,
+  };
 }
 
 async function requireAuth(req, res, next) {
@@ -1225,7 +1252,7 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
     await submissionRef.set(patch, { merge: true });
     await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'verified', updatedAt: now }, { merge: true });
 
-    await notifyUser(
+    const notificationDelivery = await notifyUser(
       targetEmail,
       'Your identity verification has been approved. You can now access all ConnectHub features.',
       'KYC Approved'
@@ -1233,9 +1260,25 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
 
     const approvedUser = await adminDb.collection('users').doc(targetEmail).get();
     const approvedName = approvedUser.exists ? (approvedUser.data()?.name || targetEmail) : targetEmail;
-    await sendKycApprovalEmail({ email: targetEmail, name: approvedName }).catch((err) => {
-      logger.warn({ err, targetEmail }, 'KYC_APPROVAL_EMAIL_FAILED');
-    });
+    let emailDelivery = {
+      attempted: false,
+      sent: false,
+      configured: isEmailConfigured(),
+      errorCode: null,
+    };
+
+    if (emailDelivery.configured) {
+      emailDelivery.attempted = true;
+      try {
+        await sendKycApprovalEmail({ email: targetEmail, name: approvedName });
+        emailDelivery.sent = true;
+      } catch (err) {
+        emailDelivery.errorCode = err?.code || err?.responseCode || 'email_send_failed';
+        logger.warn({ err, targetEmail }, 'KYC_APPROVAL_EMAIL_FAILED');
+      }
+    } else {
+      logger.warn({ targetEmail }, 'KYC_APPROVAL_EMAIL_SKIPPED_NOT_CONFIGURED');
+    }
 
     await writeAuditLog({
       actorEmail: req.user?.email || null,
@@ -1244,7 +1287,14 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
       metadata: { targetEmail },
     });
 
-    return sendSuccess(res, req, { message: 'KYC approved', email: targetEmail });
+    return sendSuccess(res, req, {
+      message: 'KYC approved',
+      email: targetEmail,
+      delivery: {
+        ...notificationDelivery,
+        email: emailDelivery,
+      },
+    });
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_KYC_APPROVE_ERROR');
     return sendError(res, req, 500, 'admin_kyc_approve_failed', 'KYC approval failed');
@@ -1279,7 +1329,7 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
     await submissionRef.set(patch, { merge: true });
     await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'rejected', updatedAt: now }, { merge: true });
 
-    await notifyUser(
+    const notificationDelivery = await notifyUser(
       targetEmail,
       `Your identity verification was not approved. Reason: ${reason}. Please resubmit with correct documents.`,
       'KYC Rejected'
@@ -1287,9 +1337,25 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
 
     const rejectedUser = await adminDb.collection('users').doc(targetEmail).get();
     const rejectedName = rejectedUser.exists ? (rejectedUser.data()?.name || targetEmail) : targetEmail;
-    await sendKycRejectionEmail({ email: targetEmail, name: rejectedName, reason }).catch((err) => {
-      logger.warn({ err, targetEmail }, 'KYC_REJECTION_EMAIL_FAILED');
-    });
+    let emailDelivery = {
+      attempted: false,
+      sent: false,
+      configured: isEmailConfigured(),
+      errorCode: null,
+    };
+
+    if (emailDelivery.configured) {
+      emailDelivery.attempted = true;
+      try {
+        await sendKycRejectionEmail({ email: targetEmail, name: rejectedName, reason });
+        emailDelivery.sent = true;
+      } catch (err) {
+        emailDelivery.errorCode = err?.code || err?.responseCode || 'email_send_failed';
+        logger.warn({ err, targetEmail }, 'KYC_REJECTION_EMAIL_FAILED');
+      }
+    } else {
+      logger.warn({ targetEmail }, 'KYC_REJECTION_EMAIL_SKIPPED_NOT_CONFIGURED');
+    }
 
     await writeAuditLog({
       actorEmail: req.user?.email || null,
@@ -1298,7 +1364,14 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
       metadata: { targetEmail, reason },
     });
 
-    return sendSuccess(res, req, { message: 'KYC rejected', email: targetEmail });
+    return sendSuccess(res, req, {
+      message: 'KYC rejected',
+      email: targetEmail,
+      delivery: {
+        ...notificationDelivery,
+        email: emailDelivery,
+      },
+    });
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_KYC_REJECT_ERROR');
     return sendError(res, req, 500, 'admin_kyc_reject_failed', 'KYC rejection failed');

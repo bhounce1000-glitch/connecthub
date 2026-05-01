@@ -1,7 +1,8 @@
+import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { Image, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -15,6 +16,42 @@ import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiDelete, apiGet, apiPost, assertApiSuccess } from '../utils/api-client';
 import { formatApiMessage } from '../utils/api-response';
+
+const KYC_ENCRYPTION_KEY = 'connecthub-kyc-2026';
+
+function safeDecryptKycField(value) {
+  if (!value) return '';
+  try {
+    const bytes = CryptoJS.AES.decrypt(String(value), KYC_ENCRYPTION_KEY);
+    const decoded = bytes.toString(CryptoJS.enc.Utf8);
+    return decoded || String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatIsoDate(iso) {
+  if (!iso) return 'N/A';
+  if (typeof iso?.toDate === 'function') {
+    try {
+      return iso.toDate().toLocaleString();
+    } catch {
+      // Fall through to other parsing paths.
+    }
+  }
+  if (typeof iso === 'object' && typeof iso?.seconds === 'number') {
+    return new Date(iso.seconds * 1000).toLocaleString();
+  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 19);
+  return d.toLocaleString();
+}
+
+function maskValue(value = '') {
+  const str = String(value || '');
+  if (str.length <= 4) return str;
+  return `${str.slice(0, 3)}${'•'.repeat(Math.max(0, str.length - 6))}${str.slice(-3)}`;
+}
 
 export default function Admin() {
   const router = useRouter();
@@ -154,12 +191,23 @@ export default function Admin() {
       const endpoint = `${API_BASE_URL}/admin/kyc/${encodeURIComponent(email)}/${action}`;
       const payload = action === 'reject' ? { reason } : {};
       const { response, data } = await apiPost(endpoint, payload, { requireAuth: true });
-      assertApiSuccess(response, data, `KYC ${action} failed`);
+      const apiData = assertApiSuccess(response, data, `KYC ${action} failed`);
+      const delivery = apiData?.data?.delivery || {};
+      const inAppStatus = delivery.inAppNotificationStored ? 'in-app: stored' : 'in-app: failed';
+      const pushStatus = delivery.pushTokenFound
+        ? (delivery.pushDelivered ? 'push: sent' : 'push: failed')
+        : 'push: skipped (no token)';
+      const emailConfigured = delivery.email?.configured;
+      const emailStatus = !emailConfigured
+        ? 'email: skipped (EMAIL_USER/EMAIL_PASS not set on backend)'
+        : delivery.email?.sent
+          ? 'email: sent'
+          : 'email: failed';
 
       setNotice({
-        tone: 'success',
+        tone: delivery.email?.sent || delivery.inAppNotificationStored ? 'success' : 'warning',
         title: action === 'approve' ? 'KYC approved' : 'KYC rejected',
-        message: `${email} has been ${action === 'approve' ? 'verified' : 'rejected'}.`,
+        message: `${email} has been ${action === 'approve' ? 'verified' : 'rejected'}. ${inAppStatus}; ${pushStatus}; ${emailStatus}.`,
       });
     } catch (error) {
       setNotice({
@@ -674,6 +722,19 @@ function DisputeReviewCard({ item, pendingAction, onResolve }) {
 function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
+
+  const bankName = safeDecryptKycField(item.bankName);
+  const bankAccountName = safeDecryptKycField(item.bankAccountName);
+  const bankBranch = safeDecryptKycField(item.bankBranch);
+  const momoName = safeDecryptKycField(item.momoName);
+  const idNumber = safeDecryptKycField(item.idNumber || '');
+  const dateOfBirth = item.dob || item.dateOfBirth || '';
+  const residentialAddress = item.homeAddress || item.residentialAddress || '';
+  const countryOfResidence = item.countryOfResidence || '';
+  const city = item.city || '';
+  const canTakeAction = item.kycStatus === KYC_STATUS.PENDING_VERIFICATION && expanded && reviewConfirmed;
 
   const kycBadgeColor =
     item.kycStatus === KYC_STATUS.VERIFIED
@@ -699,13 +760,103 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
 
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Email: {item.email}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Phone: {item.phone || 'N/A'}</Text>
-      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>ID Type: {item.idType || 'N/A'} - {item.idNumber || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>ID Type: {item.idType || 'N/A'} - {idNumber || 'N/A'}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>
-        Payment: {item.paymentMethod === 'bank' ? `Bank - ${item.bankName || 'N/A'}` : `MoMo - ${item.momoProvider || 'N/A'}`}
+        Payment: {item.paymentMethod === 'bank' ? `Bank - ${bankName || 'N/A'}` : `MoMo - ${item.momoProvider || 'N/A'}`}
       </Text>
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 4 }}>
-        Submitted: {item.submittedAt ? String(item.submittedAt).slice(0, 10) : 'N/A'}
+        Submitted: {formatIsoDate(item.submittedAt)}
       </Text>
+
+      <TouchableOpacity
+        onPress={() => setExpanded((v) => !v)}
+        style={{
+          marginTop: 10,
+          paddingVertical: 8,
+          paddingHorizontal: 10,
+          borderRadius: AppRadius.md,
+          borderWidth: 1,
+          borderColor: '#334155',
+          backgroundColor: '#0f172a',
+        }}
+      >
+        <Text style={{ color: '#cbd5e1', fontWeight: '700' }}>
+          {expanded ? 'Hide full KYC details' : 'Review full KYC details'}
+        </Text>
+      </TouchableOpacity>
+
+      {expanded ? (
+        <View style={{ marginTop: 10, borderWidth: 1, borderColor: '#1e293b', borderRadius: AppRadius.md, padding: 10, backgroundColor: '#020617' }}>
+          <Text style={{ color: '#a5b4fc', fontWeight: '700', marginBottom: 8 }}>Identity Details</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Full Name: {item.fullName || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Date of Birth: {dateOfBirth || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Nationality: {item.nationality || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country of Residence: {countryOfResidence || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>City: {city || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Residential Address: {residentialAddress || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>ID Type: {item.idType || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>ID Number: {idNumber || 'N/A'}</Text>
+
+          <Text style={{ color: '#a5b4fc', fontWeight: '700', marginTop: 8, marginBottom: 8 }}>Payment Details</Text>
+          {item.paymentMethod === 'bank' ? (
+            <>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Method: Bank Account</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Bank: {bankName || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {bankAccountName || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Number: {maskValue(item.bankAccountNumberMasked || '') || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Branch: {bankBranch || 'N/A'}</Text>
+            </>
+          ) : (
+            <>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Method: Mobile Money</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Provider: {item.momoProvider || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {momoName || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Number: {maskValue(item.momoNumberMasked || '') || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country: {item.momoCountry || 'N/A'}</Text>
+            </>
+          )}
+
+          <Text style={{ color: '#a5b4fc', fontWeight: '700', marginTop: 8, marginBottom: 8 }}>Document Links</Text>
+          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            {item.idFrontUrl ? (
+              <AppButton
+                label="Open ID Front"
+                onPress={() => Linking.openURL(item.idFrontUrl)}
+                style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#1d4ed8' }}
+              />
+            ) : null}
+            {item.idBackUrl ? (
+              <AppButton
+                label="Open ID Back"
+                onPress={() => Linking.openURL(item.idBackUrl)}
+                style={{ paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#1d4ed8' }}
+              />
+            ) : null}
+          </View>
+
+          {item.kycStatus === KYC_STATUS.PENDING_VERIFICATION ? (
+            <TouchableOpacity
+              onPress={() => setReviewConfirmed((v) => !v)}
+              style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12 }}
+            >
+              <View
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 4,
+                  borderWidth: 1,
+                  borderColor: reviewConfirmed ? '#22c55e' : '#64748b',
+                  backgroundColor: reviewConfirmed ? '#22c55e' : 'transparent',
+                  marginRight: 8,
+                }}
+              />
+              <Text style={{ color: '#cbd5e1', fontSize: 13 }}>
+                I have reviewed all KYC details and documents for this user.
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
 
       {/* Document Photos */}
       <View style={{ flexDirection: 'row', gap: 12, marginTop: 10, marginBottom: 6 }}>
@@ -728,17 +879,23 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
           <AppButton
             label={pendingAction === `kyc:${item.email}:approve` ? 'Approving...' : 'Approve'}
             onPress={onApprove}
-            disabled={Boolean(pendingAction)}
+            disabled={Boolean(pendingAction) || !canTakeAction}
             style={{ paddingHorizontal: 14, paddingVertical: 9, backgroundColor: '#15803d' }}
           />
           <AppButton
             label={showRejectForm ? 'Cancel Reject' : 'Reject'}
             onPress={() => setShowRejectForm((v) => !v)}
-            disabled={Boolean(pendingAction)}
+            disabled={Boolean(pendingAction) || !canTakeAction}
             style={{ paddingHorizontal: 14, paddingVertical: 9, backgroundColor: '#b91c1c' }}
           />
         </View>
       )}
+
+      {item.kycStatus === KYC_STATUS.PENDING_VERIFICATION && !canTakeAction ? (
+        <Text style={{ color: '#f59e0b', fontSize: 12, marginTop: 8 }}>
+          Open full details and tick review confirmation before approving or rejecting.
+        </Text>
+      ) : null}
 
       {showRejectForm && item.kycStatus === KYC_STATUS.PENDING_VERIFICATION && (
         <View style={{ marginTop: AppSpace.sm }}>

@@ -4,6 +4,10 @@ const EMAIL_FROM = process.env.EMAIL_FROM || 'no-reply@connecthub.app';
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
 
+function isEmailConfigured() {
+  return Boolean(String(EMAIL_USER || '').trim() && String(EMAIL_PASS || '').trim());
+}
+
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -110,4 +114,4 @@ async function sendKycRejectionEmail({ email, name, reason }) {
   await transporter.sendMail({ from: EMAIL_FROM, to: email, subject, html });
 }
 
-module.exports = { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail };
+module.exports = { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail, isEmailConfigured };
