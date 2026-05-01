@@ -3,8 +3,9 @@
  * Collects: phone, alt phone, ID type, ID number, ID front photo, ID back photo
  */
 import { Redirect, useRouter } from 'expo-router';
+import { getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
@@ -12,7 +13,7 @@ import AppButton from '../../components/ui/app-button';
 import AppInput from '../../components/ui/app-input';
 import AppNotice from '../../components/ui/app-notice';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
-import { db, storage } from '../../firebase';
+import { db } from '../../firebase';
 import useAuthUser from '../../hooks/use-auth-user';
 
 const ID_TYPES = ["National ID", "Passport", "Driver's License", "Voter's ID"];
@@ -60,7 +61,7 @@ function StepIndicator({ current }) {
   );
 }
 
-async function pickAndUpload(email, fieldName) {
+async function pickAndUpload(side) {
   if (Platform.OS === 'web') {
     return new Promise((resolve, reject) => {
       const input = document.createElement('input');
@@ -70,7 +71,15 @@ async function pickAndUpload(email, fieldName) {
         const file = e.target.files?.[0];
         if (!file) { resolve(null); return; }
         try {
-          const storageRef = ref(storage, `kyc/${email}/${fieldName}-${Date.now()}`);
+          const auth = getAuth();
+          const currentUser = auth.currentUser;
+          if (!currentUser?.uid) {
+            throw new Error('Not authenticated');
+          }
+          const storage = getStorage();
+          const userId = currentUser.uid;
+          const fileName = side === 'front' ? `front_${Date.now()}.jpg` : `back_${Date.now()}.jpg`;
+          const storageRef = ref(storage, `kyc_documents/${userId}/${fileName}`);
           await uploadBytes(storageRef, file);
           const url = await getDownloadURL(storageRef);
           resolve(url);
@@ -145,9 +154,7 @@ export default function KycStep2() {
     setErrors((prev) => ({ ...prev, [`id${side === 'front' ? 'Front' : 'Back'}Url`]: undefined }));
     try {
       if (!user?.email) throw new Error('Not authenticated');
-      const email = (user.email || '').trim().toLowerCase();
-      const fieldName = `id-${side}`;
-      const url = await pickAndUpload(email, fieldName);
+      const url = await pickAndUpload(side);
       if (url) {
         set(side === 'front' ? 'idFrontUrl' : 'idBackUrl', url);
         setNotice({ type: 'success', message: `ID ${side} photo uploaded.` });

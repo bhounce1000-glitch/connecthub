@@ -4,7 +4,9 @@
  */
 import * as ImagePicker from 'expo-image-picker';
 import { Redirect, useRouter } from 'expo-router';
+import { getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { useEffect, useState } from 'react';
 import { Alert, Image, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
@@ -12,12 +14,35 @@ import AppButton from '../../components/ui/app-button';
 import AppInput from '../../components/ui/app-input';
 import AppNotice from '../../components/ui/app-notice';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
-import { db, storage } from '../../firebase';
+import { db } from '../../firebase';
 import useAuthUser from '../../hooks/use-auth-user';
 
 const GENDERS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
 
 const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Review'];
+
+const uploadProfilePhoto = async (file) => {
+  const auth = getAuth();
+  const currentUser = auth.currentUser;
+
+  if (!currentUser?.uid) throw new Error('Not authenticated');
+
+  const storage = getStorage();
+  const userId = currentUser.uid;
+  const fileName = `profile_${Date.now()}.jpg`;
+  const storagePath = `kyc_photos/${userId}/${fileName}`;
+  const storageRef = ref(storage, storagePath);
+
+  let uploadData = file;
+  if (Platform.OS !== 'web' && file?.uri) {
+    const response = await fetch(file.uri);
+    uploadData = await response.blob();
+  }
+
+  await uploadBytes(storageRef, uploadData);
+  const downloadURL = await getDownloadURL(storageRef);
+  return downloadURL;
+};
 
 function StepIndicator({ current }) {
   return (
@@ -154,18 +179,7 @@ export default function KycStep1() {
       let profilePhotoUrl = form.profilePhotoUrl;
       // If a new file is selected, upload it
       if (profilePhotoFile) {
-        const { ref: storageRef, uploadBytes, getDownloadURL } = await import('firebase/storage');
-        const fileRef = storageRef(storage, `kyc_photos/${user.uid}/profile`);
-        let uploadBlob;
-        if (Platform.OS === 'web') {
-          uploadBlob = profilePhotoFile;
-        } else {
-          // Mobile: fetch the file as blob
-          const response = await fetch(profilePhotoFile.uri);
-          uploadBlob = await response.blob();
-        }
-        await uploadBytes(fileRef, uploadBlob);
-        profilePhotoUrl = await getDownloadURL(fileRef);
+        profilePhotoUrl = await uploadProfilePhoto(profilePhotoFile);
       }
 
       await setDoc(

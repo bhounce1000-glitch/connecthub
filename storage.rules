@@ -1,61 +1,49 @@
 rules_version = '2';
-
 service firebase.storage {
   match /b/{bucket}/o {
-    function isSignedIn() {
-      return request.auth != null;
-    }
 
-    function isImageUpload() {
-      // Require an explicit image content type — do not allow null/missing.
-      return request.resource != null
-        && request.resource.contentType != null
+    // KYC profile photos — user uploads their own selfie
+    match /kyc_photos/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
 
-    // Profile pictures - any signed-in user can read; owner can write (max 5 MB)
-    match /profile-pictures/{userId} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn()
+    // KYC identity documents (front and back of ID)
+    match /kyc_documents/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
         && request.auth.uid == userId
-        && isImageUpload()
         && request.resource.size < 5 * 1024 * 1024;
-      allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
-    // Request images - any signed-in user can read; owner can write (max 10 MB)
-    match /request-images/{userId}/{fileName} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn()
-        && request.auth.uid == userId
-        && isImageUpload()
-        && request.resource.size < 10 * 1024 * 1024;
-      allow delete: if isSignedIn() && request.auth.uid == userId;
-    }
-
-    // Dispute evidence photos - uploader can write using their UID bucket (max 10 MB)
+    // KYC dispute evidence photos
     match /disputes/{userId}/{requestId}/{fileName} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn()
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
         && request.auth.uid == userId
-        && isImageUpload()
-        && request.resource.size < 10 * 1024 * 1024;
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
     }
 
-    // KYC photos - owner can write (max 10 MB); admins read via backend
-    match /kyc_photos/{userId}/{fileName} {
-      allow create, update: if isSignedIn()
-        && request.auth.uid == userId
-        && isImageUpload()
-        && request.resource.size < 10 * 1024 * 1024;
-      allow read: if isSignedIn() && request.auth.uid == userId;
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+    // Provider portfolio photos
+    match /portfolio/{userEmail}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.email == userEmail
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
     }
 
-    // Catch-all deny
-    match /{allPaths=**} {
-      allow read, write: if false;
+    // Profile avatars
+    match /avatars/{userEmail}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.email == userEmail
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
     }
   }
 }
