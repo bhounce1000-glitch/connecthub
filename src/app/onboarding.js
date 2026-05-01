@@ -2,7 +2,9 @@ import { useRef, useState } from 'react';
 import { Dimensions, FlatList, Text, TouchableOpacity, View } from 'react-native';
 
 import { useRouter } from 'expo-router';
+import { doc, setDoc } from 'firebase/firestore';
 import { AppRadius } from '../constants/design-tokens';
+import { auth, db } from '../firebase';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const SLIDE_WIDTH = Math.min(SCREEN_W, 480);
@@ -39,17 +41,30 @@ export default function Onboarding() {
   const listRef = useRef(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
+  const markOnboardingDone = async () => {
+    const email = auth.currentUser?.email;
+    if (email) {
+      try {
+        await setDoc(doc(db, 'users', email.toLowerCase()), { onboardingDone: true }, { merge: true });
+      } catch {
+        // non-blocking
+      }
+    }
+  };
+
   const goToNext = () => {
     if (activeIndex < SLIDES.length - 1) {
       const nextIndex = activeIndex + 1;
       listRef.current?.scrollToIndex({ index: nextIndex, animated: true });
       setActiveIndex(nextIndex);
     } else {
-      router.replace('/auth');
+      markOnboardingDone().finally(() => router.replace('/auth'));
     }
   };
 
-  const skip = () => router.replace('/auth');
+  const skip = () => {
+    markOnboardingDone().finally(() => router.replace('/auth'));
+  };
 
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (viewableItems.length > 0) {

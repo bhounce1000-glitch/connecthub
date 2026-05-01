@@ -14,37 +14,51 @@ export default function Wallet() {
   const router = useRouter();
   const { user } = useAuthUser();
 
-  const [transactions, setTransactions] = useState([]);
+  const [received, setReceived] = useState([]);
+  const [sent, setSent] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const currentEmail = user?.email || '';
 
   useEffect(() => {
     if (!currentEmail) return;
     setIsLoading(true);
-    const q = query(
-      collection(db, 'transactions'),
-      where('receiverEmail', '==', currentEmail),
-      orderBy('timestamp', 'desc')
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setTransactions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setIsLoading(false);
+    let receivedLoaded = false;
+    let sentLoaded = false;
+    const checkDone = () => { if (receivedLoaded && sentLoaded) setIsLoading(false); };
+
+    const q1 = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
+    const unsub1 = onSnapshot(q1, (snap) => {
+      setReceived(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      receivedLoaded = true;
+      checkDone();
     });
-    return unsub;
+
+    const q2 = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
+    const unsub2 = onSnapshot(q2, (snap) => {
+      setSent(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      sentLoaded = true;
+      checkDone();
+    });
+
+    return () => { unsub1(); unsub2(); };
   }, [currentEmail]);
+
+  // Keep transactions aliased for backward compat with stats (earnings = received)
+  const transactions = received;
 
   const stats = useMemo(() => {
     let totalEarned = 0;
     let pending = 0;
-    for (const t of transactions) {
-      if (t.status === 'SUCCESS') {
-        totalEarned += Number(t.netAmount || 0);
-      } else if (t.status === 'PENDING') {
-        pending += Number(t.netAmount || 0);
-      }
+    let totalSpent = 0;
+    for (const t of received) {
+      if (t.status === 'SUCCESS') totalEarned += Number(t.netAmount || 0);
+      else if (t.status === 'PENDING') pending += Number(t.netAmount || 0);
     }
-    return { totalEarned, pending };
-  }, [transactions]);
+    for (const t of sent) {
+      if (t.status === 'SUCCESS') totalSpent += Number(t.amount || 0);
+    }
+    return { totalEarned, pending, totalSpent };
+  }, [received, sent]);
 
   if (isLoading) {
     return (
@@ -82,6 +96,11 @@ export default function Wallet() {
               <StatCard label="Total Earned" value={`GHS ${stats.totalEarned.toFixed(2)}`} color="#059669" bg="#ecfdf5" />
               <StatCard label="Pending Balance" value={`GHS ${stats.pending.toFixed(2)}`} color="#d97706" bg="#fffbeb" />
             </View>
+            {stats.totalSpent > 0 && (
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: AppSpace.md }}>
+                <StatCard label="Total Spent (as Customer)" value={`GHS ${stats.totalSpent.toFixed(2)}`} color="#7c3aed" bg="#f5f3ff" />
+              </View>
+            )}
 
             {stats.totalCommission > 0 && (
               <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.md, padding: 14, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: AppSpace.md }}>
@@ -142,6 +161,31 @@ export default function Wallet() {
           );
         }}
       />
+
+      {/* Payments Made section */}
+      {sent.length > 0 && (
+        <View style={{ paddingHorizontal: AppSpace.lg, paddingBottom: AppSpace.lg }}>
+          <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 10 }}>Payments Made</Text>
+          {sent.map((item) => {
+            const badge = item.status === 'SUCCESS' ? { text: 'SUCCESS', bg: '#dcfce7', color: '#15803d' }
+              : item.status === 'PENDING' ? { text: 'PENDING', bg: '#fef9c3', color: '#b45309' }
+              : item.status === 'FAILED' ? { text: 'FAILED', bg: '#fee2e2', color: '#b91c1c' }
+              : { text: item.status || 'UNKNOWN', bg: '#f3f4f6', color: '#374151' };
+            return (
+              <AppCard key={item.id} style={{ marginBottom: 12 }}>
+                <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 3 }} numberOfLines={1}>{item.jobTitle || 'Job'}</Text>
+                <Text style={{ color: AppColors.ink700, marginBottom: 2, fontSize: 13 }}>To: {item.receiverName || item.receiverEmail}</Text>
+                <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Date: {toDisplayDateTime(item.timestamp)}</Text>
+                <Text style={{ color: AppColors.ink900, fontWeight: '700', marginTop: 6 }}>Amount paid: GHS {Number(item.amount || 0).toFixed(2)}</Text>
+                <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Payment method: {item.paymentMethod || 'N/A'}</Text>
+                <View style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: badge.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
+                  <Text style={{ color: badge.color, fontWeight: '700', fontSize: 12 }}>{badge.text}</Text>
+                </View>
+              </AppCard>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }

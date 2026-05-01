@@ -10,8 +10,10 @@ import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tok
 
 // Firebase
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { KYC_STATUS } from '../constants/access';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
+import { useUserProfile } from '../hooks/use-user-profile';
 
 export const SERVICE_CATEGORIES = [
   'Plumbing',
@@ -33,6 +35,8 @@ export default function ProviderSetup() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
   const currentEmail = user?.email || '';
+  const { profile: userProfile } = useUserProfile(currentEmail);
+  const isKycVerified = userProfile?.kycStatus === KYC_STATUS.VERIFIED;
 
   const [name, setName] = useState('');
   const [bio, setBio] = useState('');
@@ -147,6 +151,10 @@ export default function ProviderSetup() {
   };
 
   const handleSave = async () => {
+    if (!isKycVerified) {
+      setNotice({ tone: 'warning', title: 'KYC Required', message: 'You must complete identity verification (KYC) before setting up a provider profile. Go to your profile to start.' });
+      return;
+    }
     if (!validate()) return;
 
     setIsSaving(true);

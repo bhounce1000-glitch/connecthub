@@ -3,6 +3,8 @@ import { doc, getDoc } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 
+import useAuthUser from '../hooks/use-auth-user';
+
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import Avatar from '../components/ui/avatar';
@@ -15,6 +17,11 @@ export default function JobDetails() {
   const router = useRouter();
   const { requestId } = useLocalSearchParams();
   const resolvedRequestId = useMemo(() => (Array.isArray(requestId) ? requestId[0] : requestId), [requestId]);
+  const { user, isAuthReady } = useAuthUser();
+
+  useEffect(() => {
+    if (isAuthReady && !user) router.replace('/auth');
+  }, [isAuthReady, user, router]);
 
   const [job, setJob] = useState(null);
   const [owner, setOwner] = useState(null);

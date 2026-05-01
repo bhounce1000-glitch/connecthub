@@ -19,7 +19,8 @@ function statusBadge(status) {
 
 function TransactionHistoryScreen() {
   const router = useRouter();
-  const { user: currentEmail } = useAuthUser() || {};
+  const { user } = useAuthUser();
+  const currentEmail = user?.email || '';
   const [transactions, setTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 

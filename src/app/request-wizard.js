@@ -1,8 +1,11 @@
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useState } from 'react';
 import {
     FlatList,
+    Image,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -14,7 +17,7 @@ import {
 
 import { CATEGORY_ICONS } from '../constants/access';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
-import { db } from '../firebase';
+import { auth, db, storage } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 
 const CATEGORIES = Object.keys(CATEGORY_ICONS);
@@ -36,6 +39,50 @@ export default function RequestWizard() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [imageUri, setImageUri] = useState(null);
+  const [imageUrl, setImageUrl] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  const pickImage = async () => {
+    if (Platform.OS === 'web') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setImageUri(URL.createObjectURL(file));
+        await uploadImage(file);
+      };
+      input.click();
+    } else {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') { setError('Grant photo library access to attach an image.'); return; }
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 0.8 });
+      if (result.canceled || !result.assets?.[0]) return;
+      const { uri } = result.assets[0];
+      setImageUri(uri);
+      const blob = await (await fetch(uri)).blob();
+      await uploadImage(blob);
+    }
+  };
+
+  const uploadImage = async (fileOrBlob) => {
+    setIsUploadingImage(true);
+    try {
+      const uid = auth.currentUser?.uid;
+      if (!uid) throw new Error('Not authenticated');
+      const storageRef = ref(storage, `request-images/${uid}/${Date.now()}`);
+      await uploadBytes(storageRef, fileOrBlob);
+      const url = await getDownloadURL(storageRef);
+      setImageUrl(url);
+    } catch {
+      setError('Image upload failed. You can still post without one.');
+      setImageUri(null);
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
 
   const progressPct = ((step - 1) / (TOTAL_STEPS - 1)) * 100;
 
@@ -63,6 +110,7 @@ export default function RequestWizard() {
         category,
         urgency,
         preferredDate: preferredDate.trim(),
+        image: imageUrl || '',
         user: user.email,
         status: 'open',
         paid: false,
@@ -204,6 +252,21 @@ export default function RequestWizard() {
                 placeholderTextColor="#94a3b8"
                 style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900 }}
               />
+
+              {/* Image attachment */}
+              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginTop: 14, marginBottom: 6 }}>Photo (optional)</Text>
+              {imageUri ? (
+                <Image source={{ uri: imageUri }} style={{ width: '100%', height: 160, borderRadius: AppRadius.md, marginBottom: 8 }} resizeMode="cover" />
+              ) : null}
+              <TouchableOpacity
+                onPress={pickImage}
+                disabled={isUploadingImage}
+                style={{ backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}
+              >
+                <Text style={{ color: '#4f46e5', fontWeight: '600' }}>
+                  {isUploadingImage ? 'Uploading...' : imageUri ? '📷 Change Photo' : '📷 Attach Photo'}
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -276,6 +339,9 @@ export default function RequestWizard() {
                 {preferredDate ? <Row label="Preferred Date" value={preferredDate} /> : null}
                 <Row label="Budget" value={isFlexible ? 'Flexible' : `GHS ${price}`} />
                 <Row label="Urgency" value={urgency === 'urgent' ? '🚨 Urgent' : '📅 Normal'} />
+                {imageUri ? (
+                  <Image source={{ uri: imageUri }} style={{ width: '100%', height: 140, borderRadius: AppRadius.md, marginTop: 4 }} resizeMode="cover" />
+                ) : null}
               </View>
 
               <TouchableOpacity
