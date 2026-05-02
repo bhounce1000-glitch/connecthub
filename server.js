@@ -1296,28 +1296,6 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
       'KYC Approved'
     );
 
-    const approvedUser = await adminDb.collection('users').doc(targetEmail).get();
-    const approvedName = approvedUser.exists ? (approvedUser.data()?.name || targetEmail) : targetEmail;
-    let emailDelivery = {
-      attempted: false,
-      sent: false,
-      configured: isEmailConfigured(),
-      errorCode: null,
-    };
-
-    if (emailDelivery.configured) {
-      emailDelivery.attempted = true;
-      try {
-        await sendKycApprovalEmail({ email: targetEmail, name: approvedName });
-        emailDelivery.sent = true;
-      } catch (err) {
-        emailDelivery.errorCode = err?.code || err?.responseCode || 'email_send_failed';
-        logger.warn({ err, targetEmail }, 'KYC_APPROVAL_EMAIL_FAILED');
-      }
-    } else {
-      logger.warn({ targetEmail }, 'KYC_APPROVAL_EMAIL_SKIPPED_NOT_CONFIGURED');
-    }
-
     await writeAuditLog({
       actorEmail: req.user?.email || null,
       actorUid: req.user?.uid || null,
@@ -1330,7 +1308,6 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
       email: targetEmail,
       delivery: {
         ...notificationDelivery,
-        email: emailDelivery,
       },
     });
   } catch (error) {
@@ -1373,28 +1350,6 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
       'KYC Rejected'
     );
 
-    const rejectedUser = await adminDb.collection('users').doc(targetEmail).get();
-    const rejectedName = rejectedUser.exists ? (rejectedUser.data()?.name || targetEmail) : targetEmail;
-    let emailDelivery = {
-      attempted: false,
-      sent: false,
-      configured: isEmailConfigured(),
-      errorCode: null,
-    };
-
-    if (emailDelivery.configured) {
-      emailDelivery.attempted = true;
-      try {
-        await sendKycRejectionEmail({ email: targetEmail, name: rejectedName, reason });
-        emailDelivery.sent = true;
-      } catch (err) {
-        emailDelivery.errorCode = err?.code || err?.responseCode || 'email_send_failed';
-        logger.warn({ err, targetEmail }, 'KYC_REJECTION_EMAIL_FAILED');
-      }
-    } else {
-      logger.warn({ targetEmail }, 'KYC_REJECTION_EMAIL_SKIPPED_NOT_CONFIGURED');
-    }
-
     await writeAuditLog({
       actorEmail: req.user?.email || null,
       actorUid: req.user?.uid || null,
@@ -1407,7 +1362,6 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
       email: targetEmail,
       delivery: {
         ...notificationDelivery,
-        email: emailDelivery,
       },
     });
   } catch (error) {
