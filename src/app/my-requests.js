@@ -207,6 +207,16 @@ export default function MyRequests() {
                 </View>
               ) : null}
 
+              {item.status === REQUEST_STATUS.ACCEPTED && !item.escrowFunded && !item.paid ? (
+                <View style={{ marginTop: AppSpace.sm }}>
+                  <AppButton
+                    label="Fund Escrow"
+                    variant="success"
+                    onPress={() => router.push({ pathname: '/pay', params: { id: item.id, amount: item.price, email: currentEmail } })}
+                  />
+                </View>
+              ) : null}
+
             </AppCard>
           )}
         />

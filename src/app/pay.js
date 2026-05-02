@@ -3,7 +3,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { doc, getDoc } from 'firebase/firestore';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Text } from 'react-native';
-import { createTransactionRecord } from '../utils/transaction';
 
 import AppButton from '../components/ui/app-button';
 import AppNotice from '../components/ui/app-notice';
@@ -26,6 +25,7 @@ export default function Pay() {
   const [requestState, setRequestState] = useState({
     isLoading: true,
     isPaid: false,
+    isEscrowFunded: false,
     status: null,
     paymentReference: null,
   });
@@ -54,6 +54,7 @@ export default function Pay() {
           setRequestState({
             isLoading: false,
             isPaid: false,
+            isEscrowFunded: false,
             status: null,
             paymentReference: null,
           });
@@ -66,11 +67,13 @@ export default function Pay() {
         const row = snapshot.exists() ? snapshot.data() : {};
         const status = row?.status || null;
         const isPaid = Boolean(row?.paid) || status === 'paid';
+        const isEscrowFunded = Boolean(row?.escrowFunded) || status === 'in_progress' || status === 'pending_confirmation' || status === 'completed' || status === 'disputed' || status === 'paid';
 
         if (isMounted) {
           setRequestState({
             isLoading: false,
             isPaid,
+            isEscrowFunded,
             status,
             paymentReference: row?.paymentReference || null,
           });
@@ -80,6 +83,12 @@ export default function Pay() {
               tone: 'success',
               title: 'Already paid',
               message: 'This request is already marked as paid. You can return to home.',
+            });
+          } else if (isEscrowFunded) {
+            setNotice({
+              tone: 'info',
+              title: 'Escrow already funded',
+              message: 'Escrow is already funded for this request. The provider can proceed with work.',
             });
           }
         }
@@ -140,43 +149,15 @@ export default function Pay() {
         return;
       }
 
-      // Fetch job/request details for transaction record
-      let jobData = {};
-      try {
-        const snap = await getDoc(doc(db, 'requests', requestId));
-        if (snap.exists()) jobData = snap.data();
-      } catch {}
-
-      // Compose transaction record
-      const tx = {
-        transactionId: targetReference,
-        jobId: requestId,
-        jobTitle: jobData.title || '',
-        senderName: jobData.userName || jobData.user || '',
-        senderNumber: jobData.userPhone || '',
-        receiverName: jobData.providerName || jobData.acceptedBy || '',
-        receiverNumber: jobData.providerPhone || '',
-        amount: Number(jobData.price || 0),
-        commission: Number(jobData.commission || 0),
-        netAmount: Number(jobData.providerNet || 0),
-        paymentMethod: jobData.paymentChannel || 'Paystack',
-        status: 'SUCCESS',
-      };
-      try {
-        await createTransactionRecord(tx);
-      } catch (_e) {
-        // fail silently, do not block user
-      }
-
       setNotice({
         tone: 'success',
-        title: 'Payment confirmed',
-        message: 'The request has been marked as paid.',
+        title: 'Escrow funded',
+        message: 'Payment is now held in escrow and the request is in progress.',
       });
       setRequestState((previous) => ({
         ...previous,
-        isPaid: true,
-        status: 'paid',
+        isEscrowFunded: true,
+        status: 'in_progress',
         paymentReference: targetReference,
       }));
       router.replace('/home');
@@ -206,11 +187,22 @@ export default function Pay() {
       return;
     }
 
-    if (requestState.isPaid) {
+    if (requestState.isPaid || requestState.isEscrowFunded) {
       setNotice({
-        tone: 'success',
-        title: 'Already paid',
-        message: 'This request has already been paid and does not need a new checkout.',
+        tone: 'info',
+        title: requestState.isPaid ? 'Already paid' : 'Escrow already funded',
+        message: requestState.isPaid
+          ? 'This request has already been paid and does not need a new checkout.'
+          : 'This request already has funds in escrow.',
+      });
+      return;
+    }
+
+    if (requestState.status !== 'accepted') {
+      setNotice({
+        tone: 'warning',
+        title: 'Not ready for escrow payment',
+        message: 'Escrow can only be funded after a provider accepts the request.',
       });
       return;
     }
@@ -336,7 +328,7 @@ export default function Pay() {
           label="Open Paystack Checkout"
           variant="success"
           onPress={handlePayment}
-          disabled={!requestId || !payerEmail || !numericAmount || requestState.isPaid || hasPendingReference || isInitializing || isVerifying}
+          disabled={!requestId || !payerEmail || !numericAmount || requestState.isPaid || requestState.isEscrowFunded || requestState.status !== 'accepted' || hasPendingReference || isInitializing || isVerifying}
           loading={isInitializing}
           style={{ marginBottom: AppSpace.sm, backgroundColor: '#15803d', borderRadius: 12 }}
         />

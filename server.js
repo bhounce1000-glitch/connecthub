@@ -310,6 +310,30 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
     };
   }
 
+  if (!beforeData?.escrowFunded || beforeData?.escrowStatus !== 'held') {
+    return {
+      updated: false,
+      reason: 'escrow_not_held',
+      currentStatus,
+    };
+  }
+
+  if (beforeData?.paymentHold) {
+    return {
+      updated: false,
+      reason: 'payment_on_hold',
+      currentStatus,
+    };
+  }
+
+  if (!beforeData?.acceptedBy) {
+    return {
+      updated: false,
+      reason: 'missing_assigned_provider',
+      currentStatus,
+    };
+  }
+
   const requestPrice = Number(beforeData?.price || 0);
   const commission = parseFloat((requestPrice * COMMISSION_RATE).toFixed(2));
   const providerNet = parseFloat((requestPrice * (1 - COMMISSION_RATE)).toFixed(2));
@@ -320,6 +344,10 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
     paymentReference,
     paymentStatus: 'success',
     paidAt: new Date().toISOString(),
+    escrowStatus: 'released',
+    escrowReleasedAt: new Date().toISOString(),
+    escrowReleasedBy: extraFields?.source || 'customer_confirmation',
+    providerPayout: providerNet,
     commission,
     providerNet,
     commissionRate: COMMISSION_RATE,
@@ -327,6 +355,19 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
   };
 
   await requestRef.set(payload, { merge: true });
+
+  await creditWalletBalance(beforeData.acceptedBy, providerNet);
+
+  await createTransactionRecordOnServer({
+    requestId,
+    requestData: { ...beforeData, ...payload },
+    transactionId: paymentReference,
+    amount: requestPrice,
+    commission,
+    netAmount: providerNet,
+    status: 'SUCCESS',
+    paymentMethod: extraFields?.paymentChannel || 'Escrow Release',
+  });
 
   await writeAuditLog({
     actorEmail: 'paystack@system',
@@ -370,6 +411,209 @@ function parseMoney(value) {
     return 0;
   }
   return Math.max(0, parseFloat(amount.toFixed(2)));
+}
+
+async function creditWalletBalance(userEmail, amount) {
+  const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+  const normalizedAmount = parseMoney(amount);
+
+  if (!normalizedEmail || normalizedAmount <= 0) {
+    return;
+  }
+
+  const userRef = adminDb.collection('users').doc(normalizedEmail);
+  await userRef.set({
+    walletBalance: admin.firestore.FieldValue.increment(normalizedAmount),
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
+async function createTransactionRecordOnServer({
+  requestId,
+  requestData,
+  transactionId,
+  amount,
+  commission,
+  netAmount,
+  status,
+  paymentMethod,
+}) {
+  const senderEmail = String(requestData?.user || '').trim().toLowerCase();
+  const receiverEmail = String(requestData?.acceptedBy || '').trim().toLowerCase();
+
+  const senderProfilePromise = senderEmail
+    ? adminDb.collection('users').doc(senderEmail).get().catch(() => null)
+    : Promise.resolve(null);
+  const receiverProfilePromise = receiverEmail
+    ? adminDb.collection('users').doc(receiverEmail).get().catch(() => null)
+    : Promise.resolve(null);
+
+  const [senderSnap, receiverSnap] = await Promise.all([senderProfilePromise, receiverProfilePromise]);
+  const senderProfile = senderSnap && senderSnap.exists ? senderSnap.data() : {};
+  const receiverProfile = receiverSnap && receiverSnap.exists ? receiverSnap.data() : {};
+
+  const txDoc = {
+    requestId,
+    transactionId,
+    jobTitle: requestData?.title || '',
+    senderEmail: senderEmail || null,
+    senderName: senderProfile?.displayName || senderProfile?.name || senderProfile?.fullName || senderEmail || '',
+    senderNumber: senderProfile?.phoneNumber || senderProfile?.phone || '',
+    receiverEmail: receiverEmail || null,
+    receiverName: receiverProfile?.displayName || receiverProfile?.name || receiverProfile?.fullName || receiverEmail || '',
+    receiverNumber: receiverProfile?.phoneNumber || receiverProfile?.phone || '',
+    amount: parseMoney(amount),
+    commission: parseMoney(commission),
+    netAmount: parseMoney(netAmount),
+    paymentMethod: paymentMethod || 'Paystack',
+    status: String(status || 'UNKNOWN').toUpperCase(),
+    participants: [senderEmail, receiverEmail].filter(Boolean),
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: new Date().toISOString(),
+  };
+
+  await adminDb.collection('transactions').add(txDoc);
+}
+
+async function refreshProviderReputation(providerEmail) {
+  const normalizedEmail = String(providerEmail || '').trim().toLowerCase();
+  if (!normalizedEmail) {
+    return;
+  }
+
+  const requestsSnapshot = await adminDb
+    .collection('requests')
+    .where('acceptedBy', '==', normalizedEmail)
+    .get();
+
+  let jobsCompleted = 0;
+  let ratingCount = 0;
+  let ratingSum = 0;
+
+  requestsSnapshot.docs.forEach((docItem) => {
+    const row = docItem.data() || {};
+
+    if (row.paid || row.status === 'paid') {
+      jobsCompleted += 1;
+    }
+
+    const ratingValue = Number(row.rating);
+    if (Number.isFinite(ratingValue) && ratingValue >= 1 && ratingValue <= 5) {
+      ratingCount += 1;
+      ratingSum += ratingValue;
+    }
+  });
+
+  const avgRating = ratingCount > 0
+    ? parseFloat((ratingSum / ratingCount).toFixed(2))
+    : null;
+
+  await adminDb.collection('providers').doc(normalizedEmail).set({
+    avgRating,
+    jobsCompleted,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
+async function markRequestEscrowFunded(requestId, paymentReference, extraFields = {}) {
+  if (!requestId) {
+    return { updated: false, reason: 'missing_request_id' };
+  }
+
+  const requestRef = adminDb.collection('requests').doc(requestId);
+  const existingSnapshot = await requestRef.get();
+
+  if (!existingSnapshot.exists) {
+    return { updated: false, reason: 'request_not_found' };
+  }
+
+  const beforeData = existingSnapshot.data() || {};
+  const currentStatus = beforeData?.status || (beforeData?.paid ? 'paid' : 'open');
+
+  if (beforeData?.escrowFunded && beforeData?.escrowStatus === 'held' && currentStatus === 'in_progress') {
+    return { updated: false, reason: 'already_escrow_funded', currentStatus };
+  }
+
+  if (currentStatus === 'paid') {
+    return { updated: false, reason: 'already_paid', currentStatus };
+  }
+
+  if (currentStatus !== 'accepted') {
+    return { updated: false, reason: 'invalid_status_transition', currentStatus };
+  }
+
+  if (!beforeData?.acceptedBy) {
+    return { updated: false, reason: 'missing_assigned_provider', currentStatus };
+  }
+
+  const requestPrice = parseMoney(beforeData?.price);
+  const commission = parseMoney(requestPrice * COMMISSION_RATE);
+  const providerNet = parseMoney(requestPrice - commission);
+  const now = new Date().toISOString();
+
+  const payload = {
+    status: 'in_progress',
+    startedAt: beforeData?.startedAt || now,
+    escrowFunded: true,
+    escrowStatus: 'held',
+    escrowAmount: requestPrice,
+    escrowFundedAt: now,
+    paymentReference,
+    paymentStatus: 'success',
+    paymentChannel: extraFields?.paymentChannel || null,
+    gatewayResponse: extraFields?.gatewayResponse || null,
+    commission,
+    providerNet,
+    commissionRate: COMMISSION_RATE,
+    paid: false,
+    ...extraFields,
+  };
+
+  await requestRef.set(payload, { merge: true });
+
+  const title = beforeData?.title || `Request ${requestId}`;
+  if (beforeData?.acceptedBy) {
+    await writeNotification(
+      beforeData.acceptedBy,
+      `Escrow funded for "${title}". You can now begin work.`
+    );
+  }
+  if (beforeData?.user) {
+    await writeNotification(
+      beforeData.user,
+      `Escrow payment received for "${title}". Your job is now in progress.`
+    );
+  }
+
+  await createTransactionRecordOnServer({
+    requestId,
+    requestData: { ...beforeData, ...payload },
+    transactionId: paymentReference,
+    amount: requestPrice,
+    commission,
+    netAmount: providerNet,
+    status: 'HELD',
+    paymentMethod: extraFields?.paymentChannel || 'Paystack',
+  });
+
+  await writeAuditLog({
+    actorEmail: 'paystack@system',
+    actorUid: 'paystack-system',
+    eventType: 'escrow_funded',
+    requestId,
+    before: beforeData,
+    after: { ...(beforeData || {}), ...payload },
+    metadata: {
+      paymentReference,
+      source: extraFields?.source || 'paystack',
+    },
+  });
+
+  return {
+    updated: true,
+    reason: 'escrow_funded',
+    currentStatus,
+  };
 }
 
 // ✅ HEALTH CHECK
@@ -428,6 +672,42 @@ app.post('/pay', payInitLimiter, requireAuth, async (req, res) => {
       return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
     }
 
+    const requestRef = adminDb.collection('requests').doc(String(requestId));
+    const requestSnapshot = await requestRef.get();
+    if (!requestSnapshot.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const requestData = requestSnapshot.data() || {};
+    const ownerEmail = String(requestData.user || '').trim().toLowerCase();
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const requestStatus = String(requestData.status || (requestData.paid ? 'paid' : 'open')).toLowerCase();
+    const requestPrice = parseMoney(requestData.price);
+
+    if (!ownerEmail || ownerEmail !== actorEmail) {
+      return sendError(res, req, 403, 'owner_access_required', 'Only the customer who posted the job can fund escrow');
+    }
+
+    if (!requestData.acceptedBy) {
+      return sendError(res, req, 409, 'provider_not_assigned', 'A provider must accept this job before payment');
+    }
+
+    if (requestData.escrowFunded || requestData.paid || ['in_progress', 'pending_confirmation', 'completed', 'paid', 'disputed', 'cancelled'].includes(requestStatus)) {
+      return sendError(res, req, 409, 'escrow_already_funded', 'Escrow has already been funded for this request');
+    }
+
+    if (requestStatus !== 'accepted') {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Escrow can only be funded after provider acceptance');
+    }
+
+    if (!requestPrice || requestPrice <= 0) {
+      return sendError(res, req, 400, 'invalid_request_amount', 'Request amount is invalid');
+    }
+
+    if (Math.abs(parseMoney(normalizedAmount) - requestPrice) > 0.01) {
+      return sendError(res, req, 400, 'amount_mismatch', 'Payment amount does not match request amount');
+    }
+
     const response = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
       headers: {
@@ -436,9 +716,9 @@ app.post('/pay', payInitLimiter, requireAuth, async (req, res) => {
       },
       body: JSON.stringify({
         email,
-        amount: Math.round(normalizedAmount * 100),
+        amount: Math.round(requestPrice * 100),
         callback_url: `${NORMALIZED_CALLBACK_BASE_URL}/pay-return?id=${encodeURIComponent(requestId)}`,
-        metadata: { requestId },
+        metadata: { requestId, ownerEmail },
       }),
     });
 
@@ -489,7 +769,24 @@ app.post('/pay/verify', payVerifyLimiter, requireAuth, async (req, res) => {
 
 
     if (data?.status && data?.data?.status === 'success') {
-      paymentUpdate = await markRequestPaid(data?.data?.metadata?.requestId, data?.data?.reference, {
+      const requestId = data?.data?.metadata?.requestId;
+      const requestSnapshot = requestId
+        ? await adminDb.collection('requests').doc(String(requestId)).get()
+        : null;
+
+      if (!requestSnapshot || !requestSnapshot.exists) {
+        return sendError(res, req, 404, 'request_not_found', 'Request not found for this payment reference');
+      }
+
+      const requestData = requestSnapshot.data() || {};
+      const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+      const ownerEmail = String(requestData.user || '').trim().toLowerCase();
+
+      if (!ownerEmail || ownerEmail !== actorEmail) {
+        return sendError(res, req, 403, 'owner_access_required', 'Only the customer can verify and apply this payment');
+      }
+
+      paymentUpdate = await markRequestEscrowFunded(requestId, data?.data?.reference, {
         paymentChannel: data?.data?.channel || null,
         gatewayResponse: data?.data?.gateway_response || null,
       });
@@ -524,8 +821,8 @@ app.post('/pay/verify', payVerifyLimiter, requireAuth, async (req, res) => {
               commission: request.commission,
               netAmount: request.providerNet,
               paymentMethod: data?.data?.channel || 'Paystack',
-              timestamp: request.paidAt || new Date().toISOString(),
-              status: request.paymentStatus ? request.paymentStatus.toUpperCase() : 'SUCCESS',
+              timestamp: request.escrowFundedAt || new Date().toISOString(),
+              status: 'HELD',
             };
             await sendPaymentReceiptEmail(txData);
           }
@@ -569,7 +866,7 @@ app.post('/paystack/webhook', async (req, res) => {
     logger.info({ event: event?.event, ref: event?.data?.reference || null }, 'PAYSTACK_WEBHOOK_RECEIVED');
 
     if (event?.event === 'charge.success' && event?.data?.status === 'success') {
-      const paymentUpdate = await markRequestPaid(event?.data?.metadata?.requestId, event?.data?.reference, {
+      const paymentUpdate = await markRequestEscrowFunded(event?.data?.metadata?.requestId, event?.data?.reference, {
         paymentChannel: event?.data?.channel || null,
         gatewayResponse: event?.data?.gateway_response || null,
         source: 'paystack_webhook',
@@ -616,6 +913,10 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
       acceptedBy: actorEmail,
       status: 'accepted',
       acceptedAt: new Date().toISOString(),
+      escrowFunded: false,
+      escrowStatus: 'awaiting_payment',
+      paymentHold: false,
+      paid: false,
     };
 
     await requestRef.set(patch, { merge: true });
@@ -669,8 +970,8 @@ app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
       return sendError(res, req, 403, 'provider_access_required', 'Only the assigned provider can mark this job complete');
     }
 
-    if (!['accepted', 'in_progress'].includes(beforeData.status)) {
-      return sendError(res, req, 409, 'invalid_status_transition', 'Job must be accepted or in progress to mark complete');
+    if (beforeData.status !== 'in_progress') {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Job must be in progress to mark complete');
     }
 
     const patch = {
@@ -751,7 +1052,7 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
 
     await requestRef.set(completionPatch, { merge: true });
 
-    const escrowReference = `escrow_release_${requestId}_${Date.now()}`;
+    const escrowReference = beforeData.paymentReference || `escrow_release_${requestId}_${Date.now()}`;
     const paymentUpdate = await markRequestPaid(requestId, escrowReference, {
       paymentChannel: 'escrow_release',
       gatewayResponse: 'Escrow released after customer confirmation',
@@ -760,6 +1061,10 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
 
     if (!paymentUpdate.updated) {
       return sendError(res, req, 409, 'payment_release_failed', 'Could not release escrow payment', paymentUpdate);
+    }
+
+    if (beforeData.acceptedBy) {
+      await refreshProviderReputation(beforeData.acceptedBy);
     }
 
     if (beforeData.acceptedBy) {
@@ -1114,7 +1419,7 @@ app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, 
     const requestId = req.params.id;
     const { status, note } = req.body || {};
 
-    const allowedStatuses = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid', 'disputed', 'cancelled'];
+    const allowedStatuses = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'disputed', 'cancelled'];
 
     if (!requestId) {
       return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
@@ -1142,11 +1447,12 @@ app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, 
     if (status === 'open') {
       patch.acceptedBy = null;
       patch.paid = false;
-    }
-
-    if (status === 'paid') {
-      patch.paid = true;
-      patch.paidAt = new Date().toISOString();
+      patch.escrowFunded = false;
+      patch.escrowStatus = null;
+      patch.paymentHold = false;
+      patch.paymentReference = null;
+      patch.paymentStatus = null;
+      patch.paidAt = null;
     }
 
     await requestRef.set(patch, { merge: true });
@@ -1473,24 +1779,32 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
     const requestPrice = parseMoney(beforeRequest.price);
     const splitPercentToWorker = Number.isFinite(splitPercentToWorkerRaw) ? parseFloat(splitPercentToWorkerRaw.toFixed(2)) : null;
 
+    let grossProviderShare = 0;
     let providerPayout = 0;
     let customerRefund = 0;
+    let commission = 0;
     let nextStatus = beforeRequest.status || 'disputed';
     let paid = false;
 
     if (resolution === 'release_to_worker') {
-      providerPayout = requestPrice;
+      grossProviderShare = requestPrice;
+      commission = parseMoney(grossProviderShare * COMMISSION_RATE);
+      providerPayout = parseMoney(grossProviderShare - commission);
       customerRefund = 0;
       nextStatus = 'paid';
       paid = true;
     } else if (resolution === 'refund_customer') {
+      grossProviderShare = 0;
+      commission = 0;
       providerPayout = 0;
       customerRefund = requestPrice;
       nextStatus = 'cancelled';
       paid = false;
     } else {
-      providerPayout = parseFloat((requestPrice * (splitPercentToWorker / 100)).toFixed(2));
-      customerRefund = parseFloat((requestPrice - providerPayout).toFixed(2));
+      grossProviderShare = parseMoney(requestPrice * (splitPercentToWorker / 100));
+      commission = parseMoney(grossProviderShare * COMMISSION_RATE);
+      providerPayout = parseMoney(grossProviderShare - commission);
+      customerRefund = parseMoney(requestPrice - grossProviderShare);
       nextStatus = 'paid';
       paid = true;
     }
@@ -1501,11 +1815,15 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
       paid,
       paidAt: paid ? now : null,
       paymentHold: false,
+      escrowStatus: resolution === 'refund_customer' ? 'refunded' : 'released',
       disputeResolvedAt: now,
       disputeResolvedBy: req.user?.email || null,
       disputeResolution: resolution,
       disputeResolutionNote: resolutionNote || null,
       providerPayout,
+      providerNet: providerPayout,
+      commission,
+      commissionRate: COMMISSION_RATE,
       customerRefund,
       paymentReference,
       paymentStatus: resolution === 'refund_customer' ? 'refunded' : 'resolved',
@@ -1578,8 +1896,24 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
         resolution,
         providerPayout,
         customerRefund,
+        commission,
       },
     });
+
+    if (providerPayout > 0 && beforeRequest.acceptedBy) {
+      await creditWalletBalance(beforeRequest.acceptedBy, providerPayout);
+
+      await createTransactionRecordOnServer({
+        requestId,
+        requestData: { ...beforeRequest, ...requestPatch },
+        transactionId: paymentReference,
+        amount: grossProviderShare,
+        commission,
+        netAmount: providerPayout,
+        status: 'SUCCESS',
+        paymentMethod: 'Dispute Resolution',
+      });
+    }
 
     return sendSuccess(res, req, {
       message: 'Dispute resolved successfully',

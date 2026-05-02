@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { doc, getDoc, getDocs, collection, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 

@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { addDoc, collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -155,20 +155,6 @@ export default function Home() {
     router.replace('/auth');
   };
 
-  const createNotification = async (recipientEmail, text) => {
-    if (!recipientEmail || !text) return;
-    try {
-      await addDoc(collection(db, 'notifications'), {
-        user: recipientEmail,
-        text,
-        read: false,
-        createdAt: new Date().toISOString(),
-      });
-    } catch (_error) {
-      // Non-blocking — notification failure should not interrupt the main action
-    }
-  };
-
   const runRequestAction = async (item, actionKey, successTitle, successMessage, updater) => {
     setPendingAction(`${item.id}:${actionKey}`);
     setConfirmDeleteId(null);
@@ -193,19 +179,6 @@ export default function Home() {
       async () => {
         const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/accept`, {}, { requireAuth: true });
         assertApiSuccess(response, data, 'Could not accept this request');
-      }
-    );
-  };
-
-  const handleStartWork = async (item) => {
-    await runRequestAction(
-      item, 'start', 'Work started', `${item.title} is now in progress.`,
-      async () => {
-        await updateDoc(doc(db, 'requests', item.id), {
-          status: REQUEST_STATUS.IN_PROGRESS,
-          startedAt: new Date().toISOString(),
-        });
-        await createNotification(item.user, `Work has started on your request "${item.title}".`);
       }
     );
   };
@@ -531,7 +504,10 @@ export default function Home() {
                 ) : null}
 
                 {isProvider && status === REQUEST_STATUS.ACCEPTED ? (
-                  <AppButton label="Start Work" onPress={() => handleStartWork(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'start'} loadingLabel="Updating..." style={{ marginTop: AppSpace.sm, backgroundColor: AppColors.violet600 }} />
+                  <View style={{ marginTop: AppSpace.sm, backgroundColor: '#eef2ff', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#c7d2fe' }}>
+                    <Text style={{ color: '#3730a3', fontWeight: '800', fontSize: 12 }}>Waiting For Escrow Funding</Text>
+                    <Text style={{ color: '#4338ca', fontSize: 12, marginTop: 2 }}>Work starts automatically once the customer funds escrow.</Text>
+                  </View>
                 ) : null}
 
                 {isProvider && status === REQUEST_STATUS.IN_PROGRESS ? (
@@ -554,8 +530,8 @@ export default function Home() {
                   />
                 ) : null}
 
-                {isOwner && status === REQUEST_STATUS.COMPLETED && !item.paid ? (
-                  <AppButton label="Pay Provider" variant="success" onPress={() => handlePay(item)} style={{ marginTop: AppSpace.sm }} />
+                {isOwner && status === REQUEST_STATUS.ACCEPTED && !item.escrowFunded && !item.paid ? (
+                  <AppButton label="Fund Escrow" variant="success" onPress={() => handlePay(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {isOwner && status === REQUEST_STATUS.OPEN ? (

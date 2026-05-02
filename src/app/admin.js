@@ -719,15 +719,6 @@ export default function Admin() {
                   />
 
                   <AppButton
-                    label="Mark Paid"
-                    variant="success"
-                    onPress={() => setStatus(item, REQUEST_STATUS.PAID)}
-                    disabled={Boolean(pendingAction)}
-                    loading={pendingAction === `${item.id}:${REQUEST_STATUS.PAID}`}
-                    style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8 }}
-                  />
-
-                  <AppButton
                     label="Cancel"
                     variant="danger"
                     onPress={() => setStatus(item, REQUEST_STATUS.CANCELLED)}
@@ -782,6 +773,18 @@ function DisputeReviewCard({ item, pendingAction, onResolve }) {
       <Text style={{ color: AppColors.ink700, fontSize: 13 }}>{item.reason || 'No reason provided'}</Text>
       {item.comment ? <Text style={{ color: AppColors.ink500, fontSize: 13, marginTop: 4 }}>Comment: {item.comment}</Text> : null}
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 6 }}>Evidence files: {Array.isArray(item.evidenceUrls) ? item.evidenceUrls.length : 0}</Text>
+      {Array.isArray(item.evidenceUrls) && item.evidenceUrls.length > 0 ? (
+        <View style={{ marginTop: 8, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {item.evidenceUrls.slice(0, 6).map((url, index) => (
+            <AppButton
+              key={`${item.id}:evidence:${index}`}
+              label={`Open Evidence ${index + 1}`}
+              onPress={() => Linking.openURL(url)}
+              style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#1d4ed8' }}
+            />
+          ))}
+        </View>
+      ) : null}
 
       {isResolved ? (
         <View style={{ marginTop: AppSpace.sm }}>

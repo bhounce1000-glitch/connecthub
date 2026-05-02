@@ -54,7 +54,7 @@ export default function Payments() {
     setNotice(null);
 
     try {
-      const { response, data } = await apiPost(`${API_BASE_URL}/pay/verify`, { reference: reference.trim() });
+      const { response, data } = await apiPost(`${API_BASE_URL}/pay/verify`, { reference: reference.trim() }, { requireAuth: true });
 
       if (!response.ok || !data?.status) {
         setNotice({

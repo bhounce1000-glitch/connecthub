@@ -85,13 +85,6 @@ service cloud.firestore {
 
         || (
           resource.data.acceptedBy == email()
-          && resource.data.status == 'accepted'
-          && request.resource.data.status == 'in_progress'
-          && changedKeysOnly(['status', 'startedAt'])
-        )
-
-        || (
-          resource.data.acceptedBy == email()
           && resource.data.status == 'in_progress'
           && request.resource.data.status == 'pending_confirmation'
           && changedKeysOnly(['status', 'completedAt'])

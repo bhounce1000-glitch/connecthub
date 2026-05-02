@@ -70,8 +70,8 @@ export default function PayReturn() {
           setIsSuccess(true);
           setNotice({
             tone: 'success',
-            title: 'Payment confirmed',
-            message: 'Your payment was verified and the request has been marked as paid.',
+            title: 'Escrow funded',
+            message: 'Your payment was verified and is now held in escrow. The request moved to in progress.',
           });
           return;
         }
