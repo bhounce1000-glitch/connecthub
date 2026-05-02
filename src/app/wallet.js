@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
-import { useEffect, useMemo, useState } from 'react';
+import { doc, getDoc, getDocs, collection, orderBy, query, where } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 
 import AppCard from '../components/ui/app-card';
@@ -14,51 +14,83 @@ export default function Wallet() {
   const router = useRouter();
   const { user } = useAuthUser();
 
-  const [received, setReceived] = useState([]);
-  const [sent, setSent] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [walletBalance, setWalletBalance] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
   const currentEmail = user?.email || '';
 
   useEffect(() => {
-    if (!currentEmail) return;
-    setIsLoading(true);
-    let receivedLoaded = false;
-    let sentLoaded = false;
-    const checkDone = () => { if (receivedLoaded && sentLoaded) setIsLoading(false); };
+    if (!currentEmail) {
+      setTransactions([]);
+      setWalletBalance(0);
+      setIsLoading(false);
+      return;
+    }
 
-    const q1 = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
-    const unsub1 = onSnapshot(q1, (snap) => {
-      setReceived(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      receivedLoaded = true;
-      checkDone();
-    });
+    let cancelled = false;
 
-    const q2 = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
-    const unsub2 = onSnapshot(q2, (snap) => {
-      setSent(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      sentLoaded = true;
-      checkDone();
-    });
+    const loadWallet = async () => {
+      setIsLoading(true);
+      setErrorMessage('');
 
-    return () => { unsub1(); unsub2(); };
+      try {
+        const userEmail = String(currentEmail).trim().toLowerCase();
+
+        // 1) user wallet balance
+        const userSnap = await getDoc(doc(db, 'users', userEmail));
+        const nextBalance = userSnap.exists() ? Number(userSnap.data()?.walletBalance || 0) : 0;
+
+        // 2) sent transactions
+        const q = query(
+          collection(db, 'transactions'),
+          where('senderEmail', '==', userEmail),
+          orderBy('timestamp', 'desc')
+        );
+
+        // 3) received transactions
+        const q2 = query(
+          collection(db, 'transactions'),
+          where('receiverEmail', '==', userEmail),
+          orderBy('timestamp', 'desc')
+        );
+
+        const [sentSnap, receivedSnap] = await Promise.all([getDocs(q), getDocs(q2)]);
+
+        const sentRows = sentSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'sent' }));
+        const receivedRows = receivedSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'received' }));
+
+        const mergedMap = new Map();
+        [...sentRows, ...receivedRows].forEach((row) => {
+          mergedMap.set(row.id, row);
+        });
+
+        const merged = [...mergedMap.values()].sort((a, b) => {
+          const left = a?.timestamp?.seconds ? a.timestamp.seconds * 1000 : new Date(a.timestamp || 0).getTime();
+          const right = b?.timestamp?.seconds ? b.timestamp.seconds * 1000 : new Date(b.timestamp || 0).getTime();
+          return right - left;
+        });
+
+        if (!cancelled) {
+          setWalletBalance(Number.isFinite(nextBalance) ? nextBalance : 0);
+          setTransactions(merged);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error?.message || 'Could not load wallet data.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadWallet();
+    return () => {
+      cancelled = true;
+    };
   }, [currentEmail]);
-
-  // Keep transactions aliased for backward compat with stats (earnings = received)
-  const transactions = received;
-
-  const stats = useMemo(() => {
-    let totalEarned = 0;
-    let pending = 0;
-    let totalSpent = 0;
-    for (const t of received) {
-      if (t.status === 'SUCCESS') totalEarned += Number(t.netAmount || 0);
-      else if (t.status === 'PENDING') pending += Number(t.netAmount || 0);
-    }
-    for (const t of sent) {
-      if (t.status === 'SUCCESS') totalSpent += Number(t.amount || 0);
-    }
-    return { totalEarned, pending, totalSpent };
-  }, [received, sent]);
 
   if (isLoading) {
     return (
@@ -90,26 +122,15 @@ export default function Wallet() {
               <Text style={{ fontSize: 24, fontWeight: '800', color: AppColors.ink900 }}>💰 Wallet</Text>
             </View>
 
-            {/* Stats row */}
-
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: AppSpace.md }}>
-              <StatCard label="Total Earned" value={`GHS ${stats.totalEarned.toFixed(2)}`} color="#059669" bg="#ecfdf5" />
-              <StatCard label="Pending Balance" value={`GHS ${stats.pending.toFixed(2)}`} color="#d97706" bg="#fffbeb" />
+              <StatCard label="Wallet Balance" value={`GHS ${Number(walletBalance || 0).toFixed(2)}`} color="#059669" bg="#ecfdf5" />
             </View>
-            {stats.totalSpent > 0 && (
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: AppSpace.md }}>
-                <StatCard label="Total Spent (as Customer)" value={`GHS ${stats.totalSpent.toFixed(2)}`} color="#7c3aed" bg="#f5f3ff" />
-              </View>
-            )}
 
-            {stats.totalCommission > 0 && (
-              <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.md, padding: 14, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: AppSpace.md }}>
-                <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 4 }}>Platform Fees Deducted</Text>
-                <Text style={{ color: AppColors.ink500, fontSize: 13 }}>
-                  Total commission paid to ConnectHub: GHS {stats.totalCommission.toFixed(2)} (10% per job)
-                </Text>
+            {errorMessage ? (
+              <View style={{ backgroundColor: '#fee2e2', borderRadius: AppRadius.md, padding: 12, marginBottom: AppSpace.md }}>
+                <Text style={{ color: '#991b1b', fontSize: 13 }}>{errorMessage}</Text>
               </View>
-            )}
+            ) : null}
 
             {/* Withdraw placeholder */}
             <TouchableOpacity
@@ -132,9 +153,9 @@ export default function Wallet() {
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
               <Text style={{ fontSize: 40, marginBottom: 12 }}>📭</Text>
-              <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>No earnings yet</Text>
+              <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>No transactions yet</Text>
               <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>
-                Payments you receive will appear here.
+                Transactions you send or receive will appear here.
               </Text>
             </View>
           )
@@ -147,11 +168,17 @@ export default function Wallet() {
           return (
             <AppCard style={{ marginBottom: 12 }}>
               <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 3 }} numberOfLines={1}>{item.jobTitle || 'Job'}</Text>
-              <Text style={{ color: AppColors.ink700, marginBottom: 2, fontSize: 13 }}>From: {item.senderName || item.senderEmail}</Text>
+              <Text style={{ color: AppColors.ink700, marginBottom: 2, fontSize: 13 }}>
+                {item.direction === 'sent' ? 'To' : 'From'}: {item.direction === 'sent' ? (item.receiverName || item.receiverEmail) : (item.senderName || item.senderEmail)}
+              </Text>
               <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Date: {toDisplayDateTime(item.timestamp)}</Text>
               <Text style={{ color: AppColors.ink900, fontWeight: '700', marginTop: 6 }}>Amount: GHS {Number(item.amount || 0).toFixed(2)}</Text>
-              <Text style={{ color: '#b91c1c', fontSize: 12, marginTop: 2 }}>Commission: GHS {Number(item.commission || 0).toFixed(2)}</Text>
-              <Text style={{ color: '#15803d', fontSize: 12, marginTop: 2 }}>You received: GHS {Number(item.netAmount || 0).toFixed(2)}</Text>
+              <Text style={{ color: item.direction === 'sent' ? '#7c2d12' : '#166534', fontSize: 12, marginTop: 2 }}>
+                Type: {item.direction === 'sent' ? 'Sent Payment' : 'Received Payment'}
+              </Text>
+              {item.netAmount != null ? (
+                <Text style={{ color: '#15803d', fontSize: 12, marginTop: 2 }}>Net Amount: GHS {Number(item.netAmount || 0).toFixed(2)}</Text>
+              ) : null}
               <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Payment method: {item.paymentMethod || 'N/A'}</Text>
               <View style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: badge.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
                 <Text style={{ color: badge.color, fontWeight: '700', fontSize: 12 }}>{badge.text}</Text>
@@ -161,31 +188,6 @@ export default function Wallet() {
           );
         }}
       />
-
-      {/* Payments Made section */}
-      {sent.length > 0 && (
-        <View style={{ paddingHorizontal: AppSpace.lg, paddingBottom: AppSpace.lg }}>
-          <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 10 }}>Payments Made</Text>
-          {sent.map((item) => {
-            const badge = item.status === 'SUCCESS' ? { text: 'SUCCESS', bg: '#dcfce7', color: '#15803d' }
-              : item.status === 'PENDING' ? { text: 'PENDING', bg: '#fef9c3', color: '#b45309' }
-              : item.status === 'FAILED' ? { text: 'FAILED', bg: '#fee2e2', color: '#b91c1c' }
-              : { text: item.status || 'UNKNOWN', bg: '#f3f4f6', color: '#374151' };
-            return (
-              <AppCard key={item.id} style={{ marginBottom: 12 }}>
-                <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 3 }} numberOfLines={1}>{item.jobTitle || 'Job'}</Text>
-                <Text style={{ color: AppColors.ink700, marginBottom: 2, fontSize: 13 }}>To: {item.receiverName || item.receiverEmail}</Text>
-                <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Date: {toDisplayDateTime(item.timestamp)}</Text>
-                <Text style={{ color: AppColors.ink900, fontWeight: '700', marginTop: 6 }}>Amount paid: GHS {Number(item.amount || 0).toFixed(2)}</Text>
-                <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Payment method: {item.paymentMethod || 'N/A'}</Text>
-                <View style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: badge.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
-                  <Text style={{ color: badge.color, fontWeight: '700', fontSize: 12 }}>{badge.text}</Text>
-                </View>
-              </AppCard>
-            );
-          })}
-        </View>
-      )}
     </View>
   );
 }

@@ -249,6 +249,10 @@ export default function Home() {
     router.push({ pathname: '/rate', params: { requestId: item.id, mode: 'customer' } });
   };
 
+  const openWallet = () => {
+    router.push('/wallet');
+  };
+
   const CATEGORIES = ['All', ...Object.keys(CATEGORY_ICONS)];
 
   const visibleRequests = useMemo(() => {
@@ -324,7 +328,7 @@ export default function Home() {
         <TouchableOpacity onPress={() => router.push('/my-requests')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
           <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 13 }}>My Jobs</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/wallet')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+        <TouchableOpacity onPress={openWallet} activeOpacity={0.8} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
           <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 13 }}>💰 Wallet</Text>
         </TouchableOpacity>
       </View>
