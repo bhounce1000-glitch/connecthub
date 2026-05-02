@@ -159,7 +159,7 @@ export default function KycStep3() {
       if (method === 'mobile_money') {
         Object.assign(payload, {
           momoProvider: momoProvider,
-          momoCountry: momoCountry,
+          momoCountry: typeof momoCountry === 'object' ? (momoCountry.name || momoCountry.cca2 || '') : (momoCountry || ''),
           // Only encrypt the actual account number; name is non-sensitive
           momoNumber: encryptField(momoNumber.trim()),
           momoName: momoName.trim(),

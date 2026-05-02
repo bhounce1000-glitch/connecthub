@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "202550618623",
+    "project_id": "connecthub-1873e",
+    "storage_bucket": "connecthub-1873e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:202550618623:android:4c497a84c18dca02081fca",
+        "android_client_info": {
+          "package_name": "com.bhounceconnecthub"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "202550618623-bruo07fv2ab6gf9f17t03sm7ocqeraoq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.bhounceconnecthub",
+            "certificate_hash": "d6e92b458005dd97fa461877e8be784383ae7bbf"
+          }
+        },
+        {
+          "client_id": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCi5ybxO8anSkx5QYSukudB0VClxeFWUsA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

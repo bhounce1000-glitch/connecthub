@@ -7,10 +7,10 @@ import { useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
-import { API_BASE_URL } from '../../constants/api';
-import { apiPost } from '../../utils/api-client';
 import { useState as useCheckboxState, useEffect, useState } from 'react';
 import { Linking, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { API_BASE_URL } from '../../constants/api';
+import { apiPost } from '../../utils/api-client';
 
 import AppButton from '../../components/ui/app-button';
 import AppNotice from '../../components/ui/app-notice';
@@ -67,7 +67,7 @@ function ReviewRow({ label, value }) {
   return (
     <View style={{ flexDirection: 'row', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#1e293b' }}>
       <Text style={{ flex: 1, color: AppColors.ink500, fontSize: 13 }}>{label}</Text>
-      <Text style={{ flex: 1.5, color: AppColors.white, fontSize: 13, fontWeight: '500', textAlign: 'right' }}>{value}</Text>
+      <Text style={{ flex: 1.5, color: AppColors.white, fontSize: 13, fontWeight: '500', textAlign: 'right' }}>{safeStr(value)}</Text>
     </View>
   );
 }
@@ -103,6 +103,23 @@ function safeDecrypt(value) {
   } catch {
     return value;
   }
+}
+
+// Safe string extractor — handles objects from country/phone pickers
+function safeStr(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    // Handle country picker objects like {cca2: 'GH', callingCode: ['233']}
+    if (val.name) return val.name;
+    if (val.cca2) return val.cca2;
+    if (val.callingCode) return Array.isArray(val.callingCode) ? '+' + val.callingCode[0] : val.callingCode;
+    if (val.label) return val.label;
+    if (val.value) return val.value;
+    // Last resort: convert to readable string
+    return JSON.stringify(val);
+  }
+  return String(val);
 }
 
 export default function KycStep4() {

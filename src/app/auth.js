@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Platform, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppInput from '../components/ui/app-input';
@@ -9,19 +9,25 @@ import FormScreen from '../components/ui/form-screen';
 import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tokens';
 
 // Firebase
+import * as Google from 'expo-auth-session/providers/google';
+import * as WebBrowser from 'expo-web-browser';
 import {
     FacebookAuthProvider,
     GoogleAuthProvider,
     createUserWithEmailAndPassword,
     reload,
     sendEmailVerification,
+    signInWithCredential,
     signInWithEmailAndPassword,
     signInWithPopup,
     signOut,
 } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { USER_ROLES } from '../constants/access';
 import { auth, db } from '../firebase';
+
+// Required for expo-auth-session to close the browser tab after redirect on Android/web
+WebBrowser.maybeCompleteAuthSession();
 
 const SOCIAL_AUTH_ENABLED = {
   google: (process.env.EXPO_PUBLIC_AUTH_GOOGLE || 'true').toLowerCase() === 'true',
@@ -52,6 +58,55 @@ export default function Auth() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [notice, setNotice] = useState(null);
+
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+    scopes: ['profile', 'email'],
+  });
+
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { authentication } = response;
+      if (!authentication?.idToken) {
+        return;
+      }
+
+      const credential = GoogleAuthProvider.credential(
+        authentication.idToken,
+        authentication.accessToken
+      );
+
+      setIsSubmitting(true);
+      setNotice(null);
+
+      signInWithCredential(auth, credential)
+        .then(async (result) => {
+          const user = result.user;
+          const normalizedUserEmail = String(user?.email || '').trim().toLowerCase();
+          if (!normalizedUserEmail) {
+            throw new Error('missing_user_email');
+          }
+          const userRef = doc(db, 'users', normalizedUserEmail);
+          const snap = await getDoc(userRef);
+          if (!snap.exists()) {
+            await setDoc(userRef, {
+              email: normalizedUserEmail,
+              displayName: user.displayName || '',
+              photoURL: user.photoURL || '',
+              role: role || USER_ROLES.CUSTOMER,
+              createdAt: new Date().toISOString(),
+              onboardingDone: false,
+            });
+          }
+          router.replace('/');
+        })
+        .catch((err) => {
+          Alert.alert('Google Sign-In Error', err?.message || 'Unable to sign in with Google.');
+        })
+        .finally(() => setIsSubmitting(false));
+    }
+  }, [response, role, router]);
 
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -201,8 +256,8 @@ export default function Auth() {
     if (Platform.OS !== 'web') {
       setNotice({
         tone: 'warning',
-        title: 'Provider sign-in currently on web',
-        message: 'Google and Facebook sign-in are enabled for web now. Native mobile support can be added next.',
+        title: 'Facebook sign-in on web only',
+        message: 'Facebook sign-in is currently available on web. Use Google or email/password on mobile.',
       });
       return;
     }
@@ -236,6 +291,22 @@ export default function Auth() {
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      if (Platform.OS === 'web') {
+        await handleSocialAuth('google');
+      } else {
+        if (!request) {
+          Alert.alert('Error', 'Google sign-in is not ready yet. Please try again.');
+          return;
+        }
+        await promptAsync();
+      }
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Unable to start Google sign-in.');
     }
   };
 
@@ -402,7 +473,7 @@ export default function Auth() {
         {SOCIAL_AUTH_ENABLED.google ? (
           <AppButton
             label="Continue with Google"
-            onPress={() => handleSocialAuth('google')}
+            onPress={handleGoogleSignIn}
             disabled={isSubmitting}
             style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#1d4ed8' }}
           />

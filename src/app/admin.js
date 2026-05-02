@@ -53,6 +53,23 @@ function maskValue(value = '') {
   return `${str.slice(0, 3)}${'•'.repeat(Math.max(0, str.length - 6))}${str.slice(-3)}`;
 }
 
+// Safe string extractor — handles objects from country/phone pickers
+function safeStr(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    // Handle country picker objects like {cca2: 'GH', callingCode: ['233']}
+    if (val.name) return val.name;
+    if (val.cca2) return val.cca2;
+    if (val.callingCode) return Array.isArray(val.callingCode) ? '+' + val.callingCode[0] : val.callingCode;
+    if (val.label) return val.label;
+    if (val.value) return val.value;
+    // Last resort: convert to readable string
+    return JSON.stringify(val);
+  }
+  return String(val);
+}
+
 export default function Admin() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
@@ -833,10 +850,10 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
       </View>
 
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Email: {item.email}</Text>
-      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Phone: {item.phone || 'N/A'}</Text>
-      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>ID Type: {item.idType || 'N/A'} - {idNumber || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Phone: {safeStr(item.phone) || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>ID Type: {safeStr(item.idType) || 'N/A'} - {idNumber || 'N/A'}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>
-        Payment: {item.paymentMethod === 'bank' ? `Bank - ${bankName || 'N/A'}` : `MoMo - ${item.momoProvider || 'N/A'}`}
+        Payment: {item.paymentMethod === 'bank' ? `Bank - ${bankName || 'N/A'}` : `MoMo - ${safeStr(item.momoProvider) || 'N/A'}`}
       </Text>
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 4 }}>
         Submitted: {formatIsoDate(item.submittedAt)}
@@ -862,31 +879,31 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
       {expanded ? (
         <View style={{ marginTop: 10, borderWidth: 1, borderColor: '#1e293b', borderRadius: AppRadius.md, padding: 10, backgroundColor: '#020617' }}>
           <Text style={{ color: '#a5b4fc', fontWeight: '700', marginBottom: 8 }}>Identity Details</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Full Name: {item.fullName || 'N/A'}</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Date of Birth: {dateOfBirth || 'N/A'}</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Nationality: {item.nationality || 'N/A'}</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country of Residence: {countryOfResidence || 'N/A'}</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>City: {city || 'N/A'}</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Residential Address: {residentialAddress || 'N/A'}</Text>
-          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>ID Type: {item.idType || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Full Name: {safeStr(item.fullName) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Date of Birth: {safeStr(dateOfBirth) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Nationality: {safeStr(item.nationality) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country of Residence: {safeStr(countryOfResidence) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>City: {safeStr(city) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Residential Address: {safeStr(residentialAddress) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>ID Type: {safeStr(item.idType) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>ID Number: {idNumber || 'N/A'}</Text>
 
           <Text style={{ color: '#a5b4fc', fontWeight: '700', marginTop: 8, marginBottom: 8 }}>Payment Details</Text>
           {item.paymentMethod === 'bank' ? (
             <>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Method: Bank Account</Text>
-              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Bank: {bankName || 'N/A'}</Text>
-              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {bankAccountName || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Bank: {safeStr(bankName) || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {safeStr(bankAccountName) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Number: {maskValue(item.bankAccountNumberMasked || '') || 'N/A'}</Text>
-              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Branch: {bankBranch || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Branch: {safeStr(bankBranch) || 'N/A'}</Text>
             </>
           ) : (
             <>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Method: Mobile Money</Text>
-              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Provider: {item.momoProvider || 'N/A'}</Text>
-              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {momoName || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Provider: {safeStr(item.momoProvider) || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {safeStr(momoName) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Number: {maskValue(item.momoNumberMasked || '') || 'N/A'}</Text>
-              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country: {item.momoCountry || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country: {safeStr(item.momoCountry) || 'N/A'}</Text>
             </>
           )}
 

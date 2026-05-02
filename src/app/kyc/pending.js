@@ -3,11 +3,11 @@
  */
 import { Redirect, useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { useEffect } from 'react';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { useEffect, useMemo, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 
-import { KYC_STATUS } from '../../constants/access';
+import { KYC_STATUS, isAdminEmail } from '../../constants/access';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db } from '../../firebase';
 import useAuthUser from '../../hooks/use-auth-user';
@@ -15,6 +15,19 @@ import useAuthUser from '../../hooks/use-auth-user';
 export default function KycPending() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
+  const [submittedAt, setSubmittedAt] = useState(null);
+  const isAdmin = useMemo(() => isAdminEmail(user?.email || ''), [user]);
+
+  // Load submission date once
+  useEffect(() => {
+    if (!user?.email) return;
+    const email = (user.email || '').trim().toLowerCase();
+    getDoc(doc(db, 'kyc_submissions', email))
+      .then((snap) => {
+        if (snap.exists()) setSubmittedAt(snap.data().submittedAt || null);
+      })
+      .catch(() => {});
+  }, [user]);
 
   // Auto-redirect once admin approves or rejects
   useEffect(() => {
@@ -85,6 +98,31 @@ export default function KycPending() {
         <Text style={{ color: AppColors.ink500, fontSize: 13, textAlign: 'center', marginBottom: AppSpace.xl }}>
           You&apos;ll receive a notification once your account is verified. This page will update automatically.
         </Text>
+
+        {submittedAt ? (
+          <Text style={{ color: '#334155', fontSize: 12, textAlign: 'center', marginBottom: AppSpace.lg }}>
+            Submitted: {new Date(submittedAt).toLocaleString()}
+          </Text>
+        ) : null}
+
+        {isAdmin ? (
+          <TouchableOpacity
+            onPress={() => router.push('/admin')}
+            style={{
+              backgroundColor: '#1e293b',
+              borderRadius: AppRadius.md,
+              paddingVertical: 12,
+              paddingHorizontal: 24,
+              marginBottom: AppSpace.lg,
+              borderWidth: 1,
+              borderColor: '#6366f1',
+            }}
+          >
+            <Text style={{ color: '#818cf8', fontWeight: '700', fontSize: 14 }}>
+              Go to Admin Panel to Review
+            </Text>
+          </TouchableOpacity>
+        ) : null}
 
         <TouchableOpacity
           onPress={() => { const a = getAuth(); a.signOut(); router.replace('/auth'); }}

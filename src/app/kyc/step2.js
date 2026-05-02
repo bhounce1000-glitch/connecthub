@@ -18,6 +18,49 @@ import useAuthUser from '../../hooks/use-auth-user';
 
 const ID_TYPES = ["National ID", "Passport", "Driver's License", "Voter's ID"];
 
+const ID_TYPE_HINTS = {
+  'National ID': 'e.g. GHA-12345678-0',
+  Passport: 'e.g. A1234567',
+  "Driver's License": 'e.g. D-1234-567890',
+  "Voter's ID": 'e.g. VOT-123456789',
+};
+
+function normalizeIdNumber(value) {
+  return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function validateIdNumberByType(idType, rawValue) {
+  const value = normalizeIdNumber(rawValue);
+  if (!value) {
+    return 'ID number is required';
+  }
+
+  const rules = {
+    'National ID': /^GHA-\d{8}-\d$/,
+    Passport: /^[A-Z][0-9]{7,8}$/,
+    "Driver's License": /^[A-Z]-\d{4}-\d{6}$/,
+    "Voter's ID": /^VOT-\d{9}$/,
+  };
+
+  const samples = {
+    'National ID': 'GHA-12345678-0',
+    Passport: 'A1234567',
+    "Driver's License": 'D-1234-567890',
+    "Voter's ID": 'VOT-123456789',
+  };
+
+  const rule = rules[idType];
+  if (!rule) {
+    return null;
+  }
+
+  if (!rule.test(value)) {
+    return `Invalid ${idType} format. Example: ${samples[idType]}`;
+  }
+
+  return null;
+}
+
 const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Review'];
 
 function StepIndicator({ current }) {
@@ -173,7 +216,8 @@ export default function KycStep2() {
     else if (!phonePattern.test(form.phone.trim())) next.phone = 'Enter a valid phone number';
     if (form.altPhone.trim() && !phonePattern.test(form.altPhone.trim())) next.altPhone = 'Enter a valid phone number';
     if (!form.idType) next.idType = 'Please select an ID type';
-    if (!form.idNumber.trim()) next.idNumber = 'ID number is required';
+    const idError = validateIdNumberByType(form.idType, form.idNumber);
+    if (idError) next.idNumber = idError;
     if (!form.idFrontUrl) next.idFrontUrl = 'Front photo of ID is required';
     if (!form.countryCode) next.countryCode = 'Select country code';
     setErrors(next);
@@ -194,7 +238,7 @@ export default function KycStep2() {
           phone: form.phone.trim(),
           altPhone: form.altPhone.trim(),
           idType: form.idType,
-          idNumber: form.idNumber.trim(),
+          idNumber: normalizeIdNumber(form.idNumber),
           idFrontUrl: form.idFrontUrl,
           idBackUrl: form.idBackUrl,
           updatedAt: new Date().toISOString(),
@@ -290,7 +334,7 @@ export default function KycStep2() {
 
           <AppInput
             label="ID Number"
-            placeholder="As shown on your document"
+            placeholder={ID_TYPE_HINTS[form.idType] || 'As shown on your document'}
             value={form.idNumber}
             onChangeText={(v) => set('idNumber', v)}
             error={errors.idNumber}
