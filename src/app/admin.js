@@ -1,6 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { addDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -201,7 +201,9 @@ export default function Admin() {
     }
   };
 
-  const reviewKyc = async (email, action, reason = '') => {
+  const reviewKyc = async (kyc, action, reason = '') => {
+    const email = (kyc?.email || '').trim().toLowerCase();
+    const displayName = kyc?.fullName || kyc?.displayName || email;
     const key = `kyc:${email}:${action}`;
     setPendingAction(key);
     setNotice(null);
@@ -211,6 +213,43 @@ export default function Admin() {
       const payload = action === 'reject' ? { reason } : {};
       const { response, data } = await apiPost(endpoint, payload, { requireAuth: true });
       const apiData = assertApiSuccess(response, data, `KYC ${action} failed`);
+
+      if (action === 'approve') {
+        await addDoc(collection(db, 'notifications'), {
+          userId: email,
+          user: email,
+          title: '✅ KYC Approved — Welcome to ConnectHub!',
+          body: 'Congratulations! Your identity has been verified. You now have full access to ConnectHub. You can start posting jobs or offering services.',
+          type: 'kyc_approved',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+
+        await apiPost(
+          `${API_BASE_URL}/admin/kyc/notify-approved`,
+          { email, displayName },
+          { requireAuth: true }
+        );
+      } else {
+        const rejectionReason = String(reason || '').trim();
+        await addDoc(collection(db, 'notifications'), {
+          userId: email,
+          user: email,
+          title: '❌ KYC Verification Failed',
+          body: `Your KYC submission was not approved. Reason: ${rejectionReason}. Please review the reason and resubmit your details.`,
+          type: 'kyc_rejected',
+          rejectionReason,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+
+        await apiPost(
+          `${API_BASE_URL}/admin/kyc/notify-rejected`,
+          { email, displayName, reason: rejectionReason },
+          { requireAuth: true }
+        );
+      }
+
       const delivery = apiData?.data?.delivery || {};
       const inAppStatus = delivery.inAppNotificationStored ? 'in-app: stored' : 'in-app: failed';
       const pushStatus = delivery.pushTokenFound
@@ -506,8 +545,8 @@ export default function Admin() {
                 key={item.id}
                 item={item}
                 pendingAction={pendingAction}
-                onApprove={() => reviewKyc(item.email, 'approve')}
-                onReject={(reason) => reviewKyc(item.email, 'reject', reason)}
+                onApprove={() => reviewKyc(item, 'approve')}
+                onReject={(reason) => reviewKyc(item, 'reject', reason)}
               />
             ))
           : activeTab === 'disputes'

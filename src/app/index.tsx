@@ -39,17 +39,16 @@ export default function Index() {
           return;
         }
 
-        // 2. KYC gate — providers must be verified; customers encouraged but not blocked
-        const kycStatus: string = data.kycStatus || KYC_STATUS.NOT_SUBMITTED;
-        if (kycStatus === KYC_STATUS.PENDING_VERIFICATION) {
+        // 2. KYC gate
+        const kycStatus = data.kycStatus || null;
+        if (kycStatus === KYC_STATUS.VERIFIED) {
+          setDestination('/home');
+        } else if (kycStatus === KYC_STATUS.PENDING_VERIFICATION) {
           setDestination('/kyc/pending');
         } else if (kycStatus === KYC_STATUS.REJECTED) {
           setDestination('/kyc/rejected');
-        } else if (kycStatus !== KYC_STATUS.VERIFIED && data.role === 'provider') {
-          // Providers must complete KYC before accessing the platform
-          setDestination('/kyc/step1');
         } else {
-          setDestination('/home');
+          setDestination('/kyc/step1');
         }
       } catch {
         setDestination('/home');

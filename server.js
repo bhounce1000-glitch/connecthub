@@ -1416,6 +1416,61 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
   }
 });
 
+/**
+ * POST /admin/kyc/notify-approved
+ * Body: { email, displayName }
+ */
+app.post('/admin/kyc/notify-approved', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const displayName = String(req.body?.displayName || '').trim() || email;
+
+    if (!email) {
+      return sendError(res, req, 400, 'missing_email', 'Email is required');
+    }
+
+    await sendKycApprovalEmail({ email, name: displayName });
+
+    return sendSuccess(res, req, {
+      message: 'KYC approved email sent',
+      email,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_KYC_NOTIFY_APPROVED_ERROR');
+    return sendError(res, req, 500, 'admin_kyc_notify_approved_failed', 'Could not send approved email');
+  }
+});
+
+/**
+ * POST /admin/kyc/notify-rejected
+ * Body: { email, displayName, reason }
+ */
+app.post('/admin/kyc/notify-rejected', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const displayName = String(req.body?.displayName || '').trim() || email;
+    const reason = String(req.body?.reason || '').trim();
+
+    if (!email) {
+      return sendError(res, req, 400, 'missing_email', 'Email is required');
+    }
+
+    if (!reason) {
+      return sendError(res, req, 400, 'missing_reason', 'Reason is required');
+    }
+
+    await sendKycRejectionEmail({ email, name: displayName, reason });
+
+    return sendSuccess(res, req, {
+      message: 'KYC rejected email sent',
+      email,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_KYC_NOTIFY_REJECTED_ERROR');
+    return sendError(res, req, 500, 'admin_kyc_notify_rejected_failed', 'Could not send rejected email');
+  }
+});
+
 app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, res) => {
   try {
     const disputeId = req.params.id;

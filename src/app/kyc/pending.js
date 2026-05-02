@@ -40,11 +40,13 @@ export default function KycPending() {
 
     const unsub = onSnapshot(doc(db, 'users', email), (snap) => {
       if (!snap.exists()) return;
-      const status = snap.data().kycStatus;
-      if (status === KYC_STATUS.VERIFIED) {
+      const userData = snap.data() || {};
+      if (userData.kycStatus === KYC_STATUS.VERIFIED) {
         router.replace('/home');
-      } else if (status === KYC_STATUS.REJECTED) {
+      } else if (userData.kycStatus === KYC_STATUS.REJECTED) {
         router.replace('/kyc/rejected');
+      } else if (userData.kycStatus === KYC_STATUS.PENDING_VERIFICATION) {
+        // Stay on pending screen.
       }
     });
 
