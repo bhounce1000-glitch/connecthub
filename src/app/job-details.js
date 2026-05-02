@@ -12,6 +12,7 @@ import { STATUS_LABELS } from '../constants/access';
 import { AppColors, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import { toDisplayDateTime } from '../utils/date-time';
+import { getLocationLabel } from '../utils/location';
 
 export default function JobDetails() {
   const router = useRouter();
@@ -65,6 +66,7 @@ export default function JobDetails() {
         <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 17, marginBottom: 4 }}>{job.title}</Text>
         <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{job.description || 'No description provided.'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Status: {STATUS_LABELS[job.status] || job.status || 'Open'}</Text>
+        <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {getLocationLabel(job.location) || job.locationText || 'N/A'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Amount: GHS {job.price || 0}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Created: {toDisplayDateTime(job.createdAt)}</Text>
         {job.completedAt ? <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Completed: {toDisplayDateTime(job.completedAt)}</Text> : null}

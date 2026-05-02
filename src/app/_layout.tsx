@@ -1,4 +1,5 @@
 
+import * as Notifications from 'expo-notifications';
 import { Stack, usePathname, useRouter, type ErrorBoundaryProps } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
@@ -6,6 +7,7 @@ import AppButton from '../components/ui/app-button';
 import { KYC_STATUS, isAdminEmail } from '../constants/access';
 import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
+import { registerForPushNotifications, resolveNotificationRoute } from '../utils/notifications';
 
 
 export default function Layout() {
@@ -32,6 +34,42 @@ export default function Layout() {
       router.replace('/kyc/step1');
     }
   }, [isAuthReady, user, profile, isLoading, pathname, isKycRoute, isAdminUser, router]);
+
+  useEffect(() => {
+    if (!email) {
+      return undefined;
+    }
+
+    registerForPushNotifications().catch(() => {
+      // Push registration is non-blocking.
+    });
+
+    const handleResponse = (response: Notifications.NotificationResponse | null) => {
+      const data = response?.notification?.request?.content?.data || {};
+      const targetRoute = resolveNotificationRoute(data);
+      if (targetRoute) {
+        router.push(targetRoute as never);
+      }
+    };
+
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (response) {
+          handleResponse(response);
+        }
+      })
+      .catch(() => {
+        // Ignore stale response lookup failures.
+      });
+
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleResponse(response);
+    });
+
+    return () => {
+      responseSubscription.remove();
+    };
+  }, [email, router]);
 
   // Show loading spinner while checking profile
   if (!isAuthReady || (user?.email && isLoading && !isKycRoute)) {

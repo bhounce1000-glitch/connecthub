@@ -14,6 +14,7 @@ import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/f
 import { REQUEST_STATUS, STATUS_LABELS } from '../constants/access';
 import { AppColors, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
+import { getLocationLabel } from '../utils/location';
 
 export default function MyRequests() {
   const router = useRouter();
@@ -171,7 +172,7 @@ export default function MyRequests() {
                 </Text>
               ) : null}
 
-              <Text style={{ color: AppColors.ink700, marginTop: 4 }}>Location: {item.location}</Text>
+              <Text style={{ color: AppColors.ink700, marginTop: 4 }}>Location: {getLocationLabel(item.location) || item.locationText || 'N/A'}</Text>
               <Text style={{ color: AppColors.ink700, marginTop: 2 }}>Amount: GHS {item.price}</Text>
               <Text style={{ color: AppColors.ink500, fontWeight: '600', marginTop: 2 }}>
                 Status: {STATUS_LABELS[item.status] || item.status || 'Open'}
@@ -184,6 +185,16 @@ export default function MyRequests() {
               ) : (
                 <Text style={{ color: AppColors.ink500, marginTop: 2, fontStyle: 'italic' }}>No provider yet</Text>
               )}
+
+              {item.acceptedBy ? (
+                <View style={{ marginTop: AppSpace.sm }}>
+                  <AppButton
+                    label="💬 Open Chat"
+                    variant="neutral"
+                    onPress={() => router.push({ pathname: '/chat', params: { jobId: item.id } })}
+                  />
+                </View>
+              ) : null}
 
               {(!item.status || item.status === REQUEST_STATUS.OPEN) && !item.paid ? (
                 <View style={{ marginTop: AppSpace.sm }}>

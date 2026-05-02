@@ -1,3 +1,4 @@
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
@@ -16,7 +17,7 @@ import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
-import { registerPushToken } from '../utils/notifications';
+import { distanceKm, getLocationCity, getLocationCoords, getLocationLabel } from '../utils/location';
 
 function getEffectiveStatus(item) {
   if (item.status) return item.status;
@@ -37,10 +38,15 @@ export default function Home() {
   const [userProfiles, setUserProfiles] = useState({});
   const [searchText, setSearchText] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
+  const [selectedCity, setSelectedCity] = useState('All Cities');
+  const [nearMeOnly, setNearMeOnly] = useState(false);
+  const [currentCoords, setCurrentCoords] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
   const profileFetchQueue = useRef(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
+  const isProvider = String(userProfiles[currentEmail]?.role || '').toLowerCase() === 'provider';
 
   useEffect(() => {
     if (isAuthReady && !user) {
@@ -63,14 +69,6 @@ export default function Home() {
       where('read', '==', false),
     );
     return onSnapshot(q, (snap) => setUnreadCount(snap.size), () => setUnreadCount(0));
-  }, [currentEmail]);
-
-  useEffect(() => {
-    if (!currentEmail) return;
-
-    registerPushToken().catch(() => {
-      // Non-blocking: app should remain usable even if push registration fails.
-    });
   }, [currentEmail]);
 
   useEffect(() => {
@@ -226,7 +224,36 @@ export default function Home() {
     router.push('/wallet');
   };
 
+  const resolveMyLocation = async () => {
+    setIsLocating(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setNotice({ tone: 'warning', title: 'Location permission needed', message: 'Enable location permission to use Near Me filtering.' });
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const latitude = Number(position?.coords?.latitude);
+      const longitude = Number(position?.coords?.longitude);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        setCurrentCoords({ latitude, longitude });
+      }
+    } catch {
+      setNotice({ tone: 'warning', title: 'Location unavailable', message: 'Could not determine your location right now.' });
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
   const CATEGORIES = ['All', ...Object.keys(CATEGORY_ICONS)];
+  const CITY_OPTIONS = useMemo(() => {
+    const unique = new Set();
+    requests.forEach((item) => {
+      const city = getLocationCity(item.location);
+      if (city) unique.add(city);
+    });
+    return ['All Cities', ...Array.from(unique).sort((a, b) => a.localeCompare(b))];
+  }, [requests]);
 
   const visibleRequests = useMemo(() => {
     return requests.filter((item) => {
@@ -238,19 +265,33 @@ export default function Home() {
       const isOpen = status === REQUEST_STATUS.OPEN;
       if (!isOwner && !isProvider && !(isOpen && !isOwner)) return false;
       // Search filter
+      const locationLabel = getLocationLabel(item.location) || item.locationText || '';
       const q = searchText.trim().toLowerCase();
       if (q) {
         const match =
           (item.title || '').toLowerCase().includes(q) ||
-          (item.location || '').toLowerCase().includes(q) ||
+          locationLabel.toLowerCase().includes(q) ||
           (item.description || '').toLowerCase().includes(q);
         if (!match) return false;
       }
       // Category filter
       if (activeCategory !== 'All' && item.category !== activeCategory) return false;
+
+      // Providers can narrow by city and near-me radius for faster job discovery.
+      if (isProvider) {
+        const city = getLocationCity(item.location);
+        if (selectedCity !== 'All Cities' && city !== selectedCity) return false;
+
+        if (nearMeOnly) {
+          const targetCoords = getLocationCoords(item.location);
+          const km = distanceKm(currentCoords, targetCoords);
+          if (km == null || km > 25) return false;
+        }
+      }
+
       return true;
     });
-  }, [requests, currentEmail, searchText, activeCategory]);
+  }, [requests, currentEmail, searchText, activeCategory, isProvider, selectedCity, nearMeOnly, currentCoords]);
 
   const renderListHeader = () => (
     <View>
@@ -319,10 +360,19 @@ export default function Home() {
         </TouchableOpacity>
       </View>
 
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.sm }}>
         <TouchableOpacity onPress={() => router.push('/profile')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
           <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>👤 Profile</Text>
         </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/subscription')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🚀 Subscription</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/referral')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🎁 Referral</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
         <TouchableOpacity onPress={() => router.push('/payments')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
           <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>💳 Payments</Text>
         </TouchableOpacity>
@@ -413,6 +463,49 @@ export default function Home() {
             );
           })}
         </ScrollView>
+
+        {isProvider ? (
+          <View style={{ marginTop: 10 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {CITY_OPTIONS.map((city) => {
+                const active = city === selectedCity;
+                return (
+                  <TouchableOpacity
+                    key={city}
+                    onPress={() => setSelectedCity(city)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 7,
+                      borderRadius: AppRadius.md,
+                      backgroundColor: active ? '#0f766e' : '#fff',
+                      borderWidth: 1,
+                      borderColor: active ? '#0f766e' : '#e2e8f0',
+                      marginRight: 8,
+                    }}
+                  >
+                    <Text style={{ color: active ? '#fff' : AppColors.ink700, fontWeight: '700', fontSize: 12 }}>
+                      {city}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <View style={{ flexDirection: 'row', marginTop: 8, gap: 8 }}>
+              <TouchableOpacity
+                onPress={resolveMyLocation}
+                style={{ flex: 1, backgroundColor: '#ecfeff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#a5f3fc', paddingVertical: 10, alignItems: 'center' }}
+              >
+                <Text style={{ color: '#0f766e', fontWeight: '700', fontSize: 12 }}>{isLocating ? 'Locating...' : '📍 Detect My Location'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setNearMeOnly((prev) => !prev)}
+                style={{ flex: 1, backgroundColor: nearMeOnly ? '#0f766e' : '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: nearMeOnly ? '#0f766e' : '#e2e8f0', paddingVertical: 10, alignItems: 'center' }}
+              >
+                <Text style={{ color: nearMeOnly ? '#fff' : AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🧭 Near Me (25km)</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -480,7 +573,7 @@ export default function Home() {
                   </Text>
                 ) : null}
 
-                <Text style={{ color: '#334155', fontSize: 13 }}>📍 {item.location}</Text>
+                <Text style={{ color: '#334155', fontSize: 13 }}>📍 {getLocationLabel(item.location) || item.locationText || 'Location not specified'}</Text>
                 <Text style={{ color: '#334155', fontSize: 13, marginTop: 2 }}>💰 GHS {item.price}</Text>
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6 }}>
@@ -491,6 +584,11 @@ export default function Home() {
                       <Text style={{ color: '#d1d5db', fontSize: 12 }}>→</Text>
                       <Avatar src={userProfiles[item.acceptedBy]?.profilePicture} email={item.acceptedBy} size={20} />
                       <Text style={{ color: '#6b7280', fontSize: 12 }}>{item.acceptedBy}</Text>
+                      {userProfiles[item.acceptedBy]?.subscriptionBadge ? (
+                        <View style={{ marginLeft: 4, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, backgroundColor: '#ede9fe' }}>
+                          <Text style={{ color: '#5b21b6', fontSize: 10, fontWeight: '800' }}>{userProfiles[item.acceptedBy]?.subscriptionBadge}</Text>
+                        </View>
+                      ) : null}
                     </>
                   )}
                 </View>
@@ -547,7 +645,7 @@ export default function Home() {
                 ) : null}
 
                 {(isOwner || isProvider) && item.acceptedBy ? (
-                  <AppButton label="💬 Open Chat" variant="neutral" onPress={() => router.push({ pathname: '/chat', params: { requestId: item.id } })} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label="💬 Open Chat" variant="neutral" onPress={() => router.push({ pathname: '/chat', params: { jobId: item.id } })} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {item.paid && item.commission != null ? (

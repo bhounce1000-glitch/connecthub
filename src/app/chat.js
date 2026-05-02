@@ -10,21 +10,29 @@ import Avatar from '../components/ui/avatar';
 import EmptyState from '../components/ui/empty-state';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
 import ScreenShell from '../components/ui/screen-shell';
+import { API_BASE_URL } from '../constants/api';
 
 // Firebase
-import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
+import { apiPost } from '../utils/api-client';
 
 export default function Chat() {
   const router = useRouter();
-  const { requestId } = useLocalSearchParams();
+  const { requestId, jobId } = useLocalSearchParams();
   const { user, isAuthReady } = useAuthUser();
-  const resolvedRequestId = Array.isArray(requestId) ? requestId[0] : requestId;
+  const resolvedRequestId = Array.isArray(requestId)
+    ? requestId[0]
+    : requestId || (Array.isArray(jobId) ? jobId[0] : jobId);
+  const currentEmail = String(user?.email || '').trim().toLowerCase();
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [jobTitle, setJobTitle] = useState('Chat');
+  const [counterpartyEmail, setCounterpartyEmail] = useState('');
+  const [counterpartyName, setCounterpartyName] = useState('');
   const [notice, setNotice] = useState(
     resolvedRequestId
       ? null
@@ -59,10 +67,30 @@ export default function Chat() {
       .then((snap) => {
         if (snap.exists()) {
           const data = snap.data();
+          const ownerEmail = String(data.user || '').trim().toLowerCase();
+          const providerEmail = String(data.acceptedBy || '').trim().toLowerCase();
+          const nextCounterparty = currentEmail === ownerEmail ? providerEmail : ownerEmail;
+
           requestParticipants.current = {
-            user: data.user || null,
-            acceptedBy: data.acceptedBy || null,
+            user: ownerEmail || null,
+            acceptedBy: providerEmail || null,
           };
+
+          setJobTitle(data.title || 'Request Chat');
+          setCounterpartyEmail(nextCounterparty || '');
+
+          if (nextCounterparty) {
+            getDoc(doc(db, 'users', nextCounterparty))
+              .then((profileSnap) => {
+                if (profileSnap.exists()) {
+                  const profile = profileSnap.data() || {};
+                  setCounterpartyName(profile.name || profile.displayName || nextCounterparty);
+                } else {
+                  setCounterpartyName(nextCounterparty);
+                }
+              })
+              .catch(() => setCounterpartyName(nextCounterparty));
+          }
         }
       })
       .catch(() => {/* non-blocking */});
@@ -75,8 +103,23 @@ export default function Chat() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const data = snapshot.docs.map((doc) => doc.data());
+        const data = snapshot.docs.map((chatDoc) => ({ id: chatDoc.id, ...chatDoc.data() }));
         setMessages(data);
+
+        const unreadFromOther = snapshot.docs.filter((chatDoc) => {
+          const row = chatDoc.data() || {};
+          const sender = String(row.senderEmail || row.user || '').trim().toLowerCase();
+          return sender && sender !== currentEmail && row.read !== true;
+        });
+
+        unreadFromOther.forEach((chatDoc) => {
+          updateDoc(doc(db, 'chats', resolvedRequestId, 'messages', chatDoc.id), {
+            read: true,
+          }).catch(() => {
+            // Non-blocking: read receipts should not interrupt chat.
+          });
+        });
+
         setIsLoading(false);
       },
       (error) => {
@@ -93,11 +136,11 @@ export default function Chat() {
     );
 
     return unsubscribe;
-  }, [resolvedRequestId]);
+  }, [resolvedRequestId, currentEmail]);
 
   useEffect(() => {
     const loadSenderProfiles = async () => {
-      const uniqueUsers = [...new Set(messages.map((message) => message.user).filter(Boolean))];
+      const uniqueUsers = [...new Set(messages.map((message) => message.senderEmail || message.user).filter(Boolean))];
       const toFetch = uniqueUsers.filter((email) => !fetchedProfileEmails.current.has(email));
       if (!toFetch.length) return;
       toFetch.forEach((email) => fetchedProfileEmails.current.add(email));
@@ -150,23 +193,19 @@ export default function Chat() {
 
     try {
       await addDoc(collection(db, 'chats', resolvedRequestId, 'messages'), {
+        senderEmail: auth.currentUser?.email,
         text: normalizedText,
         user: auth.currentUser?.email,
+        timestamp: new Date(),
         createdAt: new Date(),
+        read: false,
       });
 
-      // Notify the other participant that a new message arrived
-      const senderEmail = auth.currentUser?.email;
-      const { user: requestOwner, acceptedBy: provider } = requestParticipants.current;
-      const recipient = senderEmail === requestOwner ? provider : requestOwner;
-      if (recipient && recipient !== senderEmail) {
-        addDoc(collection(db, 'notifications'), {
-          user: recipient,
-          text: `New message from ${senderEmail?.split('@')[0]} on request ${resolvedRequestId}.`,
-          read: false,
-          createdAt: new Date().toISOString(),
-        }).catch(() => {/* non-blocking */});
-      }
+      await apiPost(`${API_BASE_URL}/chat/notify`, {
+        jobId: resolvedRequestId,
+        senderEmail: auth.currentUser?.email,
+        messageText: normalizedText,
+      }, { requireAuth: true });
     } catch (error) {
       const isPermissionDenied = error?.code === 'permission-denied';
       setNotice({
@@ -187,8 +226,23 @@ export default function Chat() {
   };
 
   const MessageBubble = ({ item }) => {
-    const isMe = item.user === auth.currentUser?.email;
-    const userProfile = senderProfiles[item.user];
+    const sender = item.senderEmail || item.user;
+    const isMe = sender === auth.currentUser?.email;
+    const userProfile = senderProfiles[sender];
+    const sentAt = item.timestamp || item.createdAt;
+    let sentAtLabel = '';
+    if (sentAt) {
+      try {
+        const parsed = typeof sentAt?.toDate === 'function'
+          ? sentAt.toDate()
+          : new Date(sentAt);
+        if (!Number.isNaN(parsed.getTime())) {
+          sentAtLabel = parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+      } catch {
+        sentAtLabel = '';
+      }
+    }
 
     return (
       <View
@@ -218,18 +272,23 @@ export default function Chat() {
         >
           {!isMe ? (
             <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>
-              {item.user?.split('@')[0]}
+              {sender?.split('@')[0]}
             </Text>
           ) : null}
           <Text style={{ color: isMe ? 'white' : '#111827' }}>
             {item.text}
           </Text>
+          {sentAtLabel ? (
+            <Text style={{ color: isMe ? '#bfdbfe' : '#6b7280', fontSize: 10, marginTop: 4, textAlign: isMe ? 'right' : 'left' }}>
+              {sentAtLabel}
+            </Text>
+          ) : null}
         </View>
 
         {isMe && (
           <Avatar
             src={userProfile?.profilePicture}
-            email={item.user}
+            email={sender}
             size={32}
             style={{ marginLeft: 8 }}
           />
@@ -241,8 +300,8 @@ export default function Chat() {
   return (
     <ScreenShell
       eyebrow="CONVERSATION"
-      title="Chat"
-      subtitle={resolvedRequestId ? `Request: ${resolvedRequestId}` : 'Open a request chat to talk with the other party.'}
+      title={jobTitle || 'Chat'}
+      subtitle={resolvedRequestId ? `${counterpartyName || counterpartyEmail || 'Participant'} • Request: ${resolvedRequestId}` : 'Open a request chat to talk with the other party.'}
       accentColor="#1d4ed8"
       accentTextColor="#dbeafe"
     >
@@ -269,7 +328,7 @@ export default function Chat() {
           <FlatList
             ref={flatListRef}
             data={messages}
-            keyExtractor={(_, index) => index.toString()}
+            keyExtractor={(item, index) => item.id || `${item.createdAt || item.timestamp || 'msg'}:${index}`}
             renderItem={({ item }) => <MessageBubble item={item} />}
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
             onEndReachedThreshold={0.1}

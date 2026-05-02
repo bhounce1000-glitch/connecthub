@@ -1,4 +1,5 @@
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
@@ -33,7 +34,10 @@ export default function RequestWizard() {
   const [description, setDescription] = useState('');
   const [preferredDate, setPreferredDate] = useState('');
   const [price, setPrice] = useState('');
-  const [location, setLocation] = useState('');
+  const [locationCity, setLocationCity] = useState('');
+  const [locationArea, setLocationArea] = useState('');
+  const [locationCoords, setLocationCoords] = useState(null);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [isFlexible, setIsFlexible] = useState(false);
   const [urgency, setUrgency] = useState('normal');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -86,11 +90,49 @@ export default function RequestWizard() {
 
   const progressPct = ((step - 1) / (TOTAL_STEPS - 1)) * 100;
 
+  const resolveCurrentLocation = async () => {
+    setError('');
+    setIsDetectingLocation(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setError('Location permission is required to auto-detect your location.');
+        return;
+      }
+
+      const currentPosition = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const latitude = Number(currentPosition?.coords?.latitude);
+      const longitude = Number(currentPosition?.coords?.longitude);
+
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        setError('Could not detect coordinates. Enter location manually.');
+        return;
+      }
+
+      setLocationCoords({ latitude, longitude });
+
+      try {
+        const place = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const best = Array.isArray(place) && place.length ? place[0] : {};
+        const city = String(best.city || best.subregion || best.region || '').trim();
+        const area = String(best.district || best.street || best.name || '').trim();
+        if (city && !locationCity.trim()) setLocationCity(city);
+        if (area && !locationArea.trim()) setLocationArea(area);
+      } catch {
+        // Non-blocking: coordinates are still useful for near-me matching.
+      }
+    } catch {
+      setError('Could not detect location right now. Enter it manually.');
+    } finally {
+      setIsDetectingLocation(false);
+    }
+  };
+
   const goNext = () => {
     setError('');
     if (step === 1 && !category) { setError('Please select a category.'); return; }
     if (step === 2 && !title.trim()) { setError('Please enter a job title.'); return; }
-    if (step === 2 && !location.trim()) { setError('Please enter a location.'); return; }
+    if (step === 2 && !locationCity.trim()) { setError('Please enter your city.'); return; }
     if (step === 3 && !isFlexible && (!price.trim() || isNaN(Number(price)))) { setError('Please enter a valid price.'); return; }
     setStep((s) => Math.min(s + 1, TOTAL_STEPS));
   };
@@ -102,10 +144,21 @@ export default function RequestWizard() {
     setIsSubmitting(true);
     setError('');
     try {
+      const city = locationCity.trim();
+      const area = locationArea.trim();
+      const locationLabel = area ? `${area}, ${city}` : city;
+
       await addDoc(collection(db, 'requests'), {
         title: title.trim(),
         description: description.trim(),
-        location: location.trim(),
+        location: {
+          city,
+          area,
+          label: locationLabel,
+          latitude: locationCoords?.latitude || null,
+          longitude: locationCoords?.longitude || null,
+        },
+        locationText: locationLabel,
         price: isFlexible ? 0 : Number(price),
         category,
         urgency,
@@ -141,7 +194,20 @@ export default function RequestWizard() {
         >
           <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Go to Dashboard</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => { setIsSuccess(false); setStep(1); setCategory(''); setTitle(''); setDescription(''); setLocation(''); setPrice(''); setPreferredDate(''); setIsFlexible(false); setUrgency('normal'); }} style={{ marginTop: 16 }}>
+        <TouchableOpacity onPress={() => {
+          setIsSuccess(false);
+          setStep(1);
+          setCategory('');
+          setTitle('');
+          setDescription('');
+          setLocationCity('');
+          setLocationArea('');
+          setLocationCoords(null);
+          setPrice('');
+          setPreferredDate('');
+          setIsFlexible(false);
+          setUrgency('normal');
+        }} style={{ marginTop: 16 }}>
           <Text style={{ color: '#6366f1', fontWeight: '600' }}>Post another job</Text>
         </TouchableOpacity>
       </View>
@@ -224,14 +290,31 @@ export default function RequestWizard() {
                 style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 14 }}
               />
 
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Location *</Text>
+              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>City *</Text>
               <TextInput
-                value={location}
-                onChangeText={setLocation}
-                placeholder="e.g. Accra, East Legon"
+                value={locationCity}
+                onChangeText={setLocationCity}
+                placeholder="e.g. Accra"
                 placeholderTextColor="#94a3b8"
-                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 14 }}
+                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 10 }}
               />
+
+              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Area / Neighborhood</Text>
+              <TextInput
+                value={locationArea}
+                onChangeText={setLocationArea}
+                placeholder="e.g. East Legon"
+                placeholderTextColor="#94a3b8"
+                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 10 }}
+              />
+
+              <TouchableOpacity
+                onPress={resolveCurrentLocation}
+                disabled={isDetectingLocation}
+                style={{ backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', marginBottom: 14 }}
+              >
+                <Text style={{ color: '#0f766e', fontWeight: '700' }}>{isDetectingLocation ? 'Detecting location...' : '📍 Use Current Location'}</Text>
+              </TouchableOpacity>
 
               <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Description (optional)</Text>
               <TextInput
@@ -334,7 +417,7 @@ export default function RequestWizard() {
               <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, padding: 20, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 }}>
                 <Row label="Category" value={`${CATEGORY_ICONS[category] || ''} ${category}`} />
                 <Row label="Title" value={title} />
-                {location ? <Row label="Location" value={location} /> : null}
+                {locationCity ? <Row label="Location" value={locationArea ? `${locationArea}, ${locationCity}` : locationCity} /> : null}
                 {description ? <Row label="Description" value={description} /> : null}
                 {preferredDate ? <Row label="Preferred Date" value={preferredDate} /> : null}
                 <Row label="Budget" value={isFlexible ? 'Flexible' : `GHS ${price}`} />

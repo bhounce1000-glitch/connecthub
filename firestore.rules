@@ -131,14 +131,21 @@ service cloud.firestore {
 
       allow create: if isSignedIn()
         && isRequestParticipant(requestId)
-        && request.resource.data.keys().hasOnly(['text', 'user', 'createdAt'])
-        && request.resource.data.text is string
-        && request.resource.data.text.size() > 0
-        && request.resource.data.text.size() <= 4000
-        && request.resource.data.user == email()
-        && request.resource.data.createdAt is timestamp;
+        && request.resource.data.keys().hasOnly(['text', 'user', 'createdAt', 'senderEmail', 'timestamp', 'read'])
+        && (request.resource.data.text is string || !('text' in request.resource.data))
+        && (request.resource.data.user is string || !('user' in request.resource.data))
+        && (request.resource.data.senderEmail is string || !('senderEmail' in request.resource.data))
+        && (request.resource.data.timestamp is timestamp || !('timestamp' in request.resource.data))
+        && (request.resource.data.read is bool || !('read' in request.resource.data))
+        && (request.resource.data.createdAt is timestamp || !('createdAt' in request.resource.data))
+        && (request.resource.data.senderEmail == email() || !('senderEmail' in request.resource.data));
 
-      allow update, delete: if false;
+      allow update: if isSignedIn()
+        && isRequestParticipant(requestId)
+        && changedKeysOnly(['read'])
+        && request.resource.data.read is bool;
+
+      allow delete: if false;
     }
 
     match /users/{userEmail} {
@@ -218,6 +225,34 @@ service cloud.firestore {
         && (!('jobsCompleted' in request.resource.data) || resource != null);
 
       allow delete: if isSignedIn() && (providerEmail == email() || isAdmin());
+    }
+
+    match /subscriptions/{subscriptionId} {
+      // Users can read their own subscriptions; admin can read all
+      allow read: if isSignedIn() && (
+        resource.data.userEmail == email() || isAdmin()
+      );
+
+      // Only server can write (via Admin SDK)
+      allow create, update, delete: if false;
+    }
+
+    match /withdrawals/{withdrawalId} {
+      // Users can read their own withdrawals; admin can read all
+      allow read: if isSignedIn() && (
+        resource.data.userEmail == email() || isAdmin()
+      );
+
+      // Only server can write (via Admin SDK)
+      allow create, update, delete: if false;
+    }
+
+    match /portfolios/{providerEmail}/items/{itemId} {
+      // Public read access to any provider's portfolio
+      allow read: if isSignedIn();
+
+      // Provider can create/update/delete their own portfolio items
+      allow create, update, delete: if isSignedIn() && providerEmail == email();
     }
 
     match /{document=**} {

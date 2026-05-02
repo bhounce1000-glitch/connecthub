@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useRouter, useSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 
@@ -22,7 +22,7 @@ import {
     signInWithPopup,
     signOut,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { USER_ROLES } from '../constants/access';
 import { auth, db } from '../firebase';
 
@@ -50,11 +50,13 @@ function getSocialProvider(providerKey) {
 
 export default function Auth() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [role, setRole] = useState(USER_ROLES.CUSTOMER);
+  const [referralInput, setReferralInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [notice, setNotice] = useState(null);
@@ -64,6 +66,14 @@ export default function Auth() {
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
     scopes: ['profile', 'email'],
   });
+
+  // Capture referral code from URL params (e.g., ?ref=BHUN8F2X or ?referral=BHUN8F2X)
+  useEffect(() => {
+    const refCode = searchParams.get('ref') || searchParams.get('referral') || '';
+    if (refCode) {
+      setReferralInput(refCode);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (response?.type === 'success') {
@@ -95,6 +105,9 @@ export default function Auth() {
               displayName: user.displayName || '',
               photoURL: user.photoURL || '',
               role: role || USER_ROLES.CUSTOMER,
+              referralCode: makeReferralCode(normalizedUserEmail),
+              referredBy: null,
+              referralRewardEarned: 0,
               createdAt: new Date().toISOString(),
               onboardingDone: false,
             });
@@ -110,17 +123,39 @@ export default function Auth() {
 
   const normalizedEmail = email.trim().toLowerCase();
 
+  const makeReferralCode = (emailValue) => {
+    const local = String(emailValue || '').split('@')[0].replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
+    const random = Math.random().toString(36).slice(2, 6).toUpperCase();
+    return `${local || 'CHUB'}${random}`;
+  };
+
+  const resolveReferrerByCode = async (codeValue) => {
+    const normalizedCode = String(codeValue || '').trim().toUpperCase();
+    if (!normalizedCode) return '';
+
+    const snap = await getDocs(query(collection(db, 'users'), where('referralCode', '==', normalizedCode)));
+    if (snap.empty) return '';
+    return String(snap.docs[0]?.id || '').trim().toLowerCase();
+  };
+
   const ensureUserDocument = async (authUser, extraFields = {}) => {
     const normalizedUserEmail = String(authUser?.email || '').trim().toLowerCase();
     if (!normalizedUserEmail) {
       throw new Error('missing_user_email');
     }
 
+    const userRef = doc(db, 'users', normalizedUserEmail);
+    const existing = await getDoc(userRef);
+    const existingData = existing.exists() ? (existing.data() || {}) : {};
+
     await setDoc(
-      doc(db, 'users', normalizedUserEmail),
+      userRef,
       {
         email: normalizedUserEmail,
-        createdAt: new Date(),
+        referralCode: existingData.referralCode || makeReferralCode(normalizedUserEmail),
+        referredBy: existingData.referredBy || extraFields?.referredBy || null,
+        referralRewardEarned: Number(existingData.referralRewardEarned || 0),
+        createdAt: existingData.createdAt || new Date(),
         updatedAt: new Date(),
         ...extraFields,
       },
@@ -218,8 +253,14 @@ export default function Auth() {
     try {
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
+      const referrerEmail = referralInput.trim() ? await resolveReferrerByCode(referralInput) : '';
+
       // Seed a user document so profile data is immediately available (role stored here)
-      await ensureUserDocument(credential.user, { role, onboardingDone: false });
+      await ensureUserDocument(credential.user, {
+        role,
+        onboardingDone: false,
+        referredBy: referrerEmail || null,
+      });
 
       // Send email verification — free Firebase feature, no upgrade needed
       await sendEmailVerification(credential.user);
@@ -429,6 +470,18 @@ export default function Auth() {
           error={fieldErrors.password}
           inputStyle={{ backgroundColor: AppColors.slate50, marginBottom: 2 }}
         />
+
+        {!isLogin && (
+          <AppInput
+            label="Referral Code (Optional)"
+            placeholder="Enter referral code from a friend"
+            value={referralInput}
+            onChangeText={setReferralInput}
+            autoCapitalize="characters"
+            editable={!isSubmitting}
+            inputStyle={{ backgroundColor: AppColors.slate50 }}
+          />
+        )}
 
         <AppButton
           label={isLogin ? 'Login' : 'Sign Up'}

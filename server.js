@@ -37,6 +37,13 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_
   .filter(Boolean);
 const ADMIN_BOOTSTRAP_SECRET = process.env.ADMIN_BOOTSTRAP_SECRET || '';
 const COMMISSION_RATE = parseFloat(process.env.COMMISSION_RATE || '0.10');
+const REFERRAL_BONUS_AMOUNT = parseMoney(process.env.REFERRAL_BONUS_AMOUNT || 10);
+const FREE_PLAN_JOB_LIMIT = Number(process.env.FREE_PLAN_JOB_LIMIT || 5);
+const SUBSCRIPTION_PLAN_CONFIG = {
+  free: { amount: 0, durationDays: 0, acceptLimit: FREE_PLAN_JOB_LIMIT, badge: 'Basic' },
+  pro: { amount: 49, durationDays: 30, acceptLimit: null, badge: 'Pro' },
+  premium: { amount: 99, durationDays: 30, acceptLimit: null, badge: 'Premium' },
+};
 
 function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -153,8 +160,8 @@ async function writeNotification(userEmail, text) {
   }
 }
 
-async function sendPushNotification(token, title, body) {
-  if (!token || !title || !body) {
+async function sendPushNotification(pushToken, title, body, data) {
+  if (!pushToken || !title || !body) {
     return;
   }
 
@@ -165,10 +172,12 @@ async function sendPushNotification(token, title, body) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        to: token,
+        to: pushToken,
         title,
         body,
+        data: data || {},
         sound: 'default',
+        priority: 'high',
       }),
     });
 
@@ -194,7 +203,7 @@ async function getPushTokenForUser(userEmail) {
   }
 }
 
-async function notifyUser(userEmail, text, pushTitle = 'ConnectHub') {
+async function notifyUser(userEmail, text, pushTitle = 'ConnectHub', pushData = null) {
   if (!userEmail || !text) {
     return {
       inAppNotificationStored: false,
@@ -217,7 +226,7 @@ async function notifyUser(userEmail, text, pushTitle = 'ConnectHub') {
   if (pushToken) {
     pushTokenFound = true;
     pushAttempted = true;
-    await sendPushNotification(pushToken, pushTitle, text);
+    await sendPushNotification(pushToken, pushTitle, text, pushData || {});
     pushDelivered = true;
   }
 
@@ -413,6 +422,226 @@ function parseMoney(value) {
   return Math.max(0, parseFloat(amount.toFixed(2)));
 }
 
+function normalizePlan(planValue) {
+  const normalized = String(planValue || 'free').trim().toLowerCase();
+  if (normalized === 'basic') return 'free';
+  if (!SUBSCRIPTION_PLAN_CONFIG[normalized]) return 'free';
+  return normalized;
+}
+
+function isoPlusDays(days) {
+  const now = Date.now();
+  const ms = Number(days || 0) * 24 * 60 * 60 * 1000;
+  return new Date(now + ms).toISOString();
+}
+
+function startOfMonthIso() {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  return monthStart.toISOString();
+}
+
+function toMillis(value) {
+  if (!value) return 0;
+  if (typeof value?.toDate === 'function') {
+    return value.toDate().getTime();
+  }
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function applySubscriptionForUser(userEmail, plan, reference, source = 'subscription_verify') {
+  const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+  const normalizedPlan = normalizePlan(plan);
+  const planConfig = SUBSCRIPTION_PLAN_CONFIG[normalizedPlan] || SUBSCRIPTION_PLAN_CONFIG.free;
+
+  if (!normalizedEmail || normalizedPlan === 'free') {
+    return {
+      updated: false,
+      reason: 'invalid_subscription_payload',
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const expiresAt = isoPlusDays(planConfig.durationDays || 30);
+
+  await adminDb.collection('users').doc(normalizedEmail).set({
+    subscriptionPlan: normalizedPlan,
+    subscriptionBadge: planConfig.badge,
+    subscriptionStatus: 'active',
+    subscriptionStartedAt: nowIso,
+    subscriptionExpiry: expiresAt,
+    subscriptionPaymentReference: reference || null,
+    subscriptionUpdatedAt: nowIso,
+    updatedAt: nowIso,
+  }, { merge: true });
+
+  await notifyUser(
+    normalizedEmail,
+    `Your ${planConfig.badge} plan is active until ${new Date(expiresAt).toLocaleDateString()}.`,
+    'Subscription Active!',
+    { screen: 'subscription' }
+  );
+
+  return {
+    updated: true,
+    plan: normalizedPlan,
+    expiresAt,
+  };
+}
+
+async function countProviderMonthlyAccepts(providerEmail) {
+  const normalizedEmail = String(providerEmail || '').trim().toLowerCase();
+  if (!normalizedEmail) return 0;
+
+  const monthStart = startOfMonthIso();
+  const snapshot = await adminDb
+    .collection('requests')
+    .where('acceptedBy', '==', normalizedEmail)
+    .get();
+
+  let count = 0;
+  snapshot.docs.forEach((docItem) => {
+    const row = docItem.data() || {};
+    const acceptedAt = row.acceptedAt || row.createdAt;
+    if (!acceptedAt) return;
+    if (toMillis(acceptedAt) >= toMillis(monthStart)) {
+      count += 1;
+    }
+  });
+  return count;
+}
+
+async function maybeAwardReferralBonus(requestId, requestData) {
+  try {
+    const ownerEmail = String(requestData?.user || '').trim().toLowerCase();
+    if (!ownerEmail || !requestId) return;
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const requestSnap = await requestRef.get();
+    const latest = requestSnap.exists ? (requestSnap.data() || {}) : {};
+    if (latest.referralBonusAwarded === true) return;
+
+    const referredUserRef = adminDb.collection('users').doc(ownerEmail);
+    const referredUserSnap = await referredUserRef.get();
+    if (!referredUserSnap.exists) return;
+
+    const referredUser = referredUserSnap.data() || {};
+    const referrerEmail = String(referredUser.referredBy || '').trim().toLowerCase();
+    if (!referrerEmail || referrerEmail === ownerEmail) return;
+
+    const paidSnapshot = await adminDb.collection('requests').where('user', '==', ownerEmail).where('status', '==', 'paid').get();
+    if (paidSnapshot.size !== 1) return;
+
+    const referrerRef = adminDb.collection('users').doc(referrerEmail);
+    const referrerSnap = await referrerRef.get();
+    if (!referrerSnap.exists) return;
+
+    const nowIso = new Date().toISOString();
+    await Promise.all([
+      referredUserRef.set({
+        walletBalance: admin.firestore.FieldValue.increment(REFERRAL_BONUS_AMOUNT),
+        referralRewardEarned: admin.firestore.FieldValue.increment(REFERRAL_BONUS_AMOUNT),
+        referralFirstJobCompletedAt: nowIso,
+        updatedAt: nowIso,
+      }, { merge: true }),
+      referrerRef.set({
+        walletBalance: admin.firestore.FieldValue.increment(REFERRAL_BONUS_AMOUNT),
+        referralRewardEarned: admin.firestore.FieldValue.increment(REFERRAL_BONUS_AMOUNT),
+        updatedAt: nowIso,
+      }, { merge: true }),
+      requestRef.set({
+        referralBonusAwarded: true,
+        referralBonusAwardedAt: nowIso,
+      }, { merge: true }),
+      adminDb.collection('transactions').add({
+        transactionId: `ref_bonus_referrer_${requestId}`,
+        requestId,
+        type: 'referral_bonus',
+        amount: REFERRAL_BONUS_AMOUNT,
+        status: 'SUCCESS',
+        senderEmail: null,
+        receiverEmail: referrerEmail,
+        receiverName: referrerEmail,
+        senderName: 'ConnectHub Referral Program',
+        paymentMethod: 'Internal Wallet Credit',
+        participants: [referrerEmail],
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: nowIso,
+        notes: `Referral bonus for ${ownerEmail}'s first completed job`,
+      }),
+      adminDb.collection('transactions').add({
+        transactionId: `ref_bonus_referred_${requestId}`,
+        requestId,
+        type: 'referral_bonus',
+        amount: REFERRAL_BONUS_AMOUNT,
+        status: 'SUCCESS',
+        senderEmail: null,
+        receiverEmail: ownerEmail,
+        receiverName: ownerEmail,
+        senderName: 'ConnectHub Referral Program',
+        paymentMethod: 'Internal Wallet Credit',
+        participants: [ownerEmail],
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: nowIso,
+        notes: 'First completed job referral bonus',
+      }),
+    ]);
+
+    await Promise.all([
+      notifyUser(
+        ownerEmail,
+        `You received GHS ${REFERRAL_BONUS_AMOUNT.toFixed(2)} referral bonus for completing your first job!`,
+        'Referral Bonus Added',
+        { screen: 'wallet' }
+      ),
+      notifyUser(
+        referrerEmail,
+        `You earned GHS ${REFERRAL_BONUS_AMOUNT.toFixed(2)} because your referral completed their first job.`,
+        'Referral Bonus Added',
+        { screen: 'referral' }
+      ),
+    ]);
+  } catch (error) {
+    logger.error({ err: error, requestId }, 'REFERRAL_BONUS_AWARD_ERROR');
+  }
+}
+
+async function expireDueSubscriptions() {
+  try {
+    const nowIso = new Date().toISOString();
+    const snapshot = await adminDb
+      .collection('users')
+      .where('subscriptionStatus', '==', 'active')
+      .where('subscriptionExpiry', '<=', nowIso)
+      .get();
+
+    if (snapshot.empty) {
+      return;
+    }
+
+    await Promise.all(snapshot.docs.map(async (docItem) => {
+      const targetEmail = String(docItem.id || '').trim().toLowerCase();
+      await adminDb.collection('users').doc(targetEmail).set({
+        subscriptionPlan: 'free',
+        subscriptionBadge: 'Basic',
+        subscriptionStatus: 'expired',
+        subscriptionUpdatedAt: nowIso,
+        updatedAt: nowIso,
+      }, { merge: true });
+
+      await notifyUser(
+        targetEmail,
+        'Your paid subscription has expired and your account is now on Basic.',
+        'Subscription Expired',
+        { screen: 'subscription' }
+      );
+    }));
+  } catch (error) {
+    logger.error({ err: error }, 'SUBSCRIPTION_EXPIRY_SWEEP_ERROR');
+  }
+}
+
 async function creditWalletBalance(userEmail, amount) {
   const normalizedEmail = String(userEmail || '').trim().toLowerCase();
   const normalizedAmount = parseMoney(amount);
@@ -573,15 +802,19 @@ async function markRequestEscrowFunded(requestId, paymentReference, extraFields 
 
   const title = beforeData?.title || `Request ${requestId}`;
   if (beforeData?.acceptedBy) {
-    await writeNotification(
+    await notifyUser(
       beforeData.acceptedBy,
-      `Escrow funded for "${title}". You can now begin work.`
+      `Customer has funded escrow for "${title}". You can now begin work.`,
+      'Payment Received!',
+      { screen: 'job-details', requestId, jobId: requestId }
     );
   }
   if (beforeData?.user) {
-    await writeNotification(
+    await notifyUser(
       beforeData.user,
-      `Escrow payment received for "${title}". Your job is now in progress.`
+      `Escrow payment received for "${title}". Your job is now in progress.`,
+      'Escrow Funded',
+      { screen: 'job-details', requestId, jobId: requestId }
     );
   }
 
@@ -843,6 +1076,256 @@ app.post('/pay/verify', payVerifyLimiter, requireAuth, async (req, res) => {
   }
 });
 
+app.post('/wallet/withdraw', requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const amount = parseMoney(req.body?.amount);
+    const accountName = String(req.body?.accountName || '').trim();
+    const accountNumber = String(req.body?.accountNumber || '').trim();
+    const bankCode = String(req.body?.bankCode || '').trim();
+    const bankName = String(req.body?.bankName || '').trim();
+
+    if (!actorEmail) {
+      return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
+    }
+
+    if (amount < 50) {
+      return sendError(res, req, 400, 'invalid_withdrawal_amount', 'Minimum withdrawal amount is GHS 50.00');
+    }
+
+    if (!accountName || !accountNumber || !bankCode) {
+      return sendError(res, req, 400, 'missing_bank_details', 'accountName, accountNumber, and bankCode are required');
+    }
+
+    const paystackSecret = getPaystackSecret();
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    }
+
+    const userRef = adminDb.collection('users').doc(actorEmail);
+    const userSnap = await userRef.get();
+    const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+    const walletBalance = parseMoney(userData.walletBalance || 0);
+
+    if (String(userData.kycStatus || '').trim().toLowerCase() !== 'verified') {
+      return sendError(res, req, 403, 'kyc_required', 'KYC verification is required before withdrawals');
+    }
+
+    if (amount > walletBalance) {
+      return sendError(res, req, 409, 'insufficient_wallet_balance', 'Insufficient wallet balance');
+    }
+
+    const recipientResponse = await fetch('https://api.paystack.co/transferrecipient', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'nuban',
+        name: accountName,
+        account_number: accountNumber,
+        bank_code: bankCode,
+        currency: 'GHS',
+      }),
+    });
+    const recipientData = await recipientResponse.json();
+    const recipientCode = recipientData?.data?.recipient_code;
+
+    if (!recipientResponse.ok || !recipientData?.status || !recipientCode) {
+      return sendError(res, req, 400, 'recipient_creation_failed', 'Could not validate bank account details', recipientData);
+    }
+
+    const reference = `wd_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+    const transferResponse = await fetch('https://api.paystack.co/transfer', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        source: 'balance',
+        amount: Math.round(amount * 100),
+        recipient: recipientCode,
+        reason: `ConnectHub wallet withdrawal (${actorEmail})`,
+        reference,
+      }),
+    });
+    const transferData = await transferResponse.json();
+    const transferCode = transferData?.data?.transfer_code || null;
+
+    if (!transferResponse.ok || !transferData?.status) {
+      return sendError(res, req, 400, 'withdrawal_transfer_failed', 'Withdrawal transfer could not be started', transferData);
+    }
+
+    const nowIso = new Date().toISOString();
+    await userRef.set({
+      walletBalance: admin.firestore.FieldValue.increment(-amount),
+      updatedAt: nowIso,
+      lastWithdrawalAccountName: accountName,
+      lastWithdrawalAccountNumberMasked: `${accountNumber.slice(0, 2)}******${accountNumber.slice(-2)}`,
+      lastWithdrawalBankCode: bankCode,
+      lastWithdrawalBankName: bankName || null,
+    }, { merge: true });
+
+    await adminDb.collection('wallet_withdrawals').doc(reference).set({
+      reference,
+      transferCode,
+      userEmail: actorEmail,
+      amount,
+      currency: 'GHS',
+      status: 'PENDING',
+      accountName,
+      accountNumberMasked: `${accountNumber.slice(0, 2)}******${accountNumber.slice(-2)}`,
+      bankCode,
+      bankName: bankName || null,
+      recipientCode,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      walletDebited: true,
+      refunded: false,
+    }, { merge: true });
+
+    await adminDb.collection('transactions').add({
+      transactionId: reference,
+      requestId: null,
+      type: 'withdrawal',
+      jobTitle: 'Wallet Withdrawal',
+      senderEmail: actorEmail,
+      senderName: actorEmail,
+      receiverEmail: null,
+      receiverName: accountName,
+      amount,
+      commission: 0,
+      netAmount: amount,
+      paymentMethod: 'Paystack Transfer',
+      status: 'PENDING',
+      participants: [actorEmail],
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: nowIso,
+      transferCode,
+      bankCode,
+      bankName: bankName || null,
+    });
+
+    await notifyUser(
+      actorEmail,
+      `Your withdrawal of GHS ${amount.toFixed(2)} is being processed.`,
+      'Withdrawal Initiated',
+      { screen: 'wallet' }
+    );
+
+    return sendSuccess(res, req, {
+      message: 'Withdrawal initiated successfully',
+      data: {
+        reference,
+        transferCode,
+        amount,
+        status: 'PENDING',
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'WALLET_WITHDRAWAL_ERROR');
+    return sendError(res, req, 500, 'wallet_withdrawal_failed', 'Could not initiate withdrawal');
+  }
+});
+
+app.post('/subscription/initiate', requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const plan = normalizePlan(req.body?.plan);
+    const planConfig = SUBSCRIPTION_PLAN_CONFIG[plan];
+
+    if (!actorEmail) {
+      return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
+    }
+
+    if (!planConfig || plan === 'free') {
+      return sendError(res, req, 400, 'invalid_subscription_plan', 'Plan must be pro or premium');
+    }
+
+    const paystackSecret = getPaystackSecret();
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    }
+
+    const response = await fetch('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: actorEmail,
+        amount: Math.round(planConfig.amount * 100),
+        callback_url: `${NORMALIZED_CALLBACK_BASE_URL}/subscription?plan=${encodeURIComponent(plan)}`,
+        metadata: {
+          kind: 'subscription',
+          plan,
+          subscriberEmail: actorEmail,
+        },
+      }),
+    });
+
+    const data = await response.json();
+    return res.status(response.status).json({
+      requestId: req.requestId,
+      ...data,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'SUBSCRIPTION_INIT_ERROR');
+    return sendError(res, req, 500, 'subscription_init_failed', 'Could not initialize subscription payment');
+  }
+});
+
+app.post('/subscription/verify', requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const reference = String(req.body?.reference || '').trim();
+
+    if (!actorEmail || !reference) {
+      return sendError(res, req, 400, 'invalid_subscription_verify_payload', 'reference is required');
+    }
+
+    const paystackSecret = getPaystackSecret();
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    }
+
+    const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data?.status || data?.data?.status !== 'success') {
+      return sendError(res, req, 400, 'subscription_payment_not_successful', 'Subscription payment was not successful', data);
+    }
+
+    const metadata = data?.data?.metadata || {};
+    const plan = normalizePlan(metadata?.plan);
+    const subscriberEmail = String(metadata?.subscriberEmail || actorEmail).trim().toLowerCase();
+
+    if (subscriberEmail !== actorEmail) {
+      return sendError(res, req, 403, 'subscription_owner_access_required', 'Subscription email does not match authenticated user');
+    }
+
+    const subscriptionUpdate = await applySubscriptionForUser(actorEmail, plan, reference, 'subscription_verify');
+
+    return sendSuccess(res, req, {
+      message: 'Subscription activated successfully',
+      data,
+      subscriptionUpdate,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'SUBSCRIPTION_VERIFY_ERROR');
+    return sendError(res, req, 500, 'subscription_verify_failed', 'Could not verify subscription payment');
+  }
+});
+
 app.post('/paystack/webhook', async (req, res) => {
   try {
     const paystackSecret = getPaystackSecret();
@@ -866,14 +1349,78 @@ app.post('/paystack/webhook', async (req, res) => {
     logger.info({ event: event?.event, ref: event?.data?.reference || null }, 'PAYSTACK_WEBHOOK_RECEIVED');
 
     if (event?.event === 'charge.success' && event?.data?.status === 'success') {
-      const paymentUpdate = await markRequestEscrowFunded(event?.data?.metadata?.requestId, event?.data?.reference, {
-        paymentChannel: event?.data?.channel || null,
-        gatewayResponse: event?.data?.gateway_response || null,
-        source: 'paystack_webhook',
-      });
+      const metadata = event?.data?.metadata || {};
+      if (metadata?.kind === 'subscription') {
+        const subscriberEmail = String(metadata?.subscriberEmail || '').trim().toLowerCase();
+        const plan = normalizePlan(metadata?.plan);
+        const subscriptionUpdate = await applySubscriptionForUser(subscriberEmail, plan, event?.data?.reference, 'paystack_webhook');
+        if (!subscriptionUpdate.updated) {
+          logger.warn({ subscriptionUpdate }, 'WEBHOOK_SUBSCRIPTION_UPDATE_SKIPPED');
+        }
+      } else {
+        const paymentUpdate = await markRequestEscrowFunded(event?.data?.metadata?.requestId, event?.data?.reference, {
+          paymentChannel: event?.data?.channel || null,
+          gatewayResponse: event?.data?.gateway_response || null,
+          source: 'paystack_webhook',
+        });
 
-      if (!paymentUpdate.updated) {
-        logger.warn({ paymentUpdate }, 'WEBHOOK_PAYMENT_UPDATE_SKIPPED');
+        if (!paymentUpdate.updated) {
+          logger.warn({ paymentUpdate }, 'WEBHOOK_PAYMENT_UPDATE_SKIPPED');
+        }
+      }
+    }
+
+    if (event?.event === 'transfer.success' || event?.event === 'transfer.failed' || event?.event === 'transfer.reversed') {
+      const reference = String(event?.data?.reference || '').trim();
+      if (reference) {
+        const withdrawalRef = adminDb.collection('wallet_withdrawals').doc(reference);
+        const withdrawalSnap = await withdrawalRef.get();
+
+        if (withdrawalSnap.exists) {
+          const withdrawalData = withdrawalSnap.data() || {};
+          const status = event?.event === 'transfer.success' ? 'SUCCESS' : 'FAILED';
+          const nowIso = new Date().toISOString();
+
+          await withdrawalRef.set({
+            status,
+            updatedAt: nowIso,
+            transferStatusEvent: event?.event,
+            transferStatusMessage: event?.data?.status || null,
+          }, { merge: true });
+
+          const txSnapshot = await adminDb.collection('transactions').where('transactionId', '==', reference).limit(3).get();
+          await Promise.all(txSnapshot.docs.map((txDoc) => txDoc.ref.set({ status, updatedAt: nowIso }, { merge: true })));
+
+          const userEmail = String(withdrawalData.userEmail || '').trim().toLowerCase();
+          if (status === 'SUCCESS') {
+            await notifyUser(
+              userEmail,
+              `Your withdrawal of GHS ${parseMoney(withdrawalData.amount).toFixed(2)} was completed successfully.`,
+              'Withdrawal Completed',
+              { screen: 'wallet' }
+            );
+          } else {
+            const alreadyRefunded = withdrawalData.refunded === true;
+            if (!alreadyRefunded && userEmail && parseMoney(withdrawalData.amount) > 0) {
+              await adminDb.collection('users').doc(userEmail).set({
+                walletBalance: admin.firestore.FieldValue.increment(parseMoney(withdrawalData.amount)),
+                updatedAt: nowIso,
+              }, { merge: true });
+
+              await withdrawalRef.set({
+                refunded: true,
+                refundedAt: nowIso,
+              }, { merge: true });
+            }
+
+            await notifyUser(
+              userEmail,
+              `Your withdrawal failed and GHS ${parseMoney(withdrawalData.amount).toFixed(2)} has been returned to your wallet.`,
+              'Withdrawal Failed',
+              { screen: 'wallet' }
+            );
+          }
+        }
       }
     }
 
@@ -900,6 +1447,24 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
     }
 
     const beforeData = snap.data() || {};
+    const actorProfileSnap = await adminDb.collection('users').doc(actorEmail).get().catch(() => null);
+    const actorProfile = actorProfileSnap && actorProfileSnap.exists ? (actorProfileSnap.data() || {}) : {};
+    const actorPlan = normalizePlan(actorProfile.subscriptionPlan || 'free');
+    const actorPlanConfig = SUBSCRIPTION_PLAN_CONFIG[actorPlan] || SUBSCRIPTION_PLAN_CONFIG.free;
+
+    if (Number.isFinite(actorPlanConfig.acceptLimit) && actorPlanConfig.acceptLimit > -1) {
+      const acceptedCount = await countProviderMonthlyAccepts(actorEmail);
+      if (acceptedCount >= actorPlanConfig.acceptLimit) {
+        return sendError(
+          res,
+          req,
+          403,
+          'subscription_limit_reached',
+          `Basic plan allows up to ${actorPlanConfig.acceptLimit} accepted jobs per month. Upgrade to Pro or Premium to continue.`
+        );
+      }
+    }
+
     if (beforeData.acceptedBy && String(beforeData.acceptedBy).toLowerCase() !== actorEmail) {
       return sendError(res, req, 409, 'request_already_accepted', 'This request is already accepted by another provider');
     }
@@ -922,10 +1487,15 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
     await requestRef.set(patch, { merge: true });
 
     if (beforeData.user) {
+      const providerSnap = await adminDb.collection('users').doc(actorEmail).get().catch(() => null);
+      const providerName = providerSnap && providerSnap.exists
+        ? (providerSnap.data()?.name || providerSnap.data()?.displayName || actorEmail)
+        : actorEmail;
       await notifyUser(
         beforeData.user,
-        `${actorEmail} accepted your request "${beforeData.title || requestId}".`,
-        'Job Accepted'
+        `${providerName} has accepted your job: ${beforeData.title || requestId}`,
+        'Job Accepted!',
+        { screen: 'job-details', requestId, jobId: requestId }
       );
     }
 
@@ -984,8 +1554,9 @@ app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
     if (beforeData.user) {
       await notifyUser(
         beforeData.user,
-        `Your service provider marked "${beforeData.title || requestId}" as done. Please review and confirm completion.`,
-        'Work Marked Complete'
+        `${beforeData.acceptedBy || 'Your provider'} marked your job as complete. Please confirm.`,
+        'Work Completed!',
+        { screen: 'confirm-completion', requestId, jobId: requestId }
       );
     }
 
@@ -1067,18 +1638,22 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
       await refreshProviderReputation(beforeData.acceptedBy);
     }
 
+    await maybeAwardReferralBonus(requestId, { ...beforeData, ...completionPatch, status: 'paid' });
+
     if (beforeData.acceptedBy) {
       await notifyUser(
         beforeData.acceptedBy,
-        `Job "${beforeData.title || requestId}" was confirmed by the customer and paid successfully.`,
-        'Job Confirmed and Paid'
+        `Your payment for ${beforeData.title || requestId} has been released to your wallet.`,
+        'Payment Released!',
+        { screen: 'wallet', requestId, jobId: requestId }
       );
     }
     if (beforeData.user) {
       await notifyUser(
         beforeData.user,
         `Job "${beforeData.title || requestId}" completed successfully. Payment has been released.`,
-        'Payment Released'
+        'Payment Released',
+        { screen: 'job-details', requestId, jobId: requestId }
       );
     }
 
@@ -1173,18 +1748,25 @@ app.post('/jobs/:id/dispute', requireAuth, async (req, res) => {
       await notifyUser(
         beforeData.acceptedBy,
         `A dispute was opened for job "${beforeData.title || requestId}". Payment is on hold.`,
-        'Dispute Opened'
+        'Dispute Opened',
+        { screen: 'job-details', requestId, jobId: requestId }
       );
     }
     if (beforeData.user) {
       await notifyUser(
         beforeData.user,
         `Your dispute for "${beforeData.title || requestId}" has been submitted for admin review.`,
-        'Dispute Submitted'
+        'Dispute Submitted',
+        { screen: 'job-details', requestId, jobId: requestId }
       );
     }
     for (const adminEmail of ADMIN_EMAILS) {
-      await notifyUser(adminEmail, `New dispute requires review: "${beforeData.title || requestId}".`, 'Dispute Requires Review');
+      await notifyUser(
+        adminEmail,
+        `A dispute was opened for job: ${beforeData.title || requestId}`,
+        'New Dispute!',
+        { screen: 'admin', requestId, jobId: requestId }
+      );
     }
 
     await writeAuditLog({
@@ -1213,6 +1795,151 @@ app.post('/jobs/:id/dispute', requireAuth, async (req, res) => {
   }
 });
 
+// ✅ PORTFOLIO ENDPOINTS ─────────────────────────────────────────────────────────
+
+/**
+ * POST /portfolio
+ * Upload a new portfolio item for the authenticated provider
+ */
+app.post('/portfolio', requireAuth, async (req, res) => {
+  try {
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+    const image = String(req.body?.image || '').trim();
+    const description = String(req.body?.description || '').trim();
+
+    if (!image) {
+      return sendError(res, req, 400, 'missing_image', 'image (base64 data URL) is required');
+    }
+
+    if (!description) {
+      return sendError(res, req, 400, 'missing_description', 'description is required');
+    }
+
+    if (description.length > 500) {
+      return sendError(res, req, 400, 'description_too_long', 'description must be 500 characters or less');
+    }
+
+    // Generate item ID
+    const itemId = adminDb.collection('_').doc().id;
+
+    // Parse base64 image and upload to Storage
+    const matches = image.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) {
+      return sendError(res, req, 400, 'invalid_image_format', 'image must be a valid data URL');
+    }
+
+    const mimeType = matches[1];
+    const imageBuffer = Buffer.from(matches[2], 'base64');
+
+    const storagePath = `portfolio/${userEmail}/${itemId}/image.jpg`;
+    const file = adminStorage.file(storagePath);
+
+    await file.save(imageBuffer, {
+      metadata: {
+        contentType: mimeType,
+      },
+    });
+
+    const imageUrl = `https://storage.googleapis.com/${adminStorage.bucket.name}/${storagePath}`;
+
+    // Create Firestore document
+    await adminDb
+      .collection('portfolios')
+      .doc(userEmail)
+      .collection('items')
+      .doc(itemId)
+      .set({
+        imageUrl,
+        description,
+        active: true,
+        uploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+    return sendSuccess(res, req, {
+      message: 'Portfolio item uploaded successfully',
+      data: {
+        itemId,
+        imageUrl,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'PORTFOLIO_UPLOAD_ERROR');
+    return sendError(res, req, 500, 'portfolio_upload_failed', 'Could not upload portfolio item');
+  }
+});
+
+/**
+ * DELETE /portfolio/:itemId
+ * Delete a portfolio item for the authenticated provider
+ */
+app.delete('/portfolio/:itemId', requireAuth, async (req, res) => {
+  try {
+    const userEmail = String(req.user?.email || '').trim().toLowerCase();
+    const itemId = String(req.params?.itemId || '').trim();
+
+    if (!itemId) {
+      return sendError(res, req, 400, 'missing_item_id', 'itemId is required');
+    }
+
+    const itemRef = adminDb.collection('portfolios').doc(userEmail).collection('items').doc(itemId);
+    const itemSnap = await itemRef.get();
+
+    if (!itemSnap.exists) {
+      return sendError(res, req, 404, 'item_not_found', 'Portfolio item not found');
+    }
+
+    // Soft delete (mark as inactive)
+    await itemRef.update({
+      active: false,
+      deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Portfolio item deleted',
+      data: { itemId },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'PORTFOLIO_DELETE_ERROR');
+    return sendError(res, req, 500, 'portfolio_delete_failed', 'Could not delete portfolio item');
+  }
+});
+
+/**
+ * GET /portfolio/:email
+ * Fetch portfolio items for a specific provider (public endpoint)
+ */
+app.get('/portfolio/:email', async (req, res) => {
+  try {
+    const email = String(req.params?.email || '').trim().toLowerCase();
+
+    if (!email) {
+      return sendError(res, req, 400, 'missing_email', 'email is required');
+    }
+
+    const snap = await adminDb
+      .collection('portfolios')
+      .doc(email)
+      .collection('items')
+      .where('active', '==', true)
+      .orderBy('uploadedAt', 'desc')
+      .get();
+
+    const items = snap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      uploadedAt: doc.data().uploadedAt?.toDate?.(),
+    }));
+
+    return sendSuccess(res, req, {
+      message: 'Portfolio retrieved',
+      data: { items },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'PORTFOLIO_FETCH_ERROR');
+    return sendError(res, req, 500, 'portfolio_fetch_failed', 'Could not fetch portfolio');
+  }
+});
+
 // ✅ START SERVER
 app.listen(PORT, '0.0.0.0', () => {
   logger.info({ url: PUBLIC_SERVER_BASE_URL, allowedOrigins: Array.from(allowedOriginSet) }, 'SERVER_STARTED');
@@ -1230,6 +1957,12 @@ setInterval(async () => {
     logger.warn({ err: e.message }, '[keep-alive] ping failed');
   }
 }, 10 * 60 * 1000); // every 10 minutes
+
+// Daily-ish subscription expiry sweep (hourly cadence for resilience)
+setInterval(() => {
+  expireDueSubscriptions();
+}, 60 * 60 * 1000);
+expireDueSubscriptions();
 
 app.post('/admin/sync-claims', requireAdminOrBootstrapSecret, async (req, res) => {
   try {
@@ -1598,8 +2331,9 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
 
     const notificationDelivery = await notifyUser(
       targetEmail,
-      'Your identity verification has been approved. You can now access all ConnectHub features.',
-      'KYC Approved'
+      'Your identity has been verified. Welcome to ConnectHub!',
+      'KYC Approved!',
+      { screen: 'kyc' }
     );
 
     await writeAuditLog({
@@ -1652,8 +2386,9 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
 
     const notificationDelivery = await notifyUser(
       targetEmail,
-      `Your identity verification was not approved. Reason: ${reason}. Please resubmit with correct documents.`,
-      'KYC Rejected'
+      'Your KYC was not approved. Open the app to resubmit.',
+      'KYC Action Required',
+      { screen: 'kyc' }
     );
 
     await writeAuditLog({
@@ -2007,5 +2742,67 @@ app.post('/reviews/:requestId/vote', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'REVIEW_VOTE_ERROR');
     return sendError(res, req, 500, 'review_vote_failed', 'Could not record vote');
+  }
+});
+
+app.post('/chat/notify', requireAuth, async (req, res) => {
+  try {
+    const jobId = String(req.body?.jobId || req.body?.requestId || '').trim();
+    const senderEmail = String(req.body?.senderEmail || req.user?.email || '').trim().toLowerCase();
+    const messageText = String(req.body?.messageText || '').trim();
+
+    if (!jobId) {
+      return sendError(res, req, 400, 'missing_job_id', 'jobId is required');
+    }
+
+    if (!senderEmail) {
+      return sendError(res, req, 400, 'missing_sender', 'senderEmail is required');
+    }
+
+    if (!messageText) {
+      return sendError(res, req, 400, 'missing_message_text', 'messageText is required');
+    }
+
+    const requestSnap = await adminDb.collection('requests').doc(jobId).get();
+    if (!requestSnap.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const requestData = requestSnap.data() || {};
+    const ownerEmail = String(requestData.user || '').trim().toLowerCase();
+    const providerEmail = String(requestData.acceptedBy || '').trim().toLowerCase();
+    const participants = [ownerEmail, providerEmail].filter(Boolean);
+
+    if (!participants.includes(senderEmail)) {
+      return sendError(res, req, 403, 'chat_access_denied', 'Sender is not a participant for this job');
+    }
+
+    const recipientEmail = senderEmail === ownerEmail ? providerEmail : ownerEmail;
+    if (!recipientEmail) {
+      return sendError(res, req, 409, 'recipient_not_available', 'No chat recipient is available for this job');
+    }
+
+    const senderProfile = await adminDb.collection('users').doc(senderEmail).get().catch(() => null);
+    const senderName = senderProfile && senderProfile.exists
+      ? (senderProfile.data()?.name || senderProfile.data()?.displayName || senderEmail)
+      : senderEmail;
+
+    await notifyUser(
+      recipientEmail,
+      messageText,
+      `New message from ${senderName}`,
+      { screen: 'chat', jobId }
+    );
+
+    return sendSuccess(res, req, {
+      message: 'Chat notification delivered',
+      data: {
+        jobId,
+        recipientEmail,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'CHAT_NOTIFY_ERROR');
+    return sendError(res, req, 500, 'chat_notify_failed', 'Could not send chat notification');
   }
 });
