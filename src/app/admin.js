@@ -837,7 +837,7 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
   return (
     <AppCard style={{ marginBottom: 12 }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-        <Text style={{ fontWeight: '700', flex: 1 }}>{item.fullName || item.email}</Text>
+        <Text style={{ fontWeight: '700', flex: 1 }}>{safeStr(item.fullName) || item.email}</Text>
         <View style={{ backgroundColor: kycBadgeColor, paddingHorizontal: 8, paddingVertical: 3, borderRadius: AppRadius.sm }}>
           <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
             {item.kycStatus === KYC_STATUS.VERIFIED
@@ -851,7 +851,9 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
 
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Email: {item.email}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Phone: {safeStr(item.phone) || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Alt Phone: {safeStr(item.alternatePhone || item.altPhone) || 'N/A'}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>ID Type: {safeStr(item.idType) || 'N/A'} - {idNumber || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Status: {safeStr(item.kycStatus) || 'N/A'}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>
         Payment: {item.paymentMethod === 'bank' ? `Bank - ${bankName || 'N/A'}` : `MoMo - ${safeStr(item.momoProvider) || 'N/A'}`}
       </Text>
@@ -881,27 +883,37 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
           <Text style={{ color: '#a5b4fc', fontWeight: '700', marginBottom: 8 }}>Identity Details</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Full Name: {safeStr(item.fullName) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Date of Birth: {safeStr(dateOfBirth) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Gender: {safeStr(item.gender) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Marital Status: {safeStr(item.maritalStatus) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Nationality: {safeStr(item.nationality) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country of Residence: {safeStr(countryOfResidence) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>City: {safeStr(city) || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Occupation: {safeStr(item.occupation) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Residential Address: {safeStr(residentialAddress) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>ID Type: {safeStr(item.idType) || 'N/A'}</Text>
           <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>ID Number: {idNumber || 'N/A'}</Text>
+          <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>KYC Status: {safeStr(item.kycStatus) || 'N/A'}</Text>
 
           <Text style={{ color: '#a5b4fc', fontWeight: '700', marginTop: 8, marginBottom: 8 }}>Payment Details</Text>
           {item.paymentMethod === 'bank' ? (
             <>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Method: Bank Account</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Stored Method Value: {safeStr(item.paymentMethod) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Bank: {safeStr(bankName) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {safeStr(bankAccountName) || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Number (raw): {safeStr(item.bankAccountNumber) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Number: {maskValue(item.bankAccountNumberMasked || '') || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Branch Code: {safeStr(item.branchCode) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Branch: {safeStr(bankBranch) || 'N/A'}</Text>
             </>
           ) : (
             <>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Method: Mobile Money</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Stored Method Value: {safeStr(item.paymentMethod) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Provider: {safeStr(item.momoProvider) || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Number (raw): {safeStr(item.momoNumber) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name: {safeStr(momoName) || 'N/A'}</Text>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Account Name (raw): {safeStr(item.momoAccountName || item.momoName) || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Number: {maskValue(item.momoNumberMasked || '') || 'N/A'}</Text>
               <Text style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 3 }}>Country: {safeStr(item.momoCountry) || 'N/A'}</Text>
             </>

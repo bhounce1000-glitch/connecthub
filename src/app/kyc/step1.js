@@ -175,6 +175,12 @@ export default function KycStep1() {
     try {
       if (!user?.email) throw new Error('Not authenticated');
       const email = (user.email || '').trim().toLowerCase();
+      const nationality = typeof form.nationality === 'object'
+        ? (form.nationality?.name || form.nationality?.cca2 || '')
+        : (form.nationality || '');
+      const countryOfResidence = typeof form.countryOfResidence === 'object'
+        ? (form.countryOfResidence?.name || form.countryOfResidence?.cca2 || '')
+        : (form.countryOfResidence || '');
 
       let profilePhotoUrl = form.profilePhotoUrl;
       // If a new file is selected, upload it
@@ -188,9 +194,9 @@ export default function KycStep1() {
           email,
           fullName: form.fullName.trim(),
           dob: form.dob.trim(),
-          gender: form.gender,
-          nationality: form.nationality.trim(),
-          countryOfResidence: form.countryOfResidence.trim(),
+          gender: String(form.gender || ''),
+          nationality: String(nationality).trim(),
+          countryOfResidence: String(countryOfResidence).trim(),
           city: form.city.trim(),
           homeAddress: form.homeAddress.trim(),
           occupation: form.occupation.trim(),
