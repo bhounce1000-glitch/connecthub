@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { Share, Text, View } from 'react-native';
+import { Alert, Clipboard, Platform, Share, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -69,10 +69,18 @@ export default function Referral() {
   const totalRewards = Number(profile?.referralEarnings || profile?.referralRewardEarned || 0);
   const totalReferrals = Number(profile?.referralCount || referrals.length || 0);
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (!code) return;
-    Clipboard.setString(code);
-    Alert.alert('Copied!', 'Your referral code has been copied.');
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        Clipboard.setString(code);
+      }
+      Alert.alert('Copied!', 'Your referral code has been copied.');
+    } catch (_) {
+      Alert.alert('Copied!', 'Your referral code: ' + code);
+    }
   };
 
   const shareCode = async () => {
