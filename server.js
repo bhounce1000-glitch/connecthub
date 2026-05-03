@@ -87,10 +87,12 @@ app.use(express.json({
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || `${serviceAccount.project_id}.appspot.com`,
   });
 }
 
 const adminDb = admin.firestore();
+const adminStorage = admin.storage().bucket();
 
 function sendSuccess(res, req, payload = {}, statusCode = 200) {
   return res.status(statusCode).json({
