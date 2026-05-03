@@ -6,10 +6,11 @@ import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import Avatar from '../components/ui/avatar';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
+import SubscriptionBadge from '../components/ui/subscription-badge';
 import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tokens';
 
 // Firebase
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { SERVICE_CATEGORIES } from './provider-setup';
@@ -34,11 +35,30 @@ export default function Providers() {
   useEffect(() => {
     const q = query(collection(db, 'providers'), where('isAvailable', '==', true));
     return onSnapshot(q, (snap) => {
-      const data = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
-      setProviders(data);
-      setIsLoading(false);
+      (async () => {
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const enrichedRows = await Promise.all(
+          rows.map(async (row) => {
+            const providerEmail = String(row.email || row.id || '').trim().toLowerCase();
+            if (!providerEmail) return row;
+
+            try {
+              const userSnap = await getDoc(doc(db, 'users', providerEmail));
+              const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+              return {
+                ...row,
+                subscriptionPlan: userData.subscriptionPlan || row.subscriptionPlan || 'free',
+              };
+            } catch {
+              return row;
+            }
+          })
+        );
+
+        enrichedRows.sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+        setProviders(enrichedRows);
+        setIsLoading(false);
+      })();
     }, () => setIsLoading(false));
   }, []);
 
@@ -171,7 +191,10 @@ function ProviderCard({ provider, onPress }) {
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
           <Avatar src={provider.profilePicture} email={provider.email} size={48} style={{ marginRight: 12 }} />
           <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>{provider.name || provider.email}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>{provider.name || provider.email}</Text>
+              <SubscriptionBadge plan={provider.subscriptionPlan} />
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 6 }}>
               {/* Availability badge */}
               <View style={{ backgroundColor: '#d1fae5', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 }}>

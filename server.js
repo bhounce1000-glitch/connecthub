@@ -44,6 +44,7 @@ const SUBSCRIPTION_PLAN_CONFIG = {
   pro: { amount: 49, durationDays: 30, acceptLimit: null, badge: 'Pro' },
   premium: { amount: 99, durationDays: 30, acceptLimit: null, badge: 'Premium' },
 };
+const MOBILE_SCHEME = process.env.MOBILE_APP_SCHEME || 'connecthub';
 
 function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -435,6 +436,41 @@ function isoPlusDays(days) {
   return new Date(now + ms).toISOString();
 }
 
+function toIsoDateString(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString();
+}
+
+function planLabel(plan) {
+  const normalizedPlan = normalizePlan(plan);
+  if (normalizedPlan === 'pro') return 'Pro';
+  if (normalizedPlan === 'premium') return 'Premium';
+  return 'Basic';
+}
+
+function planPriceLabel(plan) {
+  const normalizedPlan = normalizePlan(plan);
+  if (normalizedPlan === 'pro') return '49';
+  if (normalizedPlan === 'premium') return '99';
+  return '0';
+}
+
+function resolveSubscriptionRedirectUrl(status, plan, platform) {
+  const normalizedStatus = String(status || 'failed').trim().toLowerCase();
+  const normalizedPlan = normalizePlan(plan);
+  const targetPlatform = String(platform || '').trim().toLowerCase();
+  const encodedPlan = encodeURIComponent(normalizedPlan);
+  const encodedStatus = encodeURIComponent(normalizedStatus);
+
+  if (targetPlatform === 'mobile') {
+    return `${MOBILE_SCHEME}://subscription?status=${encodedStatus}&plan=${encodedPlan}`;
+  }
+
+  return `${trimTrailingSlash(WEB_BASE_URL)}/subscription?status=${encodedStatus}&plan=${encodedPlan}`;
+}
+
 function startOfMonthIso() {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
@@ -462,19 +498,78 @@ async function applySubscriptionForUser(userEmail, plan, reference, source = 'su
     };
   }
 
+  const userRef = adminDb.collection('users').doc(normalizedEmail);
+  const userSnapshot = await userRef.get();
+  const existingUser = userSnapshot.exists ? (userSnapshot.data() || {}) : {};
+
   const nowIso = new Date().toISOString();
   const expiresAt = isoPlusDays(planConfig.durationDays || 30);
+  const displayName = String(
+    existingUser.displayName
+    || existingUser.name
+    || normalizedEmail.split('@')[0]
+  ).trim();
 
-  await adminDb.collection('users').doc(normalizedEmail).set({
+  await userRef.set({
     subscriptionPlan: normalizedPlan,
     subscriptionBadge: planConfig.badge,
     subscriptionStatus: 'active',
     subscriptionStartedAt: nowIso,
+    subscriptionStarted: nowIso,
     subscriptionExpiry: expiresAt,
+    subscriptionRenewalDate: expiresAt,
     subscriptionPaymentReference: reference || null,
+    subscriptionReference: reference || null,
     subscriptionUpdatedAt: nowIso,
     updatedAt: nowIso,
   }, { merge: true });
+
+  await adminDb.collection('notifications').add({
+    user: normalizedEmail,
+    userId: normalizedEmail,
+    title: normalizedPlan === 'pro' ? '🎉 Pro Plan Activated!' : '⭐ Premium Plan Activated!',
+    body: `Congratulations! Your ${normalizedPlan} plan is now active. You will be billed GHS ${planPriceLabel(normalizedPlan)} at the end of each month to keep your benefits.`,
+    type: 'subscription_activated',
+    read: false,
+    text: `${planLabel(normalizedPlan)} subscription activated`,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAtIso: nowIso,
+  });
+
+  if (isEmailConfigured()) {
+    const subject = `ConnectHub - ${planLabel(normalizedPlan)} Plan Activated! 🎉`;
+    const html = `
+      <p>Dear ${displayName},</p>
+      <p>Congratulations! Your ${planLabel(normalizedPlan)} plan on ConnectHub is now active.</p>
+      <p><b>Plan Details:</b></p>
+      <ul>
+        <li>Plan: ${planLabel(normalizedPlan)}</li>
+        <li>Monthly cost: GHS ${planPriceLabel(normalizedPlan)}</li>
+        <li>Activated: ${toIsoDateString(nowIso)}</li>
+        <li>Next renewal: ${toIsoDateString(expiresAt)}</li>
+      </ul>
+      <p><b>What you get:</b></p>
+      <ul>
+        <li>Unlimited job applications every month</li>
+        <li>${normalizedPlan === 'pro' ? 'Pro badge' : 'Premium placement badge'} on your profile</li>
+        ${normalizedPlan === 'premium' ? '<li>Featured placement at the top of search results</li>' : ''}
+      </ul>
+      <p><b>Important:</b><br/>You will be automatically billed GHS ${planPriceLabel(normalizedPlan)} at the end of each month. If payment fails, your account will be downgraded to the Basic plan.</p>
+      <p>To cancel your subscription at any time, open the ConnectHub app and go to Profile -> Subscription -> Cancel.</p>
+      <p>Thank you for supporting ConnectHub!<br/>The ConnectHub Team</p>
+    `;
+
+    try {
+      await emailTransporter.sendMail({
+        from: emailFrom,
+        to: normalizedEmail,
+        subject,
+        html,
+      });
+    } catch (error) {
+      logger.warn({ err: error, email: normalizedEmail }, 'SUBSCRIPTION_ACTIVATION_EMAIL_FAILED');
+    }
+  }
 
   await notifyUser(
     normalizedEmail,
@@ -510,6 +605,92 @@ async function countProviderMonthlyAccepts(providerEmail) {
     }
   });
   return count;
+}
+
+async function verifyPaystackTransaction(reference) {
+  const normalizedReference = String(reference || '').trim();
+  if (!normalizedReference) {
+    return { ok: false, error: 'missing_reference', data: null };
+  }
+
+  const paystackSecret = getPaystackSecret();
+  if (!paystackSecret) {
+    return { ok: false, error: 'payment_configuration_missing', data: null };
+  }
+
+  const response = await fetch(`https://api.paystack.co/transaction/verify/${normalizedReference}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${paystackSecret}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const data = await response.json();
+  const isSuccessful = response.ok && data?.status && data?.data?.status === 'success';
+  return {
+    ok: Boolean(isSuccessful),
+    data,
+    error: isSuccessful ? null : 'subscription_payment_not_successful',
+  };
+}
+
+async function downgradeUserToBasic(userEmail, status = 'expired') {
+  const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+  if (!normalizedEmail) return;
+
+  const nowIso = new Date().toISOString();
+  await adminDb.collection('users').doc(normalizedEmail).set({
+    subscriptionPlan: 'free',
+    subscriptionBadge: 'Basic',
+    subscriptionStatus: status,
+    subscriptionExpiry: null,
+    subscriptionRenewalDate: null,
+    subscriptionUpdatedAt: nowIso,
+    updatedAt: nowIso,
+  }, { merge: true });
+}
+
+async function tryAutoRenewSubscription(userEmail, userData = {}) {
+  const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+  const plan = normalizePlan(userData.subscriptionPlan || 'free');
+  const planConfig = SUBSCRIPTION_PLAN_CONFIG[plan] || SUBSCRIPTION_PLAN_CONFIG.free;
+  const authorizationCode = String(userData.subscriptionAuthorizationCode || '').trim();
+
+  if (!authorizationCode || plan === 'free') {
+    return { renewed: false, reason: 'missing_authorization_code' };
+  }
+
+  const paystackSecret = getPaystackSecret();
+  if (!paystackSecret) {
+    return { renewed: false, reason: 'payment_configuration_missing' };
+  }
+
+  const response = await fetch('https://api.paystack.co/transaction/charge_authorization', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${paystackSecret}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      email: normalizedEmail,
+      amount: Math.round(planConfig.amount * 100),
+      authorization_code: authorizationCode,
+      metadata: {
+        type: 'subscription_renewal',
+        plan,
+        email: normalizedEmail,
+      },
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok || !data?.status || data?.data?.status !== 'success') {
+    return { renewed: false, reason: 'charge_failed', details: data };
+  }
+
+  await applySubscriptionForUser(normalizedEmail, plan, data?.data?.reference || null, 'subscription_renewal');
+  return { renewed: true, reference: data?.data?.reference || null };
 }
 
 async function maybeAwardReferralBonus(requestId, requestData) {
@@ -622,20 +803,59 @@ async function expireDueSubscriptions() {
 
     await Promise.all(snapshot.docs.map(async (docItem) => {
       const targetEmail = String(docItem.id || '').trim().toLowerCase();
-      await adminDb.collection('users').doc(targetEmail).set({
-        subscriptionPlan: 'free',
-        subscriptionBadge: 'Basic',
-        subscriptionStatus: 'expired',
-        subscriptionUpdatedAt: nowIso,
-        updatedAt: nowIso,
-      }, { merge: true });
+      const userData = docItem.data() || {};
+      const userPlan = normalizePlan(userData.subscriptionPlan || 'free');
+      if (!['pro', 'premium'].includes(userPlan)) {
+        return;
+      }
+
+      const autoRenewResult = await tryAutoRenewSubscription(targetEmail, userData);
+      if (autoRenewResult.renewed) {
+        await notifyUser(
+          targetEmail,
+          `Your ${planLabel(userData.subscriptionPlan)} plan renewed successfully.`,
+          'Subscription Renewed',
+          { screen: 'subscription' }
+        );
+        return;
+      }
+
+      await downgradeUserToBasic(targetEmail, 'expired');
+
+      await adminDb.collection('notifications').add({
+        user: targetEmail,
+        userId: targetEmail,
+        title: 'Subscription Expired',
+        body: 'Your Pro/Premium subscription has expired. You have been moved to the Basic plan. Renew in the app to restore your benefits.',
+        type: 'subscription_expired',
+        read: false,
+        text: 'Subscription expired. You were moved to Basic.',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAtIso: nowIso,
+      });
 
       await notifyUser(
         targetEmail,
-        'Your paid subscription has expired and your account is now on Basic.',
+        'Your Pro/Premium subscription has expired. You have been moved to the Basic plan. Renew in the app to restore your benefits.',
         'Subscription Expired',
         { screen: 'subscription' }
       );
+
+      if (isEmailConfigured()) {
+        try {
+          await emailTransporter.sendMail({
+            from: emailFrom,
+            to: targetEmail,
+            subject: 'ConnectHub - Subscription Expired',
+            html: `
+              <p>Your Pro/Premium subscription has expired.</p>
+              <p>You have been moved to the Basic plan. Renew in the ConnectHub app to restore your benefits.</p>
+            `,
+          });
+        } catch (error) {
+          logger.warn({ err: error, email: targetEmail }, 'SUBSCRIPTION_EXPIRY_EMAIL_FAILED');
+        }
+      }
     }));
   } catch (error) {
     logger.error({ err: error }, 'SUBSCRIPTION_EXPIRY_SWEEP_ERROR');
@@ -1233,11 +1453,18 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
 app.post('/subscription/initiate', requireAuth, async (req, res) => {
   try {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const displayName = String(req.body?.displayName || '').trim();
     const plan = normalizePlan(req.body?.plan);
+    const platform = String(req.body?.platform || '').trim().toLowerCase();
     const planConfig = SUBSCRIPTION_PLAN_CONFIG[plan];
 
     if (!actorEmail) {
       return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
+    }
+
+    if (!email || email !== actorEmail) {
+      return sendError(res, req, 403, 'email_mismatch', 'Email must match authenticated user');
     }
 
     if (!planConfig || plan === 'free') {
@@ -1256,25 +1483,78 @@ app.post('/subscription/initiate', requireAuth, async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        email: actorEmail,
+        email,
         amount: Math.round(planConfig.amount * 100),
-        callback_url: `${NORMALIZED_CALLBACK_BASE_URL}/subscription?plan=${encodeURIComponent(plan)}`,
+        currency: 'GHS',
+        callback_url: `${trimTrailingSlash(PUBLIC_SERVER_BASE_URL)}/subscription/verify?plan=${encodeURIComponent(plan)}&email=${encodeURIComponent(email)}&platform=${encodeURIComponent(platform || 'web')}`,
         metadata: {
-          kind: 'subscription',
+          type: 'subscription',
           plan,
-          subscriberEmail: actorEmail,
+          email,
+          displayName,
+          platform: platform || 'web',
         },
       }),
     });
 
     const data = await response.json();
-    return res.status(response.status).json({
-      requestId: req.requestId,
-      ...data,
+    if (!response.ok || !data?.status || !data?.data?.authorization_url) {
+      return sendError(res, req, response.status || 400, 'subscription_init_failed', data?.message || 'Could not initialize subscription payment', data);
+    }
+
+    return sendSuccess(res, req, {
+      message: 'Subscription checkout initialized',
+      authorization_url: data.data.authorization_url,
+      reference: data.data.reference,
+      data: {
+        authorization_url: data.data.authorization_url,
+        reference: data.data.reference,
+      },
     });
   } catch (error) {
     logger.error({ err: error }, 'SUBSCRIPTION_INIT_ERROR');
     return sendError(res, req, 500, 'subscription_init_failed', 'Could not initialize subscription payment');
+  }
+});
+
+app.get('/subscription/verify', async (req, res) => {
+  try {
+    const plan = normalizePlan(req.query?.plan);
+    const platform = String(req.query?.platform || '').trim().toLowerCase();
+    const emailParam = String(req.query?.email || '').trim().toLowerCase();
+    const reference = String(req.query?.reference || req.query?.trxref || '').trim();
+
+    if (!reference) {
+      return res.redirect(resolveSubscriptionRedirectUrl('failed', plan, platform));
+    }
+
+    const verification = await verifyPaystackTransaction(reference);
+    if (!verification.ok) {
+      return res.redirect(resolveSubscriptionRedirectUrl('failed', plan, platform));
+    }
+
+    const paystackData = verification.data?.data || {};
+    const metadata = paystackData?.metadata || {};
+    const metadataPlan = normalizePlan(metadata?.plan || plan);
+    const metadataEmail = String(metadata?.email || emailParam || paystackData?.customer?.email || '').trim().toLowerCase();
+
+    if (!metadataEmail || !['pro', 'premium'].includes(metadataPlan)) {
+      return res.redirect(resolveSubscriptionRedirectUrl('failed', metadataPlan, platform));
+    }
+
+    await applySubscriptionForUser(metadataEmail, metadataPlan, reference, 'subscription_verify_callback');
+
+    await adminDb.collection('users').doc(metadataEmail).set({
+      subscriptionCustomerCode: paystackData?.customer?.customer_code || null,
+      subscriptionCustomerEmail: paystackData?.customer?.email || metadataEmail,
+      subscriptionAuthorizationCode: paystackData?.authorization?.authorization_code || null,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    return res.redirect(resolveSubscriptionRedirectUrl('success', metadataPlan, platform || metadata?.platform));
+  } catch (error) {
+    logger.error({ err: error }, 'SUBSCRIPTION_VERIFY_CALLBACK_ERROR');
+    return res.redirect(resolveSubscriptionRedirectUrl('failed', req.query?.plan, req.query?.platform));
   }
 });
 
@@ -1287,27 +1567,14 @@ app.post('/subscription/verify', requireAuth, async (req, res) => {
       return sendError(res, req, 400, 'invalid_subscription_verify_payload', 'reference is required');
     }
 
-    const paystackSecret = getPaystackSecret();
-    if (!paystackSecret) {
-      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    const verification = await verifyPaystackTransaction(reference);
+    if (!verification.ok) {
+      return sendError(res, req, 400, 'subscription_payment_not_successful', 'Subscription payment was not successful', verification.data);
     }
 
-    const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${paystackSecret}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    const data = await response.json();
-
-    if (!response.ok || !data?.status || data?.data?.status !== 'success') {
-      return sendError(res, req, 400, 'subscription_payment_not_successful', 'Subscription payment was not successful', data);
-    }
-
-    const metadata = data?.data?.metadata || {};
+    const metadata = verification.data?.data?.metadata || {};
     const plan = normalizePlan(metadata?.plan);
-    const subscriberEmail = String(metadata?.subscriberEmail || actorEmail).trim().toLowerCase();
+    const subscriberEmail = String(metadata?.email || actorEmail).trim().toLowerCase();
 
     if (subscriberEmail !== actorEmail) {
       return sendError(res, req, 403, 'subscription_owner_access_required', 'Subscription email does not match authenticated user');
@@ -1315,14 +1582,90 @@ app.post('/subscription/verify', requireAuth, async (req, res) => {
 
     const subscriptionUpdate = await applySubscriptionForUser(actorEmail, plan, reference, 'subscription_verify');
 
+    await adminDb.collection('users').doc(actorEmail).set({
+      subscriptionCustomerCode: verification.data?.data?.customer?.customer_code || null,
+      subscriptionCustomerEmail: verification.data?.data?.customer?.email || actorEmail,
+      subscriptionAuthorizationCode: verification.data?.data?.authorization?.authorization_code || null,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
     return sendSuccess(res, req, {
       message: 'Subscription activated successfully',
-      data,
+      data: verification.data,
       subscriptionUpdate,
     });
   } catch (error) {
     logger.error({ err: error }, 'SUBSCRIPTION_VERIFY_ERROR');
     return sendError(res, req, 500, 'subscription_verify_failed', 'Could not verify subscription payment');
+  }
+});
+
+app.post('/subscription/cancel', requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+
+    if (!actorEmail || !email || actorEmail !== email) {
+      return sendError(res, req, 403, 'email_mismatch', 'Email must match authenticated user');
+    }
+
+    const nowIso = new Date().toISOString();
+    await adminDb.collection('users').doc(email).set({
+      subscriptionPlan: 'basic',
+      subscriptionBadge: 'Basic',
+      subscriptionStatus: 'cancelled',
+      subscriptionExpiry: null,
+      subscriptionRenewalDate: null,
+      subscriptionUpdatedAt: nowIso,
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    await adminDb.collection('notifications').add({
+      user: email,
+      userId: email,
+      title: 'Subscription Cancelled',
+      body: 'Your subscription has been cancelled. You will keep your current benefits until the end of the billing period.',
+      type: 'subscription_cancelled',
+      read: false,
+      text: 'Subscription cancelled',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: nowIso,
+    });
+
+    await notifyUser(
+      email,
+      'Your subscription has been cancelled. You will keep your current benefits until the end of the billing period.',
+      'Subscription Cancelled',
+      { screen: 'subscription' }
+    );
+
+    if (isEmailConfigured()) {
+      try {
+        await emailTransporter.sendMail({
+          from: emailFrom,
+          to: email,
+          subject: 'ConnectHub - Subscription Cancelled',
+          html: `
+            <p>Your subscription has been cancelled.</p>
+            <p>You will keep your current benefits until the end of the billing period.</p>
+            <p>You can reactivate Pro or Premium at any time from the Subscription screen.</p>
+          `,
+        });
+      } catch (error) {
+        logger.warn({ err: error, email }, 'SUBSCRIPTION_CANCEL_EMAIL_FAILED');
+      }
+    }
+
+    return sendSuccess(res, req, {
+      message: 'Subscription cancelled successfully',
+      data: {
+        subscriptionPlan: 'basic',
+        subscriptionStatus: 'cancelled',
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'SUBSCRIPTION_CANCEL_ERROR');
+    return sendError(res, req, 500, 'subscription_cancel_failed', 'Could not cancel subscription');
   }
 });
 
@@ -1350,12 +1693,19 @@ app.post('/paystack/webhook', async (req, res) => {
 
     if (event?.event === 'charge.success' && event?.data?.status === 'success') {
       const metadata = event?.data?.metadata || {};
-      if (metadata?.kind === 'subscription') {
-        const subscriberEmail = String(metadata?.subscriberEmail || '').trim().toLowerCase();
+      if (metadata?.type === 'subscription') {
+        const subscriberEmail = String(metadata?.email || event?.data?.customer?.email || '').trim().toLowerCase();
         const plan = normalizePlan(metadata?.plan);
         const subscriptionUpdate = await applySubscriptionForUser(subscriberEmail, plan, event?.data?.reference, 'paystack_webhook');
         if (!subscriptionUpdate.updated) {
           logger.warn({ subscriptionUpdate }, 'WEBHOOK_SUBSCRIPTION_UPDATE_SKIPPED');
+        } else {
+          await adminDb.collection('users').doc(subscriberEmail).set({
+            subscriptionCustomerCode: event?.data?.customer?.customer_code || null,
+            subscriptionCustomerEmail: event?.data?.customer?.email || subscriberEmail,
+            subscriptionAuthorizationCode: event?.data?.authorization?.authorization_code || null,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
         }
       } else {
         const paymentUpdate = await markRequestEscrowFunded(event?.data?.metadata?.requestId, event?.data?.reference, {
@@ -1451,17 +1801,38 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
     const actorProfile = actorProfileSnap && actorProfileSnap.exists ? (actorProfileSnap.data() || {}) : {};
     const actorPlan = normalizePlan(actorProfile.subscriptionPlan || 'free');
     const actorPlanConfig = SUBSCRIPTION_PLAN_CONFIG[actorPlan] || SUBSCRIPTION_PLAN_CONFIG.free;
+    const actorSubscriptionStatus = String(actorProfile.subscriptionStatus || '').trim().toLowerCase();
+    const actorSubscriptionExpiryMs = toMillis(actorProfile.subscriptionExpiry);
+    const nowMs = Date.now();
 
-    if (Number.isFinite(actorPlanConfig.acceptLimit) && actorPlanConfig.acceptLimit > -1) {
+    const monthlyLimitPayload = {
+      error: 'monthly_limit_reached',
+      message: 'You have reached your 5 job limit for this month. Upgrade to Pro for unlimited job accepts.',
+      upgradeUrl: '/subscription',
+    };
+
+    if (['pro', 'premium'].includes(actorPlan)) {
+      const isActivePlan = actorSubscriptionStatus === 'active' && actorSubscriptionExpiryMs > nowMs;
+      if (!isActivePlan) {
+        await downgradeUserToBasic(actorEmail, 'expired');
+        return res.status(403).json({
+          status: false,
+          requestId: req.requestId,
+          code: 'monthly_limit_reached',
+          ...monthlyLimitPayload,
+        });
+      }
+    }
+
+    if (actorPlan === 'free' || Number.isFinite(actorPlanConfig.acceptLimit)) {
       const acceptedCount = await countProviderMonthlyAccepts(actorEmail);
       if (acceptedCount >= actorPlanConfig.acceptLimit) {
-        return sendError(
-          res,
-          req,
-          403,
-          'subscription_limit_reached',
-          `Basic plan allows up to ${actorPlanConfig.acceptLimit} accepted jobs per month. Upgrade to Pro or Premium to continue.`
-        );
+        return res.status(403).json({
+          status: false,
+          requestId: req.requestId,
+          code: 'monthly_limit_reached',
+          ...monthlyLimitPayload,
+        });
       }
     }
 
@@ -1958,10 +2329,21 @@ setInterval(async () => {
   }
 }, 10 * 60 * 1000); // every 10 minutes
 
-// Daily-ish subscription expiry sweep (hourly cadence for resilience)
-setInterval(() => {
-  expireDueSubscriptions();
-}, 60 * 60 * 1000);
+function scheduleDailySubscriptionSweep() {
+  const now = new Date();
+  const nextMidnight = new Date(now);
+  nextMidnight.setHours(24, 0, 0, 0);
+  const delayMs = Math.max(1000, nextMidnight.getTime() - now.getTime());
+
+  setTimeout(() => {
+    expireDueSubscriptions();
+    setInterval(() => {
+      expireDueSubscriptions();
+    }, 24 * 60 * 60 * 1000);
+  }, delayMs);
+}
+
+scheduleDailySubscriptionSweep();
 expireDueSubscriptions();
 
 app.post('/admin/sync-claims', requireAdminOrBootstrapSecret, async (req, res) => {

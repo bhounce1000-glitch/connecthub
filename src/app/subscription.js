@@ -1,14 +1,15 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, getDoc } from 'firebase/firestore';
+import * as WebBrowser from 'expo-web-browser';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { Linking, Platform, Text, View } from 'react-native';
+import { Alert, Linking, Platform, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import AppNotice from '../components/ui/app-notice';
 import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost } from '../utils/api-client';
 
@@ -20,68 +21,60 @@ const PLANS = [
 
 export default function Subscription() {
   const router = useRouter();
-  const { reference } = useLocalSearchParams();
+  const { status, plan } = useLocalSearchParams();
   const { user } = useAuthUser();
 
   const [profile, setProfile] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [pendingPlan, setPendingPlan] = useState('');
+  const [isCancelling, setIsCancelling] = useState(false);
   const [notice, setNotice] = useState(null);
-  const [verifiedReference, setVerifiedReference] = useState('');
 
   const currentEmail = String(user?.email || '').trim().toLowerCase();
-  const resolvedReference = Array.isArray(reference) ? reference[0] : reference;
-
-  const loadProfile = async () => {
-    if (!currentEmail) return;
-    setIsLoading(true);
-    try {
-      const snap = await getDoc(doc(db, 'users', currentEmail));
-      setProfile(snap.exists() ? (snap.data() || {}) : {});
-    } catch {
-      setProfile({});
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const resolvedStatus = Array.isArray(status) ? status[0] : status;
+  const resolvedPlan = Array.isArray(plan) ? plan[0] : plan;
 
   useEffect(() => {
-    loadProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!currentEmail) {
+      setProfile(null);
+      return undefined;
+    }
+
+    return onSnapshot(
+      doc(db, 'users', currentEmail),
+      (snap) => {
+        setProfile(snap.exists() ? (snap.data() || {}) : {});
+      },
+      () => {
+        setProfile({});
+      }
+    );
   }, [currentEmail]);
 
   useEffect(() => {
-    if (!resolvedReference || !currentEmail || verifiedReference === resolvedReference) return;
+    if (!resolvedStatus) return;
 
-    const verify = async () => {
-      try {
-        const { response, data } = await apiPost(
-          `${API_BASE_URL}/subscription/verify`,
-          { reference: resolvedReference },
-          { requireAuth: true }
-        );
+    if (resolvedStatus === 'success' && resolvedPlan) {
+      const label = String(resolvedPlan).trim().toLowerCase();
+      Alert.alert('Subscription Activated', `🎉 Your ${label} plan is now active!`);
+      setNotice({
+        tone: 'success',
+        title: 'Subscription activated',
+        message: `Your ${label} plan is now active.`,
+      });
+      return;
+    }
 
-        if (!response.ok || !data?.status) {
-          throw new Error(data?.message || 'Could not verify subscription payment.');
-        }
+    if (resolvedStatus === 'failed') {
+      Alert.alert('Payment Failed', 'Payment failed. Please try again.');
+      setNotice({
+        tone: 'error',
+        title: 'Payment failed',
+        message: 'Payment failed. Please try again.',
+      });
+    }
+  }, [resolvedStatus, resolvedPlan]);
 
-        setVerifiedReference(resolvedReference);
-        setNotice({
-          tone: 'success',
-          title: 'Subscription activated',
-          message: 'Your plan has been updated successfully.',
-        });
-        await loadProfile();
-      } catch (error) {
-        setNotice({ tone: 'warning', title: 'Verification pending', message: error?.message || 'Payment verification is still pending.' });
-      }
-    };
-
-    verify();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolvedReference, currentEmail, verifiedReference]);
-
-  const startPlanCheckout = async (planKey) => {
+  const handleUpgrade = async (planKey) => {
     if (!currentEmail) return;
     if (planKey === 'free') {
       setNotice({ tone: 'info', title: 'Already available', message: 'Basic plan is free and active by default.' });
@@ -91,32 +84,102 @@ export default function Subscription() {
     setPendingPlan(planKey);
     setNotice(null);
     try {
+      const authUser = auth.currentUser;
+      const displayName = String(authUser?.displayName || user?.displayName || currentEmail.split('@')[0] || '').trim();
       const { response, data } = await apiPost(
         `${API_BASE_URL}/subscription/initiate`,
-        { plan: planKey },
+        {
+          email: currentEmail,
+          plan: planKey,
+          displayName,
+          platform: Platform.OS === 'web' ? 'web' : 'mobile',
+        },
         { requireAuth: true }
       );
 
-      if (!response.ok || !data?.status || !data?.data?.authorization_url) {
+      const authorizationUrl = data?.authorization_url || data?.data?.authorization_url || '';
+      if (!response.ok || !data?.status || !authorizationUrl) {
         throw new Error(data?.message || 'Could not start subscription checkout.');
       }
 
-      const checkoutUrl = data.data.authorization_url;
       if (Platform.OS === 'web') {
-        window.location.href = checkoutUrl;
+        await Linking.openURL(authorizationUrl);
       } else {
-        await Linking.openURL(checkoutUrl);
+        const redirectUri = 'connecthub://subscription';
+        const sessionResult = await WebBrowser.openAuthSessionAsync(authorizationUrl, redirectUri);
+        if (sessionResult?.type === 'success' && sessionResult.url) {
+          const callbackUrl = new URL(sessionResult.url);
+          const callbackStatus = callbackUrl.searchParams.get('status') || '';
+          const callbackPlan = callbackUrl.searchParams.get('plan') || '';
+          if (callbackStatus) {
+            router.replace({
+              pathname: '/subscription',
+              params: {
+                status: callbackStatus,
+                plan: callbackPlan,
+              },
+            });
+          }
+        }
       }
     } catch (error) {
+      Alert.alert('Checkout failed', error?.message || 'Could not start checkout.');
       setNotice({ tone: 'error', title: 'Checkout failed', message: error?.message || 'Could not start checkout.' });
     } finally {
       setPendingPlan('');
     }
   };
 
+  const handleCancelSubscription = async () => {
+    if (!currentEmail) return;
+
+    Alert.alert(
+      'Cancel Subscription',
+      'Are you sure you want to cancel?',
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Yes, cancel',
+          style: 'destructive',
+          onPress: async () => {
+            setIsCancelling(true);
+            setNotice(null);
+            try {
+              const { response, data } = await apiPost(
+                `${API_BASE_URL}/subscription/cancel`,
+                { email: currentEmail },
+                { requireAuth: true }
+              );
+
+              if (!response.ok || !data?.status) {
+                throw new Error(data?.message || 'Could not cancel subscription.');
+              }
+
+              setNotice({
+                tone: 'success',
+                title: 'Subscription cancelled',
+                message: 'Your subscription has been cancelled successfully.',
+              });
+            } catch (error) {
+              Alert.alert('Cancellation failed', error?.message || 'Could not cancel subscription.');
+              setNotice({
+                tone: 'error',
+                title: 'Cancellation failed',
+                message: error?.message || 'Could not cancel subscription.',
+              });
+            } finally {
+              setIsCancelling(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const currentPlan = String(profile?.subscriptionPlan || 'free').toLowerCase();
   const expiry = profile?.subscriptionExpiry ? new Date(profile.subscriptionExpiry) : null;
   const expiryLabel = expiry && !Number.isNaN(expiry.getTime()) ? expiry.toLocaleDateString() : 'N/A';
+  const canManageSubscription = ['pro', 'premium'].includes(currentPlan);
 
   return (
     <ScreenShell
@@ -147,9 +210,9 @@ export default function Subscription() {
             </View>
             <Text style={{ color: '#475569', marginTop: 8 }}>{plan.perks}</Text>
             <AppButton
-              label={active ? 'Current Plan' : plan.amount > 0 ? `Choose ${plan.name}` : 'Use Basic'}
+              label={active ? 'Current Plan' : plan.amount > 0 ? `Upgrade to ${plan.name}` : 'Use Basic'}
               variant={active ? 'neutral' : 'primary'}
-              onPress={() => startPlanCheckout(plan.key)}
+              onPress={() => handleUpgrade(plan.key)}
               disabled={active || pendingPlan.length > 0}
               loading={pendingPlan === plan.key}
               style={{ marginTop: 12 }}
@@ -157,6 +220,17 @@ export default function Subscription() {
           </AppCard>
         );
       })}
+
+      {canManageSubscription ? (
+        <AppButton
+          label="Manage / Cancel Subscription"
+          variant="danger"
+          onPress={handleCancelSubscription}
+          loading={isCancelling}
+          disabled={isCancelling || pendingPlan.length > 0}
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
 
       <AppButton label="Back to Home" variant="neutral" onPress={() => router.replace('/home')} />
     </ScreenShell>

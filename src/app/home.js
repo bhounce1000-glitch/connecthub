@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -11,12 +11,13 @@ import AppNotice from '../components/ui/app-notice';
 import Avatar from '../components/ui/avatar';
 import JobStepper from '../components/ui/job-stepper';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
+import SubscriptionBadge from '../components/ui/subscription-badge';
 import { CATEGORY_ICONS, REQUEST_STATUS, isAdminEmail } from '../constants/access';
 import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
-import { apiPost, assertApiSuccess } from '../utils/api-client';
+import { apiPost } from '../utils/api-client';
 import { distanceKm, getLocationCity, getLocationCoords, getLocationLabel } from '../utils/location';
 
 function getEffectiveStatus(item) {
@@ -172,13 +173,33 @@ export default function Home() {
       setNotice({ tone: 'warning', title: 'Missing account context', message: 'Sign in again before accepting a request.' });
       return;
     }
-    await runRequestAction(
-      item, 'accept', 'Request accepted', `You are now assigned to ${item.title}.`,
-      async () => {
-        const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/accept`, {}, { requireAuth: true });
-        assertApiSuccess(response, data, 'Could not accept this request');
+
+    setPendingAction(`${item.id}:accept`);
+    setConfirmDeleteId(null);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/accept`, {}, { requireAuth: true });
+      if (!response.ok || !data?.status) {
+        if (data?.code === 'monthly_limit_reached') {
+          Alert.alert(
+            'Monthly Limit Reached',
+            'You have used all 5 of your free job accepts this month. Upgrade to Pro (GHS 49/mo) for unlimited accepts.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Upgrade Now', onPress: () => router.push('/subscription') },
+            ]
+          );
+          return;
+        }
+        throw new Error(data?.message || 'Could not accept this request');
       }
-    );
+
+      setNotice({ tone: 'success', title: 'Request accepted', message: `You are now assigned to ${item.title}.` });
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Request update failed', message: error?.message || 'Could not update this request right now.' });
+    } finally {
+      setPendingAction(null);
+    }
   };
 
   const handleCompleteWork = async (item) => {
@@ -584,11 +605,10 @@ export default function Home() {
                       <Text style={{ color: '#d1d5db', fontSize: 12 }}>→</Text>
                       <Avatar src={userProfiles[item.acceptedBy]?.profilePicture} email={item.acceptedBy} size={20} />
                       <Text style={{ color: '#6b7280', fontSize: 12 }}>{item.acceptedBy}</Text>
-                      {userProfiles[item.acceptedBy]?.subscriptionBadge ? (
-                        <View style={{ marginLeft: 4, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, backgroundColor: '#ede9fe' }}>
-                          <Text style={{ color: '#5b21b6', fontSize: 10, fontWeight: '800' }}>{userProfiles[item.acceptedBy]?.subscriptionBadge}</Text>
-                        </View>
-                      ) : null}
+                      <SubscriptionBadge
+                        plan={userProfiles[item.acceptedBy]?.subscriptionPlan}
+                        style={{ marginLeft: 4 }}
+                      />
                     </>
                   )}
                 </View>

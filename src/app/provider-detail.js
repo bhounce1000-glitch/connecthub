@@ -6,6 +6,7 @@ import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import Avatar from '../components/ui/avatar';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
+import SubscriptionBadge from '../components/ui/subscription-badge';
 import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tokens';
 
 // Firebase
@@ -168,9 +169,19 @@ export default function ProviderDetail() {
 
     const load = async () => {
       try {
-        const snap = await getDoc(doc(db, 'providers', email));
-        if (snap.exists()) {
-          setProvider({ id: snap.id, ...snap.data() });
+        const providerEmail = Array.isArray(email) ? email[0] : email;
+        const [providerSnap, userSnap] = await Promise.all([
+          getDoc(doc(db, 'providers', providerEmail)),
+          getDoc(doc(db, 'users', providerEmail)),
+        ]);
+        if (providerSnap.exists()) {
+          const providerData = providerSnap.data() || {};
+          const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+          setProvider({
+            id: providerSnap.id,
+            ...providerData,
+            subscriptionPlan: userData.subscriptionPlan || providerData.subscriptionPlan || 'free',
+          });
         } else {
           setNotFound(true);
         }
@@ -332,9 +343,12 @@ export default function ProviderDetail() {
           <Text style={{ fontSize: AppType.overline, color: '#c7d2fe', fontWeight: '700', letterSpacing: 0.4, fontFamily: 'serif' }}>
             PROVIDER PROFILE
           </Text>
-          <Text style={{ fontSize: AppType.heading, fontWeight: '800', color: AppColors.white, marginTop: 4 }} numberOfLines={2}>
-            {provider.name || provider.email}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 }}>
+            <Text style={{ fontSize: AppType.heading, fontWeight: '800', color: AppColors.white, flexShrink: 1 }} numberOfLines={2}>
+              {provider.name || provider.email}
+            </Text>
+            <SubscriptionBadge plan={provider.subscriptionPlan} />
+          </View>
           {provider.category ? (
             <Text style={{ color: '#c7d2fe', marginTop: 6, fontWeight: '600' }}>{provider.category}</Text>
           ) : null}
@@ -343,9 +357,12 @@ export default function ProviderDetail() {
         {/* Identity card */}
         <AppCard style={{ marginBottom: AppSpace.md, alignItems: 'center', paddingVertical: 24 }}>
           <Avatar src={provider.profilePicture} email={provider.email} size={80} />
-          <Text style={{ fontSize: 20, fontWeight: '800', color: AppColors.ink900, marginTop: 12 }}>
-            {provider.name || provider.email}
-          </Text>
+          <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 20, fontWeight: '800', color: AppColors.ink900 }}>
+              {provider.name || provider.email}
+            </Text>
+            <SubscriptionBadge plan={provider.subscriptionPlan} />
+          </View>
           <Text style={{ fontSize: 14, color: AppColors.ink500, marginTop: 4 }}>{provider.email}</Text>
 
           <View style={{ flexDirection: 'row', marginTop: 12, flexWrap: 'wrap', justifyContent: 'center' }}>

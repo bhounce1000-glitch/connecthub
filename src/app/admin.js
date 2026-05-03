@@ -86,6 +86,7 @@ export default function Admin() {
   const [pushLookup, setPushLookup] = useState(null);
   const [emailTestTarget, setEmailTestTarget] = useState('');
   const [emailTestResult, setEmailTestResult] = useState(null);
+  const [providerProfileMap, setProviderProfileMap] = useState({});
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -115,6 +116,42 @@ export default function Admin() {
       setRequests(rows);
     });
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    const providerEmails = Array.from(
+      new Set(
+        requests
+          .map((item) => String(item.acceptedBy || '').trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
+
+    if (providerEmails.length === 0) {
+      setProviderProfileMap({});
+      return;
+    }
+
+    (async () => {
+      const pairs = await Promise.all(
+        providerEmails.map(async (email) => {
+          try {
+            const snap = await getDoc(doc(db, 'users', email));
+            return [email, snap.exists() ? (snap.data() || {}) : {}];
+          } catch {
+            return [email, {}];
+          }
+        })
+      );
+
+      const nextMap = {};
+      pairs.forEach(([email, profile]) => {
+        nextMap[email] = profile;
+      });
+      setProviderProfileMap(nextMap);
+    })();
+  }, [isAdmin, requests]);
 
   useEffect(() => {
     if (!isAdmin) return undefined;
@@ -679,7 +716,14 @@ export default function Admin() {
                 <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>
                 <Text>ID: {item.id}</Text>
                 <Text>User: {item.user || 'Unavailable'}</Text>
-                <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
+                  {item.acceptedBy ? (
+                    <SubscriptionBadge
+                      plan={providerProfileMap[String(item.acceptedBy || '').trim().toLowerCase()]?.subscriptionPlan}
+                    />
+                  ) : null}
+                </View>
                 <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
                 <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
 
