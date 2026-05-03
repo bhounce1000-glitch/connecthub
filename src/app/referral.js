@@ -144,7 +144,7 @@ export default function Referral() {
             <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>How It Works</Text>
             {[
               { step: '1', text: 'Share your referral code with friends' },
-              { step: '2', text: 'Friend signs up using your code' },
+              { step: '2', text: 'Friend signs up using your code — they instantly earn GHS 5 wallet credit' },
               { step: '3', text: 'When your friend completes their first job, you BOTH earn GHS 10 wallet credit' },
             ].map(({ step, text }) => (
               <View key={step} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>

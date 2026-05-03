@@ -1364,6 +1364,56 @@ app.post('/pay/verify', payVerifyLimiter, requireAuth, async (req, res) => {
   }
 });
 
+// Award GHS 5 signup bonus to a new user who registered with a referral code
+app.post('/referral/signup-bonus', requireAuth, async (req, res) => {
+  try {
+    const newUserEmail = String(req.user?.email || '').trim().toLowerCase();
+    if (!newUserEmail) {
+      return sendError(res, req, 400, 'missing_email', 'User email required');
+    }
+
+    const userDoc = await adminDb.collection('users').doc(newUserEmail).get();
+    const userData = userDoc.data() || {};
+
+    // Only award once (guard against double-claims)
+    if (userData.signupBonusAwarded) {
+      return res.json({ ok: true, alreadyAwarded: true });
+    }
+
+    const referredBy = String(userData.referredBy || '').trim().toLowerCase();
+    if (!referredBy) {
+      return sendError(res, req, 400, 'no_referrer', 'No referral code was used at signup');
+    }
+
+    // Award GHS 5 to the new user
+    await adminDb.collection('users').doc(newUserEmail).update({
+      walletBalance: admin.firestore.FieldValue.increment(5),
+      signupBonusAwarded: true,
+    });
+
+    // Write in-app notification for new user
+    await adminDb.collection('notifications').add({
+      userId: newUserEmail,
+      title: 'Welcome Bonus!',
+      body: 'You earned GHS 5 wallet credit for joining ConnectHub with a referral code!',
+      type: 'signup_bonus',
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Send push notification if token exists
+    const pushToken = userData.pushToken;
+    if (pushToken) {
+      await sendPushNotification(pushToken, 'Welcome Bonus!', 'You earned GHS 5 for joining with a referral code!').catch(() => {});
+    }
+
+    return res.json({ ok: true, bonus: 5 });
+  } catch (err) {
+    logger.error({ err }, 'REFERRAL_SIGNUP_BONUS_ERROR');
+    return sendError(res, req, 500, 'signup_bonus_failed', 'Could not award signup bonus');
+  }
+});
+
 app.post('/wallet/withdraw', requireAuth, async (req, res) => {
   try {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();

@@ -143,6 +143,7 @@ export default function Auth() {
   };
 
   // Links a new user to their referrer: saves referredBy + adds to referrer's referredUsers list
+  // Also triggers a GHS 5 signup bonus for the new user
   const linkReferral = async (newUserEmail, codeValue) => {
     const normalizedCode = String(codeValue || '').trim().toUpperCase();
     if (!normalizedCode || !newUserEmail) return;
@@ -165,6 +166,21 @@ export default function Auth() {
         { email: newUserEmail, status: 'pending', joinedAt: new Date().toISOString() },
       ],
     }, { merge: true });
+
+    // Claim GHS 5 signup bonus via backend (fire-and-forget — don't block signup)
+    try {
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        const idToken = await currentUser.getIdToken();
+        const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
+        await fetch(`${apiBase}/referral/signup-bonus`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+        });
+      }
+    } catch (_) {
+      // Non-fatal — bonus can be claimed on next app open if needed
+    }
   };
 
   const ensureUserDocument = async (authUser, extraFields = {}) => {
