@@ -68,18 +68,22 @@ export default function Referral() {
   const code = String(profile?.referralCode || '').trim();
   const totalRewards = Number(profile?.referralEarnings || profile?.referralRewardEarned || 0);
   const totalReferrals = Number(profile?.referralCount || referrals.length || 0);
+  const referralLink = code ? `https://connecthub-1873e.web.app/auth?ref=${encodeURIComponent(code)}` : '';
+  const inviteMessage = code
+    ? `Join ConnectHub and earn money. Use my referral code ${code} and sign up here: ${referralLink}\n\nRewards:\n- You get GHS 5 instantly at signup\n- We both get GHS 10 when you complete your first job`
+    : '';
 
   const handleCopy = async () => {
     if (!code) return;
     try {
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(code);
+        await navigator.clipboard.writeText(inviteMessage);
       } else {
-        Clipboard.setString(code);
+        Clipboard.setString(inviteMessage);
       }
-      Alert.alert('Copied!', 'Your referral code has been copied.');
+      Alert.alert('Copied!', 'Your referral invite link and rewards message have been copied.');
     } catch (_) {
-      Alert.alert('Copied!', 'Your referral code: ' + code);
+      Alert.alert('Copy failed', `Please copy this manually: ${referralLink}`);
     }
   };
 
@@ -87,7 +91,7 @@ export default function Referral() {
     if (!code) return;
     try {
       await Share.share({
-        message: `Join ConnectHub and earn money! Use my referral code ${code} when signing up at https://connecthub-1873e.web.app`,
+        message: inviteMessage,
       });
     } catch {
       setNotice({ tone: 'warning', title: 'Share failed', message: 'Could not open the share menu right now.' });
@@ -132,7 +136,7 @@ export default function Referral() {
               Share this code during signup to credit your referral.
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
-              <AppButton label="Copy Code" onPress={handleCopy} style={{ flex: 1 }} disabled={!code} />
+              <AppButton label="Copy Invite" onPress={handleCopy} style={{ flex: 1 }} disabled={!code} />
               <AppButton label="Share" onPress={shareCode} style={{ flex: 1 }} disabled={!code} />
             </View>
           </AppCard>
