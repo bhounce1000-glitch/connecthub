@@ -111,6 +111,10 @@ export default function Auth() {
               createdAt: new Date().toISOString(),
               onboardingDone: false,
             });
+            // Link referral if a code was entered
+            if (referralInput && referralInput.trim()) {
+              await linkReferral(normalizedUserEmail, referralInput.trim()).catch(() => {});
+            }
           }
           router.replace('/');
         })
@@ -136,6 +140,31 @@ export default function Auth() {
     const snap = await getDocs(query(collection(db, 'users'), where('referralCode', '==', normalizedCode)));
     if (snap.empty) return '';
     return String(snap.docs[0]?.id || '').trim().toLowerCase();
+  };
+
+  // Links a new user to their referrer: saves referredBy + adds to referrer's referredUsers list
+  const linkReferral = async (newUserEmail, codeValue) => {
+    const normalizedCode = String(codeValue || '').trim().toUpperCase();
+    if (!normalizedCode || !newUserEmail) return;
+
+    const snap = await getDocs(query(collection(db, 'users'), where('referralCode', '==', normalizedCode)));
+    if (snap.empty) return;
+
+    const referrerDoc = snap.docs[0];
+    const referrerEmail = String(referrerDoc.id || '').trim().toLowerCase();
+    if (!referrerEmail || referrerEmail === newUserEmail) return;
+
+    // Save referredBy on the new user
+    await setDoc(doc(db, 'users', newUserEmail), { referredBy: referrerEmail }, { merge: true });
+
+    // Add new user to referrer's referredUsers array
+    const currentReferredUsers = referrerDoc.data().referredUsers || [];
+    await setDoc(doc(db, 'users', referrerEmail), {
+      referredUsers: [
+        ...currentReferredUsers,
+        { email: newUserEmail, status: 'pending', joinedAt: new Date().toISOString() },
+      ],
+    }, { merge: true });
   };
 
   const ensureUserDocument = async (authUser, extraFields = {}) => {
@@ -261,6 +290,11 @@ export default function Auth() {
         onboardingDone: false,
         referredBy: referrerEmail || null,
       });
+
+      // Link referral: save referredBy + update referrer's referredUsers list
+      if (referralInput && referralInput.trim()) {
+        await linkReferral(normalizedEmail, referralInput.trim()).catch(() => {});
+      }
 
       // Send email verification — free Firebase feature, no upgrade needed
       await sendEmailVerification(credential.user);

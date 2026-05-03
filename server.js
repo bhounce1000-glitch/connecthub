@@ -370,6 +370,72 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
 
   await creditWalletBalance(beforeData.acceptedBy, providerNet);
 
+  // ── Referral bonus: award GHS 10 to provider + referrer on first completed job ──
+  try {
+    const providerEmail = String(beforeData.acceptedBy || '').trim().toLowerCase();
+    if (providerEmail) {
+      const completedJobsSnap = await adminDb.collection('requests')
+        .where('acceptedBy', '==', providerEmail)
+        .where('status', '==', 'paid')
+        .get();
+      if (completedJobsSnap.size === 1) {
+        const providerUserDoc = await adminDb.collection('users').doc(providerEmail).get();
+        const referredBy = providerUserDoc.data()?.referredBy;
+        if (referredBy) {
+          const referrerEmail = String(referredBy).trim().toLowerCase();
+          // GHS 10 to provider
+          await adminDb.collection('users').doc(providerEmail).update({
+            walletBalance: admin.firestore.FieldValue.increment(10),
+          });
+          // GHS 10 + stats to referrer
+          await adminDb.collection('users').doc(referrerEmail).update({
+            walletBalance: admin.firestore.FieldValue.increment(10),
+            referralCount: admin.firestore.FieldValue.increment(1),
+            referralEarnings: admin.firestore.FieldValue.increment(10),
+          });
+          // Update referrer's referredUsers status to 'completed'
+          const referrerDoc = await adminDb.collection('users').doc(referrerEmail).get();
+          const referredUsers = referrerDoc.data()?.referredUsers || [];
+          const updatedReferredUsers = referredUsers.map((u) =>
+            u.email === providerEmail
+              ? { ...u, status: 'completed', completedAt: new Date().toISOString() }
+              : u
+          );
+          await adminDb.collection('users').doc(referrerEmail).update({ referredUsers: updatedReferredUsers });
+          // In-app notifications
+          await adminDb.collection('notifications').add({
+            userId: providerEmail,
+            title: 'Referral Bonus Earned!',
+            body: 'You earned GHS 10 wallet credit for completing your first job on ConnectHub!',
+            type: 'referral_bonus',
+            read: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          await adminDb.collection('notifications').add({
+            userId: referrerEmail,
+            title: 'Referral Reward!',
+            body: 'Your friend completed their first job on ConnectHub. You earned GHS 10!',
+            type: 'referral_bonus',
+            read: false,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          // Push notifications
+          const providerPushToken = providerUserDoc.data()?.pushToken;
+          const referrerPushToken = referrerDoc.data()?.pushToken;
+          if (providerPushToken) {
+            await sendPushNotification(providerPushToken, 'You earned GHS 10!', 'Referral bonus for completing your first job.').catch(() => {});
+          }
+          if (referrerPushToken) {
+            await sendPushNotification(referrerPushToken, 'Your friend earned their first GHS!', 'You earned GHS 10 referral reward!').catch(() => {});
+          }
+        }
+      }
+    }
+  } catch (referralErr) {
+    console.error('[referral-bonus] Error processing referral bonus:', referralErr?.message);
+  }
+  // ── End referral bonus ──
+
   await createTransactionRecordOnServer({
     requestId,
     requestData: { ...beforeData, ...payload },
