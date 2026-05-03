@@ -1,4 +1,4 @@
-import { useRouter, useSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Image, ScrollView, Text, View } from 'react-native';
 
@@ -9,8 +9,9 @@ import { db } from '../firebase';
 
 export default function PublicPortfolio() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const providerEmail = searchParams.get('provider')?.toLowerCase()?.trim() || '';
+  const searchParams = useLocalSearchParams();
+  const providerParam = Array.isArray(searchParams?.provider) ? searchParams.provider[0] : searchParams?.provider;
+  const providerEmail = String(providerParam || '').toLowerCase().trim();
 
   const [portfolioItems, setPortfolioItems] = useState([]);
   const [isLoading, setIsLoading] = useState(true);

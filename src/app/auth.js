@@ -1,4 +1,4 @@
-import { useRouter, useSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 
@@ -50,7 +50,7 @@ function getSocialProvider(providerKey) {
 
 export default function Auth() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const searchParams = useLocalSearchParams();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -69,7 +69,11 @@ export default function Auth() {
 
   // Capture referral code from URL params (e.g., ?ref=BHUN8F2X or ?referral=BHUN8F2X)
   useEffect(() => {
-    const refCode = searchParams.get('ref') || searchParams.get('referral') || '';
+    const refValue = searchParams?.ref;
+    const referralValue = searchParams?.referral;
+    const rawRef = Array.isArray(refValue) ? refValue[0] : refValue;
+    const rawReferral = Array.isArray(referralValue) ? referralValue[0] : referralValue;
+    const refCode = String(rawRef || rawReferral || '').trim();
     if (refCode) {
       setReferralInput(refCode);
     }
