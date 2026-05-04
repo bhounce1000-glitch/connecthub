@@ -149,10 +149,13 @@ export default function KycStep1() {
     const next = {};
     if (!form.fullName.trim()) next.fullName = 'Full legal name is required';
     if (!form.dob.trim()) next.dob = 'Date of birth is required';
-    else if (!/^\d{4}-\d{2}-\d{2}$/.test(form.dob.trim())) next.dob = 'Use YYYY-MM-DD format';
+    else if (!/^\d{8}$/.test(form.dob.trim())) next.dob = 'Use YYYYMMDD format (numbers only, e.g. 19900115)';
     else {
       // Age validation (must be 18+)
-      const [year, month, day] = form.dob.split('-').map(Number);
+      const raw = form.dob.trim();
+      const year = Number(raw.slice(0, 4));
+      const month = Number(raw.slice(4, 6));
+      const day = Number(raw.slice(6, 8));
       const dobDate = new Date(year, month - 1, day);
       const now = new Date();
       const age = now.getFullYear() - dobDate.getFullYear() - (now.getMonth() < dobDate.getMonth() || (now.getMonth() === dobDate.getMonth() && now.getDate() < dobDate.getDate()) ? 1 : 0);
@@ -188,12 +191,18 @@ export default function KycStep1() {
         profilePhotoUrl = await uploadProfilePhoto(profilePhotoFile);
       }
 
+      // Normalise 8-digit DOB to YYYY-MM-DD for storage consistency
+      const rawDob = form.dob.trim();
+      const storedDob = rawDob.length === 8
+        ? `${rawDob.slice(0, 4)}-${rawDob.slice(4, 6)}-${rawDob.slice(6, 8)}`
+        : rawDob;
+
       await setDoc(
         doc(db, 'kyc_submissions', email),
         {
           email,
           fullName: form.fullName.trim(),
-          dob: form.dob.trim(),
+          dob: storedDob,
           gender: String(form.gender || ''),
           nationality: String(nationality).trim(),
           countryOfResidence: String(countryOfResidence).trim(),
@@ -284,7 +293,7 @@ export default function KycStep1() {
           <Text style={sectionTitle}>Personal Information</Text>
 
           {/* Profile Photo Upload */}
-          <Text style={{ fontSize: AppType.body, fontWeight: '600', color: AppColors.ink900, marginBottom: AppSpace.xs }}>
+          <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#fff', marginBottom: AppSpace.xs }}>
             Profile Photo <Text style={{ color: '#f87171' }}>*</Text>
           </Text>
           {errors.profilePhotoUrl ? (
@@ -312,19 +321,22 @@ export default function KycStep1() {
             onChangeText={(v) => set('fullName', v)}
             error={errors.fullName}
             autoCapitalize="words"
+            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
             label="Date of Birth"
-            placeholder="YYYY-MM-DD"
+            placeholder="YYYYMMDD"
             value={form.dob}
             onChangeText={(v) => set('dob', v)}
             error={errors.dob}
             keyboardType="numeric"
+            maxLength={8}
+            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
           />
 
           {/* Gender picker */}
-          <Text style={{ fontSize: AppType.body, fontWeight: '600', color: AppColors.ink900, marginBottom: AppSpace.xs }}>
+          <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#fff', marginBottom: AppSpace.xs }}>
             Gender
           </Text>
           {errors.gender ? (
@@ -356,6 +368,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('nationality', v)}
             error={errors.nationality}
             autoCapitalize="sentences"
+            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -365,6 +378,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('countryOfResidence', v)}
             error={errors.countryOfResidence}
             autoCapitalize="sentences"
+            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -374,6 +388,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('city', v)}
             error={errors.city}
             autoCapitalize="sentences"
+            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -384,6 +399,7 @@ export default function KycStep1() {
             error={errors.homeAddress}
             autoCapitalize="sentences"
             multiline
+            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -393,6 +409,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('occupation', v)}
             error={errors.occupation}
             autoCapitalize="sentences"
+            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppButton

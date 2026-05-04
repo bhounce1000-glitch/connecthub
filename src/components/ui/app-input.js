@@ -8,6 +8,7 @@ export default function AppInput({
   error,
   containerStyle = null,
   inputStyle = null,
+  labelStyle = null,
   multiline = false,
   editable = true,
   ...props
@@ -16,12 +17,15 @@ export default function AppInput({
     <View style={[{ marginBottom: AppSpace.md }, containerStyle]}>
       {label ? (
         <Text
-          style={{
-            fontSize: AppType.body,
-            fontWeight: '600',
-            color: AppColors.ink900,
-            marginBottom: AppSpace.xs,
-          }}
+          style={[
+            {
+              fontSize: AppType.body,
+              fontWeight: '700',
+              color: AppColors.ink900,
+              marginBottom: AppSpace.xs,
+            },
+            labelStyle,
+          ]}
         >
           {label}
         </Text>
