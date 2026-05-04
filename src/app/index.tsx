@@ -1,6 +1,6 @@
 import { Redirect } from 'expo-router';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
@@ -29,8 +29,26 @@ export default function Index() {
 
       try {
         const email = (user.email || '').trim().toLowerCase();
-        const snap = await getDoc(doc(db, 'users', email));
-        const data = snap.exists() ? snap.data() : {};
+        const [userSnap, submissionSnap] = await Promise.all([
+          getDoc(doc(db, 'users', email)),
+          getDoc(doc(db, 'kyc_submissions', email)),
+        ]);
+
+        const data = userSnap.exists() ? userSnap.data() : {};
+        const submissionData = submissionSnap.exists() ? submissionSnap.data() : {};
+
+        const normalizeKycStatus = (value: unknown): string => String(value || '').trim().toLowerCase();
+        const userKycStatus = normalizeKycStatus((data as any)?.kycStatus);
+        const submissionKycStatus = normalizeKycStatus((submissionData as any)?.kycStatus);
+        const effectiveKycStatus = userKycStatus || submissionKycStatus;
+
+        // Self-heal legacy profiles where users.kycStatus was missing or had old casing.
+        if (email && effectiveKycStatus && userKycStatus !== effectiveKycStatus) {
+          await setDoc(doc(db, 'users', email), {
+            kycStatus: effectiveKycStatus,
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+        }
 
         // 1. Onboarding gate
         if (!data.onboardingDone) {
@@ -40,7 +58,7 @@ export default function Index() {
         }
 
         // 2. KYC gate
-        const kycStatus = data.kycStatus || null;
+        const kycStatus = effectiveKycStatus || null;
         if (kycStatus === KYC_STATUS.VERIFIED) {
           setDestination('/home');
         } else if (kycStatus === KYC_STATUS.PENDING_VERIFICATION) {

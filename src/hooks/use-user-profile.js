@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export function useUserProfile(email) {
@@ -15,9 +15,29 @@ export function useUserProfile(email) {
 
     const fetchProfile = async () => {
       try {
-        const userDoc = await getDoc(doc(db, 'users', email));
+        const [userDoc, submissionDoc] = await Promise.all([
+          getDoc(doc(db, 'users', email)),
+          getDoc(doc(db, 'kyc_submissions', email)),
+        ]);
+
         if (userDoc.exists()) {
-          setProfile(userDoc.data());
+          const data = userDoc.data() || {};
+          const normalizeKycStatus = (value) => String(value || '').trim().toLowerCase();
+          const userKycStatus = normalizeKycStatus(data.kycStatus);
+          const submissionKycStatus = submissionDoc.exists() ? normalizeKycStatus(submissionDoc.data()?.kycStatus) : '';
+          const effectiveKycStatus = userKycStatus || submissionKycStatus;
+
+          if (effectiveKycStatus && userKycStatus !== effectiveKycStatus) {
+            await setDoc(doc(db, 'users', email), {
+              kycStatus: effectiveKycStatus,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          }
+
+          setProfile({
+            ...data,
+            kycStatus: effectiveKycStatus || data.kycStatus || null,
+          });
         }
         setIsLoading(false);
       } catch (err) {
