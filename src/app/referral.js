@@ -1,200 +1,259 @@
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
-import { Alert, Clipboard, Platform, Share, Text, View } from 'react-native';
+import {
+    ActivityIndicator,
+    Alert,
+    Clipboard,
+    ScrollView,
+    Share,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
 
-import AppButton from '../components/ui/app-button';
-import AppCard from '../components/ui/app-card';
-import AppNotice from '../components/ui/app-notice';
-import ScreenShell from '../components/ui/screen-shell';
-import { db } from '../firebase';
-import useAuthUser from '../hooks/use-auth-user';
+import { auth, db } from '../firebase';
+
+function maskEmail(emailValue) {
+  const email = String(emailValue || '').trim().toLowerCase();
+  if (!email.includes('@')) return email;
+  const parts = email.split('@');
+  return `${parts[0].slice(0, 2)}****@${parts[1]}`;
+}
 
 export default function Referral() {
   const router = useRouter();
-  const { user, isAuthReady } = useAuthUser();
-  const [profile, setProfile] = useState(null);
-  const [referrals, setReferrals] = useState([]);
-  const [notice, setNotice] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
 
-  const currentEmail = String(user?.email || '').trim().toLowerCase();
+  const [referralCode, setReferralCode] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [referralCount, setReferralCount] = useState(0);
+  const [referralEarnings, setReferralEarnings] = useState(0);
+  const [referredUsers, setReferredUsers] = useState([]);
+  const [error, setError] = useState('');
+
+  const loadReferralData = async () => {
+    setIsLoading(true);
+    setError('');
+
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        setError('Not logged in');
+        return;
+      }
+
+      const email = String(currentUser.email || '').trim().toLowerCase();
+      if (!email) {
+        setError('Not logged in');
+        return;
+      }
+
+      const userRef = doc(db, 'users', email);
+      const userSnap = await getDoc(userRef);
+      const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+
+      if (userData.referralCode) {
+        setReferralCode(String(userData.referralCode));
+        setReferralCount(Number(userData.referralCount || 0));
+        setReferralEarnings(Number(userData.referralEarnings || 0));
+        setReferredUsers(Array.isArray(userData.referredUsers) ? userData.referredUsers : []);
+      } else {
+        const username = email.split('@')[0].toUpperCase();
+        const suffix = Math.random().toString(36).substr(2, 4).toUpperCase();
+        const generatedCode = username + suffix;
+
+        await setDoc(
+          userRef,
+          {
+            email,
+            referralCode: generatedCode,
+            referralCount: Number(userData.referralCount || 0),
+            referralEarnings: Number(userData.referralEarnings || 0),
+            referredUsers: Array.isArray(userData.referredUsers) ? userData.referredUsers : [],
+          },
+          { merge: true }
+        );
+
+        setReferralCode(generatedCode);
+        setReferralCount(Number(userData.referralCount || 0));
+        setReferralEarnings(Number(userData.referralEarnings || 0));
+        setReferredUsers(Array.isArray(userData.referredUsers) ? userData.referredUsers : []);
+      }
+
+      // Backfill legacy accounts where referredUsers was not denormalized into the user document.
+      if (!userData.referredUsers || !Array.isArray(userData.referredUsers)) {
+        const legacySnap = await getDocs(query(collection(db, 'users'), where('referredBy', '==', email)));
+        if (!legacySnap.empty) {
+          const legacyUsers = legacySnap.docs.map((item) => {
+            const row = item.data() || {};
+            return {
+              email: row.email || item.id,
+              status: row.referralFirstJobCompletedAt ? 'completed' : 'pending',
+            };
+          });
+          setReferredUsers(legacyUsers);
+        }
+      }
+    } catch (loadError) {
+      setError(loadError?.message || 'Failed to load referral data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // Wait until Firebase auth has resolved
-    if (!isAuthReady) return;
+    loadReferralData();
+  }, []);
 
-    if (!currentEmail) {
-      setIsLoading(false);
-      setNotice({ tone: 'warning', title: 'Not logged in', message: 'Please log in to view your referral code.' });
-      return;
-    }
+  const handleCopy = () => {
+    if (!referralCode) return;
 
-    const load = async () => {
-      setIsLoading(true);
-      try {
-        const profileSnap = await getDoc(doc(db, 'users', currentEmail));
-        let data = profileSnap.exists() ? (profileSnap.data() || {}) : {};
-
-        // Auto-generate referral code if it does not exist yet
-        if (!data.referralCode) {
-          const local = currentEmail.split('@')[0].replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase();
-          const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
-          const newCode = `${local || 'CHUB'}${suffix}`;
-          await setDoc(doc(db, 'users', currentEmail), {
-            referralCode: newCode,
-            referralCount: data.referralCount ?? 0,
-            referralEarnings: data.referralEarnings || data.referralRewardEarned || 0,
-            referredUsers: data.referredUsers || [],
-          }, { merge: true });
-          data = { ...data, referralCode: newCode };
-        }
-
-        const referralsSnap = await getDocs(
-          query(collection(db, 'users'), where('referredBy', '==', currentEmail))
-        );
-        setProfile(data);
-        setReferrals(referralsSnap.docs.map((row) => ({ id: row.id, ...row.data() })));
-      } catch (e) {
-        setNotice({ tone: 'warning', title: 'Could not load referrals', message: 'Try again in a moment.' });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    load();
-  }, [currentEmail, isAuthReady]);
-
-  const code = String(profile?.referralCode || '').trim();
-  const totalRewards = Number(profile?.referralEarnings || profile?.referralRewardEarned || 0);
-  const totalReferrals = Number(profile?.referralCount || referrals.length || 0);
-  const referralLink = code ? `https://connecthub-1873e.web.app/auth?ref=${encodeURIComponent(code)}` : '';
-  const inviteMessage = code
-    ? `Join ConnectHub and earn money. Use my referral code ${code} and sign up here: ${referralLink}\n\nRewards:\n- You get GHS 5 instantly at signup\n- We both get GHS 10 when you complete your first job`
-    : '';
-
-  const handleCopy = async () => {
-    if (!code) return;
     try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(inviteMessage);
-      } else {
-        Clipboard.setString(inviteMessage);
+      if (Clipboard && typeof Clipboard.setString === 'function') {
+        Clipboard.setString(referralCode);
+      } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(referralCode);
       }
-      Alert.alert('Copied!', 'Your referral invite link and rewards message have been copied.');
-    } catch (_) {
-      Alert.alert('Copy failed', `Please copy this manually: ${referralLink}`);
+      Alert.alert('Copied!', 'Your referral code has been copied.');
+    } catch {
+      Alert.alert('Copy failed', 'Could not copy your referral code right now.');
     }
   };
 
-  const shareCode = async () => {
-    if (!code) return;
+  const handleShare = async () => {
+    if (!referralCode) return;
+
     try {
       await Share.share({
-        message: inviteMessage,
+        message: `Join ConnectHub and earn money! Use my referral code ${referralCode} when signing up at https://connecthub-1873e.web.app`,
       });
     } catch {
-      setNotice({ tone: 'warning', title: 'Share failed', message: 'Could not open the share menu right now.' });
+      Alert.alert('Share failed', 'Could not open share menu right now.');
     }
   };
 
-  return (
-    <ScreenShell
-      eyebrow="GROWTH"
-      title="Referral Program"
-      subtitle="Invite friends and earn wallet bonuses when they complete their first job."
-      accentColor="#0f172a"
-      accentTextColor="#cbd5e1"
-      scroll
-    >
-      <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 12 }} />
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, backgroundColor: '#f8fafc' }}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={{ marginTop: 12, color: '#334155', fontSize: 14 }}>Loading your referral code...</Text>
+      </View>
+    );
+  }
 
-      {isLoading ? (
-        <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-          <Text style={{ color: '#64748b', marginTop: 12 }}>Loading your referral code...</Text>
+  if (error) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', padding: 20, backgroundColor: '#f8fafc' }}>
+        <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 18, borderWidth: 1, borderColor: '#fecaca' }}>
+          <Text style={{ color: '#991b1b', fontSize: 16, fontWeight: '700' }}>Something went wrong</Text>
+          <Text style={{ color: '#7f1d1d', marginTop: 8 }}>{error}</Text>
+          <TouchableOpacity
+            onPress={loadReferralData}
+            style={{ marginTop: 16, backgroundColor: '#dc2626', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Retry</Text>
+          </TouchableOpacity>
         </View>
-      ) : (
-        <>
-          <AppCard style={{ marginBottom: 12, alignItems: 'center' }}>
-            <Text style={{ color: '#64748b', fontSize: 12, fontWeight: '600', letterSpacing: 1 }}>YOUR REFERRAL CODE</Text>
-            <View style={{
-              backgroundColor: '#eff6ff',
-              borderRadius: 12,
-              paddingVertical: 14,
-              paddingHorizontal: 24,
-              marginVertical: 10,
-              borderWidth: 2,
-              borderColor: '#bfdbfe',
-              alignItems: 'center',
-              width: '100%',
-            }}>
-              <Text style={{ fontSize: 28, fontWeight: '800', letterSpacing: 4, color: '#1e40af', textAlign: 'center' }}>
-                {code || '—'}
-              </Text>
-            </View>
-            <Text style={{ color: '#475569', fontSize: 12, textAlign: 'center', marginBottom: 10 }}>
-              Share this code during signup to credit your referral.
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 8, width: '100%' }}>
-              <AppButton label="Copy Invite" onPress={handleCopy} style={{ flex: 1 }} disabled={!code} />
-              <AppButton label="Share" onPress={shareCode} style={{ flex: 1 }} disabled={!code} />
-            </View>
-          </AppCard>
+      </View>
+    );
+  }
 
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-            <AppCard style={{ flex: 1 }}>
-              <Text style={{ color: '#64748b', fontSize: 12 }}>Total Referrals</Text>
-              <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 4 }}>{totalReferrals}</Text>
-            </AppCard>
-            <AppCard style={{ flex: 1 }}>
-              <Text style={{ color: '#64748b', fontSize: 12 }}>Rewards Earned</Text>
-              <Text style={{ fontSize: 24, fontWeight: '800', marginTop: 4 }}>GHS {totalRewards.toFixed(2)}</Text>
-            </AppCard>
-          </View>
+  return (
+    <ScrollView style={{ flex: 1, backgroundColor: '#f8fafc' }} contentContainerStyle={{ padding: 16, paddingBottom: 28 }}>
+      <Text style={{ fontSize: 30, fontWeight: '800', color: '#0f172a' }}>Referral Program</Text>
+      <Text style={{ marginTop: 6, marginBottom: 16, color: '#475569' }}>
+        Invite friends to ConnectHub and earn wallet rewards together.
+      </Text>
 
-          <AppCard style={{ marginBottom: 12 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>How It Works</Text>
-            {[
-              { step: '1', text: 'Share your referral code with friends' },
-              { step: '2', text: 'Friend signs up using your code — they instantly earn GHS 5 wallet credit' },
-              { step: '3', text: 'When your friend completes their first job, you BOTH earn GHS 10 wallet credit' },
-            ].map(({ step, text }) => (
-              <View key={step} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
-                <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: '#1e40af', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
-                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>{step}</Text>
+      <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 14 }}>
+        <Text style={{ fontSize: 12, color: '#475569', fontWeight: '700' }}>Your Referral Code</Text>
+        <View style={{ marginTop: 8, backgroundColor: '#dbeafe', borderRadius: 14, paddingVertical: 16, paddingHorizontal: 12, borderWidth: 1, borderColor: '#93c5fd' }}>
+          <Text style={{ fontSize: 28, fontWeight: '800', letterSpacing: 3, textAlign: 'center', color: '#1d4ed8' }}>
+            {referralCode}
+          </Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+          <TouchableOpacity
+            onPress={handleCopy}
+            style={{ flex: 1, backgroundColor: '#1d4ed8', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Copy Code</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleShare}
+            style={{ flex: 1, backgroundColor: '#0f766e', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Share</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+        <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14 }}>
+          <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 12 }}>Total Referrals</Text>
+          <Text style={{ marginTop: 6, fontSize: 25, fontWeight: '800', color: '#0f172a' }}>{referralCount}</Text>
+        </View>
+        <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14 }}>
+          <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 12 }}>Rewards Earned</Text>
+          <Text style={{ marginTop: 6, fontSize: 25, fontWeight: '800', color: '#0f172a' }}>GHS {Number(referralEarnings).toFixed(2)}</Text>
+        </View>
+      </View>
+
+      <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14, marginBottom: 14 }}>
+        <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 10 }}>How It Works</Text>
+        <Text style={{ color: '#334155', marginBottom: 8 }}>1. Share your code with friends</Text>
+        <Text style={{ color: '#334155', marginBottom: 8 }}>2. Friend signs up using your code</Text>
+        <Text style={{ color: '#334155' }}>3. When friend completes first job, you BOTH earn GHS 10 wallet credit</Text>
+      </View>
+
+      <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14, marginBottom: 18 }}>
+        <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 10 }}>Referred Users</Text>
+
+        {referredUsers.length === 0 ? (
+          <Text style={{ color: '#64748b' }}>No referrals yet. Share your code to get started!</Text>
+        ) : (
+          referredUsers.map((userRow, index) => {
+            const referredEmail = String(userRow?.email || '').trim().toLowerCase();
+            const status = String(userRow?.status || 'pending').toLowerCase();
+            const completed = status === 'completed';
+            return (
+              <View
+                key={`${referredEmail || 'referred'}-${index}`}
+                style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingVertical: 10,
+                  borderBottomWidth: index === referredUsers.length - 1 ? 0 : 1,
+                  borderBottomColor: '#f1f5f9',
+                }}
+              >
+                <Text style={{ color: '#0f172a', fontWeight: '700' }}>{maskEmail(referredEmail)}</Text>
+                <View
+                  style={{
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    borderRadius: 999,
+                    backgroundColor: completed ? '#dcfce7' : '#fef9c3',
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: completed ? '#166534' : '#854d0e' }}>
+                    {completed ? 'Completed' : 'Pending'}
+                  </Text>
                 </View>
-                <Text style={{ flex: 1, color: '#475569', fontSize: 13 }}>{text}</Text>
               </View>
-            ))}
-          </AppCard>
+            );
+          })
+        )}
+      </View>
 
-          <AppCard style={{ marginBottom: 12 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>Referred Users</Text>
-            {referrals.length === 0 ? (
-              <Text style={{ color: '#64748b' }}>No referrals yet. Share your code to get started!</Text>
-            ) : (
-              referrals.map((person) => {
-                const email = person.email || person.id || '';
-                const parts = email.split('@');
-                const masked = parts.length === 2 ? parts[0].slice(0, 2) + '****@' + parts[1] : email;
-                const completed = !!person.referralFirstJobCompletedAt;
-                return (
-                  <View key={person.id} style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={{ fontWeight: '700', color: '#1e293b' }}>{masked}</Text>
-                    <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, backgroundColor: completed ? '#dcfce7' : '#fef9c3' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: completed ? '#166534' : '#854d0e' }}>
-                        {completed ? 'Completed' : 'Pending'}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })
-            )}
-          </AppCard>
-        </>
-      )}
-
-      <AppButton label="Back to Home" variant="neutral" onPress={() => router.replace('/home')} />
-    </ScreenShell>
+      <TouchableOpacity
+        onPress={() => router.replace('/home')}
+        style={{ backgroundColor: '#334155', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+      >
+        <Text style={{ color: '#fff', fontWeight: '700' }}>Back to Home</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 }

@@ -111,6 +111,9 @@ export default function Auth() {
               role: role || USER_ROLES.CUSTOMER,
               referralCode: makeReferralCode(normalizedUserEmail),
               referredBy: null,
+              referralCount: 0,
+              referralEarnings: 0,
+              referredUsers: [],
               referralRewardEarned: 0,
               createdAt: new Date().toISOString(),
               onboardingDone: false,
@@ -127,7 +130,7 @@ export default function Auth() {
         })
         .finally(() => setIsSubmitting(false));
     }
-  }, [response, role, router]);
+  }, [response, role, router, referralInput]);
 
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -137,38 +140,34 @@ export default function Auth() {
     return `${local || 'CHUB'}${random}`;
   };
 
-  const resolveReferrerByCode = async (codeValue) => {
-    const normalizedCode = String(codeValue || '').trim().toUpperCase();
-    if (!normalizedCode) return '';
-
-    const snap = await getDocs(query(collection(db, 'users'), where('referralCode', '==', normalizedCode)));
-    if (snap.empty) return '';
-    return String(snap.docs[0]?.id || '').trim().toLowerCase();
-  };
-
   // Links a new user to their referrer: saves referredBy + adds to referrer's referredUsers list
   // Also triggers a GHS 5 signup bonus for the new user
   const linkReferral = async (newUserEmail, codeValue) => {
     const normalizedCode = String(codeValue || '').trim().toUpperCase();
-    if (!normalizedCode || !newUserEmail) return;
+    const normalizedNewUserEmail = String(newUserEmail || '').trim().toLowerCase();
+    if (!normalizedCode || !normalizedNewUserEmail) return;
 
     const snap = await getDocs(query(collection(db, 'users'), where('referralCode', '==', normalizedCode)));
     if (snap.empty) return;
 
     const referrerDoc = snap.docs[0];
-    const referrerEmail = String(referrerDoc.id || '').trim().toLowerCase();
-    if (!referrerEmail || referrerEmail === newUserEmail) return;
+    const referrerEmail = String(referrerDoc.data()?.email || referrerDoc.id || '').trim().toLowerCase();
+    if (!referrerEmail || referrerEmail === normalizedNewUserEmail) return;
 
     // Save referredBy on the new user
-    await setDoc(doc(db, 'users', newUserEmail), { referredBy: referrerEmail }, { merge: true });
+    await setDoc(doc(db, 'users', normalizedNewUserEmail), { referredBy: referrerEmail }, { merge: true });
 
     // Add new user to referrer's referredUsers array
-    const currentReferredUsers = referrerDoc.data().referredUsers || [];
+    const currentReferredUsers = Array.isArray(referrerDoc.data().referredUsers) ? referrerDoc.data().referredUsers : [];
+    const alreadyLinked = currentReferredUsers.some((item) => String(item?.email || '').trim().toLowerCase() === normalizedNewUserEmail);
+    const nextReferredUsers = alreadyLinked
+      ? currentReferredUsers
+      : [
+          ...currentReferredUsers,
+          { email: normalizedNewUserEmail, status: 'pending', joinedAt: new Date().toISOString() },
+        ];
     await setDoc(doc(db, 'users', referrerEmail), {
-      referredUsers: [
-        ...currentReferredUsers,
-        { email: newUserEmail, status: 'pending', joinedAt: new Date().toISOString() },
-      ],
+      referredUsers: nextReferredUsers,
     }, { merge: true });
 
     // Claim GHS 5 signup bonus via backend (fire-and-forget — don't block signup)
@@ -206,6 +205,9 @@ export default function Auth() {
         referralRewardEarned: Number(existingData.referralRewardEarned || 0),
         createdAt: existingData.createdAt || new Date(),
         updatedAt: new Date(),
+        referralCount: Number(existingData.referralCount || 0),
+        referralEarnings: Number(existingData.referralEarnings || 0),
+        referredUsers: Array.isArray(existingData.referredUsers) ? existingData.referredUsers : [],
         ...extraFields,
       },
       { merge: true }
@@ -302,13 +304,10 @@ export default function Auth() {
     try {
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
-      const referrerEmail = referralInput.trim() ? await resolveReferrerByCode(referralInput) : '';
-
       // Seed a user document so profile data is immediately available (role stored here)
       await ensureUserDocument(credential.user, {
         role,
         onboardingDone: false,
-        referredBy: referrerEmail || null,
       });
 
       // Link referral: save referredBy + update referrer's referredUsers list
@@ -367,7 +366,18 @@ export default function Auth() {
 
     try {
       const credential = await signInWithPopup(auth, provider);
+      const normalizedUserEmail = String(credential.user?.email || '').trim().toLowerCase();
+      if (!normalizedUserEmail) {
+        throw new Error('missing_user_email');
+      }
+      const userRef = doc(db, 'users', normalizedUserEmail);
+      const existingUserSnap = await getDoc(userRef);
+
       await ensureUserDocument(credential.user);
+
+      if (!existingUserSnap.exists() && referralInput && referralInput.trim()) {
+        await linkReferral(normalizedUserEmail, referralInput.trim()).catch(() => {});
+      }
       router.replace('/');
     } catch (error) {
       const code = error?.code || '';
