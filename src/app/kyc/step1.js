@@ -293,7 +293,7 @@ export default function KycStep1() {
           <Text style={sectionTitle}>Personal Information</Text>
 
           {/* Profile Photo Upload */}
-          <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#fff', marginBottom: AppSpace.xs }}>
+          <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#6366f1', marginBottom: AppSpace.xs }}>
             Profile Photo <Text style={{ color: '#f87171' }}>*</Text>
           </Text>
           {errors.profilePhotoUrl ? (
@@ -321,7 +321,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('fullName', v)}
             error={errors.fullName}
             autoCapitalize="words"
-            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -332,11 +332,11 @@ export default function KycStep1() {
             error={errors.dob}
             keyboardType="numeric"
             maxLength={8}
-            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           {/* Gender picker */}
-          <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#fff', marginBottom: AppSpace.xs }}>
+          <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#6366f1', marginBottom: AppSpace.xs }}>
             Gender
           </Text>
           {errors.gender ? (
@@ -368,7 +368,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('nationality', v)}
             error={errors.nationality}
             autoCapitalize="sentences"
-            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -378,7 +378,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('countryOfResidence', v)}
             error={errors.countryOfResidence}
             autoCapitalize="sentences"
-            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -388,7 +388,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('city', v)}
             error={errors.city}
             autoCapitalize="sentences"
-            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -399,7 +399,7 @@ export default function KycStep1() {
             error={errors.homeAddress}
             autoCapitalize="sentences"
             multiline
-            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -409,7 +409,7 @@ export default function KycStep1() {
             onChangeText={(v) => set('occupation', v)}
             error={errors.occupation}
             autoCapitalize="sentences"
-            labelStyle={{ color: '#fff', fontWeight: '700', fontSize: 15 }}
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppButton
