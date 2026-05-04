@@ -66,7 +66,7 @@ function ReviewRow({ label, value }) {
   if (!value) return null;
   return (
     <View style={{ flexDirection: 'row', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#1e293b' }}>
-      <Text style={{ flex: 1, color: AppColors.ink500, fontSize: 13 }}>{label}</Text>
+      <Text style={{ flex: 1, color: '#6366f1', fontSize: 13, fontWeight: '700' }}>{label}</Text>
       <Text style={{ flex: 1.5, color: AppColors.white, fontSize: 13, fontWeight: '500', textAlign: 'right' }}>{safeStr(value)}</Text>
     </View>
   );

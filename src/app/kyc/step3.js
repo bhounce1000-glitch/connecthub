@@ -261,7 +261,7 @@ export default function KycStep3() {
               <Text style={sectionTitle}>Mobile Money Details</Text>
 
               {/* MoMo provider */}
-              <Text style={{ fontSize: AppType.body, fontWeight: '600', color: AppColors.ink900, marginBottom: AppSpace.xs }}>
+              <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#6366f1', marginBottom: AppSpace.xs }}>
                 Provider
               </Text>
               {errors.momoProvider ? (
@@ -287,14 +287,15 @@ export default function KycStep3() {
               </View>
 
               {/* Country input and number */}
-              <Text style={{ color: AppColors.ink900, fontWeight: '600', marginBottom: 4 }}>Country</Text>
+              <Text style={{ color: '#6366f1', fontWeight: '700', marginBottom: 4 }}>Country</Text>
               <AppInput
                 value={momoCountry}
                 onChangeText={setMomoCountry}
                 placeholder="Country"
                 style={{ marginBottom: AppSpace.md }}
+                labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
               />
-              <Text style={{ color: AppColors.ink900, fontWeight: '600', marginBottom: 4 }}>Mobile Money Number</Text>
+              <Text style={{ color: '#6366f1', fontWeight: '700', marginBottom: 4 }}>Mobile Money Number</Text>
               <AppInput
                 value={momoNumber}
                 onChangeText={(v) => { setMomoNumber(v); clearErr('momoNumber'); }}
@@ -302,6 +303,7 @@ export default function KycStep3() {
                 keyboardType="phone-pad"
                 style={{ marginBottom: AppSpace.md }}
                 error={errors.momoNumber}
+                labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
               />
 
               <AppInput
@@ -311,6 +313,7 @@ export default function KycStep3() {
                 onChangeText={(v) => { setMomoName(v); clearErr('momoName'); }}
                 error={errors.momoName}
                 autoCapitalize="words"
+                labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
               />
             </>
           ) : (
@@ -324,6 +327,7 @@ export default function KycStep3() {
                 onChangeText={(v) => { setBankName(v); clearErr('bankName'); }}
                 error={errors.bankName}
                 autoCapitalize="words"
+                labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
               />
 
               <AppInput
@@ -333,6 +337,7 @@ export default function KycStep3() {
                 onChangeText={(v) => { setBankAccountNumber(v); clearErr('bankAccountNumber'); }}
                 error={errors.bankAccountNumber}
                 keyboardType="numeric"
+                labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
               />
 
               <AppInput
@@ -342,6 +347,7 @@ export default function KycStep3() {
                 onChangeText={(v) => { setBankAccountName(v); clearErr('bankAccountName'); }}
                 error={errors.bankAccountName}
                 autoCapitalize="words"
+                labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
               />
 
               <AppInput
@@ -353,6 +359,7 @@ export default function KycStep3() {
                 autoCapitalize="words"
                 accessibilityLabel="Bank Branch or Sort Code"
                 helperText="If your bank requires a branch or sort code for transfers, enter it here."
+                labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
               />
             </>
           )}

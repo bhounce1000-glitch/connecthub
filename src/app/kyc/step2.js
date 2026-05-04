@@ -293,6 +293,7 @@ export default function KycStep2() {
             onChangeText={(v) => set('phone', v)}
             error={errors.phone}
             keyboardType="phone-pad"
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <AppInput
@@ -302,12 +303,13 @@ export default function KycStep2() {
             onChangeText={(v) => set('altPhone', v)}
             error={errors.altPhone}
             keyboardType="phone-pad"
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           <Text style={sectionTitle}>Identity Document</Text>
 
           {/* ID type picker */}
-          <Text style={{ fontSize: AppType.body, fontWeight: '600', color: AppColors.ink900, marginBottom: AppSpace.xs }}>
+          <Text style={{ fontSize: AppType.body, fontWeight: '700', color: '#6366f1', marginBottom: AppSpace.xs }}>
             ID Type
           </Text>
           {errors.idType ? (
@@ -339,6 +341,7 @@ export default function KycStep2() {
             onChangeText={(v) => set('idNumber', v)}
             error={errors.idNumber}
             autoCapitalize="characters"
+            labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
           />
 
           {/* Photo uploads */}
