@@ -9,6 +9,7 @@ import AppCard from '../components/ui/app-card';
 import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import ListScreen from '../components/ui/list-screen';
+import SubscriptionBadge from '../components/ui/subscription-badge';
 import { KYC_STATUS, REQUEST_STATUS, STATUS_LABELS, isAdminEmail } from '../constants/access';
 import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
