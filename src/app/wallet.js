@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
@@ -34,6 +34,7 @@ function groupLabel(ts) {
 
 export default function Wallet() {
   const router = useRouter();
+  const { refresh } = useLocalSearchParams();
   const { user } = useAuthUser();
   const currentEmail = (user?.email || '').trim().toLowerCase();
 
@@ -89,7 +90,7 @@ export default function Wallet() {
     setIsLoading(true);
     loadWallet();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEmail]);
+  }, [currentEmail, refresh]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);

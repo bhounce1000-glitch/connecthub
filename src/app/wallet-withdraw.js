@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -8,14 +8,32 @@ import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
-import { apiPost, assertApiSuccess } from '../utils/api-client';
+import { apiPost } from '../utils/api-client';
 
 const NETWORKS = [
   { label: 'MTN', value: 'MTN' },
-  { label: 'Telecel (Vodafone)', value: 'VOD' },
-  { label: 'AirtelTigo', value: 'ATL' },
-  { label: 'Other', value: 'OTHER' },
+  { label: 'Telecel (Vodafone)', value: 'Telecel (Vodafone)' },
+  { label: 'AirtelTigo', value: 'AirtelTigo' },
+  { label: 'Other', value: 'Other' },
 ];
+
+const getWithdrawErrorMessage = (errorPayload) => {
+  const errorCode = errorPayload?.code || errorPayload?.error;
+  switch (errorCode) {
+    case 'invalid_phone':
+      return 'Invalid phone number. Enter a Ghana number like 0241234567';
+    case 'insufficient_balance':
+      return 'Insufficient wallet balance';
+    case 'invalid_amount':
+      return 'Minimum withdrawal is GHS 10';
+    case 'recipient_creation_failed':
+      return 'Could not verify your MoMo number. Check the number and network are correct.';
+    case 'transfer_failed':
+      return 'Transfer could not be processed. Please try again.';
+    default:
+      return errorPayload?.message || 'Withdrawal failed. Please try again.';
+  }
+};
 
 export default function WalletWithdraw() {
   const router = useRouter();
@@ -52,15 +70,37 @@ export default function WalletWithdraw() {
         amount: numericAmount,
         accountName: accountName.trim(),
         phoneNumber: phoneNumber.trim(),
+        provider: network,
         network,
       };
       const { response, data } = await apiPost(`${API_BASE_URL}/wallet/withdraw`, payload, { requireAuth: true });
-      const result = assertApiSuccess(response, data, 'Could not start withdrawal');
+      if (!response.ok || !data?.status) {
+        const mappedMessage = getWithdrawErrorMessage(data);
+        const requestId = data?.requestId ? `\n\nRequest ID: ${data.requestId}` : '';
+        setNotice({ tone: 'error', title: 'Withdrawal failed', message: `${mappedMessage}${requestId}` });
+        return;
+      }
+
+      const result = data;
+      const withdrawnAmount = Number(result?.data?.amount || numericAmount || 0);
       const ref = result?.data?.reference || 'N/A';
       setNotice({ tone: 'success', title: 'Withdrawal submitted', message: `Your MoMo withdrawal is being processed. Reference: ${ref}` });
-      setTimeout(() => router.replace('/wallet'), 2000);
+      Alert.alert(
+        '✅ Withdrawal initiated!',
+        `GHS ${withdrawnAmount.toFixed(2)} is being sent to your MoMo account. This may take a few minutes.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
+          },
+        ]
+      );
     } catch (error) {
-      setNotice({ tone: 'error', title: 'Withdrawal failed', message: error.message || 'Could not submit withdrawal.' });
+      setNotice({
+        tone: 'error',
+        title: 'Withdrawal failed',
+        message: error?.message || 'Could not submit withdrawal.',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -118,14 +158,15 @@ export default function WalletWithdraw() {
         </View>
 
         <AppInput
-          label="MoMo Phone Number"
+          label="MoMo Number (e.g. 0241234567)"
           value={phoneNumber}
           onChangeText={setPhoneNumber}
           keyboardType="phone-pad"
+          maxLength={12}
           placeholder="e.g. 0241234567"
         />
         <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: -10, marginBottom: 12 }}>
-          Enter your local number (e.g. 0241234567) or international format (e.g. 233241234567).
+          Enter your 10-digit Ghana number starting with 0 (not country code).
         </Text>
 
         <AppInput
@@ -138,7 +179,7 @@ export default function WalletWithdraw() {
         <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 10 }} />
 
         <AppButton
-          label={isSubmitting ? 'Submitting...' : 'Submit Withdrawal'}
+          label={isSubmitting ? 'Processing...' : 'Confirm Withdrawal'}
           onPress={submitWithdrawal}
           loading={isSubmitting}
           disabled={isSubmitting}
