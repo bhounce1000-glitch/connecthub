@@ -1606,7 +1606,33 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       }, { merge: true });
       balanceDebited = false;
 
-      return sendError(res, req, 400, 'transfer_failed', transferData?.message || 'Transfer initiation failed', { paystack: transferData });
+      const transferMessage = String(transferData?.message || '').trim();
+      const transferMessageLower = transferMessage.toLowerCase();
+      let transferErrorCode = 'transfer_failed';
+      let transferHint = 'Please try again shortly.';
+
+      if (transferMessageLower.includes('insufficient') && transferMessageLower.includes('balance')) {
+        transferErrorCode = 'paystack_insufficient_balance';
+        transferHint = 'Top up your Paystack balance in dashboard.paystack.com then retry.';
+      } else if (transferMessageLower.includes('transfer') && (transferMessageLower.includes('disabled') || transferMessageLower.includes('not enabled') || transferMessageLower.includes('not active'))) {
+        transferErrorCode = 'transfer_disabled';
+        transferHint = 'Enable Transfers in Paystack dashboard under Settings -> Preferences -> Transfers.';
+      } else if (transferMessageLower.includes('otp')) {
+        transferErrorCode = 'transfer_otp_required';
+        transferHint = 'Disable transfer OTP requirement or finalize transfer settings on Paystack.';
+      } else if (transferMessageLower.includes('pending approval') || transferMessageLower.includes('pending review')) {
+        transferErrorCode = 'transfer_pending_approval';
+        transferHint = 'Complete Paystack business/compliance verification for transfers.';
+      }
+
+      return sendError(
+        res,
+        req,
+        400,
+        transferErrorCode,
+        transferMessage || 'Transfer initiation failed',
+        { paystack: transferData, hint: transferHint }
+      );
     }
     transferInitiated = true;
 

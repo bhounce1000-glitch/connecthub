@@ -19,6 +19,8 @@ const NETWORKS = [
 
 const getWithdrawErrorMessage = (errorPayload) => {
   const errorCode = errorPayload?.code || errorPayload?.error;
+  const paystackMessage = String(errorPayload?.details?.paystack?.message || errorPayload?.message || '').trim();
+  const hint = String(errorPayload?.details?.hint || '').trim();
   switch (errorCode) {
     case 'invalid_phone':
       return 'Invalid phone number. Enter a Ghana number like 0241234567';
@@ -28,9 +30,26 @@ const getWithdrawErrorMessage = (errorPayload) => {
       return 'Minimum withdrawal is GHS 10';
     case 'recipient_creation_failed':
       return 'Could not verify your MoMo number. Check the number and network are correct.';
+    case 'paystack_insufficient_balance':
+      return 'Withdrawal is blocked because Paystack balance is insufficient. Top up your Paystack balance and try again.';
+    case 'transfer_disabled':
+      return 'Withdrawal transfers are disabled on Paystack. Enable Transfers in your Paystack dashboard settings.';
+    case 'transfer_otp_required':
+      return 'Paystack transfer finalization/OTP is required. Complete transfer settings in Paystack before retrying.';
+    case 'transfer_pending_approval':
+      return 'Paystack transfer capability is pending approval. Complete compliance verification in Paystack.';
     case 'transfer_failed':
+      if (paystackMessage && hint) {
+        return `${paystackMessage} ${hint}`;
+      }
+      if (paystackMessage) {
+        return paystackMessage;
+      }
       return 'Transfer could not be processed. Please try again.';
     default:
+      if (paystackMessage) {
+        return paystackMessage;
+      }
       return errorPayload?.message || 'Withdrawal failed. Please try again.';
   }
 };
