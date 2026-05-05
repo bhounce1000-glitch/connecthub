@@ -115,10 +115,7 @@ export default function HelpSupport() {
     const body = `Hi ConnectHub Support,\n\nI need help with the following issue:\n\n[Describe your issue here]\n\n---\nAccount: ${userEmail}`;
     const url = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     if (Platform.OS === 'web') {
-      // On web, create and click a real anchor so browsers don't block it
-      const a = document.createElement('a');
-      a.href = url;
-      a.click();
+      window.location.href = url;
     } else {
       Linking.openURL(url).catch(() => {});
     }
