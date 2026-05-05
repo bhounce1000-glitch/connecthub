@@ -1614,6 +1614,9 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       if (transferMessageLower.includes('insufficient') && transferMessageLower.includes('balance')) {
         transferErrorCode = 'paystack_insufficient_balance';
         transferHint = 'Top up your Paystack balance in dashboard.paystack.com then retry.';
+      } else if (transferMessageLower.includes('starter business') || transferMessageLower.includes('third party payouts')) {
+        transferErrorCode = 'paystack_business_tier_restricted';
+        transferHint = 'Upgrade your Paystack account from Starter to a business tier that supports third-party payouts, then enable Transfers.';
       } else if (transferMessageLower.includes('transfer') && (transferMessageLower.includes('disabled') || transferMessageLower.includes('not enabled') || transferMessageLower.includes('not active'))) {
         transferErrorCode = 'transfer_disabled';
         transferHint = 'Enable Transfers in Paystack dashboard under Settings -> Preferences -> Transfers.';

@@ -32,6 +32,8 @@ const getWithdrawErrorMessage = (errorPayload) => {
       return 'Could not verify your MoMo number. Check the number and network are correct.';
     case 'paystack_insufficient_balance':
       return 'Withdrawal is blocked because Paystack balance is insufficient. Top up your Paystack balance and try again.';
+    case 'paystack_business_tier_restricted':
+      return 'Your Paystack account is on Starter business tier and cannot do third-party payouts. Upgrade your Paystack business tier and enable Transfers, then try again.';
     case 'transfer_disabled':
       return 'Withdrawal transfers are disabled on Paystack. Enable Transfers in your Paystack dashboard settings.';
     case 'transfer_otp_required':
