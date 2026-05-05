@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
 
 import AppCard from '../components/ui/app-card';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
@@ -42,6 +42,21 @@ export default function Wallet() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  const handleWithdraw = () => {
+    Alert.alert(
+      'Withdraw',
+      'Withdrawals are enabled after payout setup verification. You can contact support to complete setup.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Contact Support', onPress: () => router.push('/help') },
+      ]
+    );
+  };
+
+  const handleAddMoney = () => {
+    router.push('/payments');
+  };
 
   const loadWallet = async () => {
     if (!currentEmail) {
@@ -152,10 +167,10 @@ export default function Wallet() {
               <Text style={{ color: '#cbd5e1', fontSize: 12, fontWeight: '700' }}>ConnectHub Wallet</Text>
               <Text style={{ color: '#fff', fontSize: 36, fontWeight: '900', marginTop: 4 }}>GHS {Number(walletBalance || 0).toFixed(2)}</Text>
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                <TouchableOpacity style={{ flex: 1, borderWidth: 1, borderColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 10, alignItems: 'center' }}>
+                <TouchableOpacity onPress={handleWithdraw} style={{ flex: 1, borderWidth: 1, borderColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 10, alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontWeight: '800' }}>Withdraw</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ flex: 1, borderRadius: AppRadius.md, paddingVertical: 10, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.14)' }}>
+                <TouchableOpacity onPress={handleAddMoney} style={{ flex: 1, borderRadius: AppRadius.md, paddingVertical: 10, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.14)' }}>
                   <Text style={{ color: '#fff', fontWeight: '800' }}>Add Money</Text>
                 </TouchableOpacity>
               </View>

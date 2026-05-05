@@ -2114,6 +2114,14 @@ app.post('/jobs/:id/remind-customer', requireAuth, async (req, res) => {
       return sendError(res, req, 403, 'provider_access_required', 'Only the assigned provider can send reminders');
     }
 
+    if (data.paid === true || data.escrowFunded === true) {
+      return sendError(res, req, 409, 'escrow_already_funded', 'Escrow has already been funded for this job');
+    }
+
+    if (String(data.status || '').toLowerCase() !== 'accepted') {
+      return sendError(res, req, 409, 'invalid_status_for_reminder', 'Reminders can only be sent while awaiting escrow funding');
+    }
+
     if (!customerEmail) {
       return sendError(res, req, 400, 'missing_customer', 'Missing customer email');
     }
