@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Linking, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
@@ -114,7 +114,14 @@ export default function HelpSupport() {
   const openEmailSupport = (subject = 'Support Request') => {
     const body = `Hi ConnectHub Support,\n\nI need help with the following issue:\n\n[Describe your issue here]\n\n---\nAccount: ${userEmail}`;
     const url = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    Linking.openURL(url).catch(() => {});
+    if (Platform.OS === 'web') {
+      // On web, create and click a real anchor so browsers don't block it
+      const a = document.createElement('a');
+      a.href = url;
+      a.click();
+    } else {
+      Linking.openURL(url).catch(() => {});
+    }
   };
 
   return (
