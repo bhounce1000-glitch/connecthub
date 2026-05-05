@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
 
 import AppCard from '../components/ui/app-card';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
@@ -44,14 +44,7 @@ export default function Wallet() {
   const [errorMessage, setErrorMessage] = useState('');
 
   const handleWithdraw = () => {
-    Alert.alert(
-      'Withdraw',
-      'Withdrawals are enabled after payout setup verification. You can contact support to complete setup.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Contact Support', onPress: () => router.push('/help') },
-      ]
-    );
+    router.push('/wallet-withdraw');
   };
 
   const handleAddMoney = () => {
