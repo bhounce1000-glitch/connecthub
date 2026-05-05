@@ -1490,7 +1490,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
         type: 'mobile_money',
         name: accountName,
         account_number: phoneNumber,
-        network,
+        bank_code: network,
         currency: 'GHS',
       }),
     });
