@@ -16,7 +16,7 @@ import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
-import { apiDelete, apiPost, assertApiSuccess } from '../utils/api-client';
+import { apiDelete, apiGet, apiPost, assertApiSuccess } from '../utils/api-client';
 import { formatApiMessage } from '../utils/api-response';
 
 const KYC_ENCRYPTION_KEY = 'connecthub-kyc-2026';
@@ -85,6 +85,8 @@ export default function Admin() {
   const [emailTestTarget, setEmailTestTarget] = useState('');
   const [emailTestResult, setEmailTestResult] = useState(null);
   const [providerProfileMap, setProviderProfileMap] = useState({});
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -170,6 +172,19 @@ export default function Admin() {
         .map((d) => ({ id: d.id, ...d.data() }))
         .sort((a, b) => String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')));
       setKycSubmissions(rows);
+    });
+  }, [isAdmin]);
+
+  const [usersProfileMap, setUsersProfileMap] = useState({});
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    return onSnapshot(collection(db, 'users'), (snapshot) => {
+      const map = {};
+      snapshot.docs.forEach((d) => {
+        const data = d.data() || {};
+        map[d.id] = { banned: data.banned || false, subscriptionPlan: data.subscriptionPlan || 'free' };
+      });
+      setUsersProfileMap(map);
     });
   }, [isAdmin]);
 
@@ -382,8 +397,16 @@ export default function Admin() {
       map.set(email, entry);
     });
 
+    // Merge ban + profile data
+    Object.entries(usersProfileMap).forEach(([email, profile]) => {
+      const entry = map.get(email) || { email, role: 'customer', jobsPosted: 0, jobsAccepted: 0 };
+      entry.banned = profile.banned || false;
+      entry.subscriptionPlan = profile.subscriptionPlan || 'free';
+      map.set(email, entry);
+    });
+
     return Array.from(map.values()).sort((a, b) => a.email.localeCompare(b.email));
-  }, [kycSubmissions, requests]);
+  }, [kycSubmissions, requests, usersProfileMap]);
 
   const sendEmailTest = async () => {
     const to = (emailTestTarget || currentEmail).trim().toLowerCase();
@@ -403,6 +426,48 @@ export default function Admin() {
       const msg = error?.message || '';
       setEmailTestResult({ ok: false, error: msg });
       setNotice({ tone: 'error', title: 'Email test failed', message: msg || 'Could not send test email. Check backend SMTP config.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const loadAnalytics = async () => {
+    setAnalyticsLoading(true);
+    try {
+      const { response, data } = await apiGet(`${API_BASE_URL}/admin/analytics`, { requireAuth: true });
+      if (response.ok && data?.status) setAnalytics(data.data);
+    } catch {
+      // silent
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
+  const banUser = async (email) => {
+    const key = `ban:${email}`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/users/${encodeURIComponent(email)}/ban`, { reason: 'Suspended by admin' }, { requireAuth: true });
+      assertApiSuccess(response, data, 'Ban failed');
+      setNotice({ tone: 'success', title: 'User banned', message: `${email} has been suspended.` });
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Ban failed', message: error?.message || 'Could not ban user.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const unbanUser = async (email) => {
+    const key = `unban:${email}`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/users/${encodeURIComponent(email)}/unban`, {}, { requireAuth: true });
+      assertApiSuccess(response, data, 'Unban failed');
+      setNotice({ tone: 'success', title: 'User unbanned', message: `${email} has been reinstated.` });
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Unban failed', message: error?.message || 'Could not unban user.' });
     } finally {
       setPendingAction(null);
     }
@@ -506,6 +571,21 @@ export default function Admin() {
                 Users ({users.length})
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => { setActiveTab('analytics'); loadAnalytics(); }}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'analytics' ? '#0f766e' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'analytics' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Analytics
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
@@ -518,7 +598,9 @@ export default function Admin() {
             ? kycSubmissions.length > 0
             : activeTab === 'disputes'
               ? disputes.length > 0
-              : users.length > 0
+              : activeTab === 'analytics'
+                ? true
+                : users.length > 0
       }
       emptyTitle={
         activeTab === 'requests'
@@ -527,7 +609,9 @@ export default function Admin() {
             ? 'No KYC submissions'
             : activeTab === 'disputes'
               ? 'No disputes'
-              : 'No users found'
+              : activeTab === 'analytics'
+                ? 'Loading…'
+                : 'No users found'
       }
       emptyDescription={
         activeTab === 'requests'
@@ -536,11 +620,96 @@ export default function Admin() {
             ? 'KYC submissions will appear here.'
             : activeTab === 'disputes'
               ? 'Disputes opened by customers will appear here.'
-              : 'Users will appear here once activity is detected.'
+              : activeTab === 'analytics'
+                ? 'Fetching analytics data…'
+                : 'Users will appear here once activity is detected.'
       }
     >
       <ScrollView showsVerticalScrollIndicator={false}>
-        {activeTab === 'kyc'
+        {activeTab === 'analytics'
+          ? (
+            <View>
+              {analyticsLoading ? (
+                <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                  <Text style={{ color: AppColors.ink500 }}>Loading analytics…</Text>
+                </View>
+              ) : analytics ? (
+                <>
+                  <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 16, marginBottom: 10 }}>📊 Platform Overview</Text>
+
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Total Jobs</Text>
+                      <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 20 }}>{analytics.jobs?.total ?? '—'}</Text>
+                    </AppCard>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Paid Jobs</Text>
+                      <Text style={{ color: '#166534', fontWeight: '800', fontSize: 20 }}>{analytics.jobs?.paid ?? '—'}</Text>
+                    </AppCard>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Disputed</Text>
+                      <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 20 }}>{analytics.jobs?.disputed ?? '—'}</Text>
+                    </AppCard>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Commission</Text>
+                      <Text style={{ color: '#0f766e', fontWeight: '800', fontSize: 18 }}>GHS {analytics.revenue?.commissionEarned ?? '0'}</Text>
+                    </AppCard>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Sub MRR</Text>
+                      <Text style={{ color: '#7c3aed', fontWeight: '800', fontSize: 18 }}>GHS {analytics.revenue?.subscriptionMRR ?? '0'}</Text>
+                    </AppCard>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Escrow Held</Text>
+                      <Text style={{ color: '#b45309', fontWeight: '800', fontSize: 18 }}>GHS {analytics.revenue?.escrowHeld ?? '0'}</Text>
+                    </AppCard>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Tx Volume</Text>
+                      <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 18 }}>GHS {analytics.revenue?.transactionVolume ?? '0'}</Text>
+                    </AppCard>
+                  </View>
+
+                  <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 16, marginBottom: 10, marginTop: 8 }}>👥 Users</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Total Users</Text>
+                      <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 20 }}>{analytics.users?.total ?? '—'}</Text>
+                    </AppCard>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Verified KYC</Text>
+                      <Text style={{ color: '#166534', fontWeight: '800', fontSize: 20 }}>{analytics.users?.verified ?? '—'}</Text>
+                    </AppCard>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Banned</Text>
+                      <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 20 }}>{analytics.users?.banned ?? '—'}</Text>
+                    </AppCard>
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Pro Subs</Text>
+                      <Text style={{ color: '#2563eb', fontWeight: '800', fontSize: 20 }}>{analytics.users?.proSubscribers ?? '—'}</Text>
+                    </AppCard>
+                    <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+                      <Text style={{ color: AppColors.ink500, fontSize: 11 }}>Premium Subs</Text>
+                      <Text style={{ color: '#d97706', fontWeight: '800', fontSize: 20 }}>{analytics.users?.premiumSubscribers ?? '—'}</Text>
+                    </AppCard>
+                  </View>
+                  <AppButton label="Refresh Analytics" variant="neutral" onPress={loadAnalytics} loading={analyticsLoading} />
+                </>
+              ) : (
+                <View style={{ alignItems: 'center', paddingVertical: 24 }}>
+                  <Text style={{ color: AppColors.ink500, marginBottom: 12 }}>Could not load analytics.</Text>
+                  <AppButton label="Retry" variant="neutral" onPress={loadAnalytics} />
+                </View>
+              )}
+            </View>
+          )
+          : activeTab === 'kyc'
           ? kycSubmissions.map((item) => (
               <KycReviewCard
                 key={item.id}
@@ -563,17 +732,24 @@ export default function Admin() {
               ? (
                 <>
                 {users.map((entry) => (
-                  <AppCard key={entry.email} style={{ marginBottom: 10 }}>
+                  <AppCard key={entry.email} style={{ marginBottom: 10, borderWidth: entry.banned ? 1 : 0, borderColor: entry.banned ? '#fca5a5' : 'transparent' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                       <Avatar email={entry.email} size={30} />
                       <View style={{ marginLeft: 10, flex: 1 }}>
-                        <Text style={{ color: AppColors.ink900, fontWeight: '700' }}>{entry.email}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={{ color: AppColors.ink900, fontWeight: '700' }}>{entry.email}</Text>
+                          {entry.banned ? (
+                            <View style={{ backgroundColor: '#fee2e2', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 2 }}>
+                              <Text style={{ color: '#b91c1c', fontSize: 10, fontWeight: '800' }}>BANNED</Text>
+                            </View>
+                          ) : null}
+                        </View>
                         <Text style={{ color: AppColors.ink500, fontSize: 12 }}>
                           Role: {entry.role} | KYC: {entry.kycStatus || 'unknown'}
                         </Text>
                       </View>
                     </View>
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
                       <View style={{ backgroundColor: '#eff6ff', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
                         <Text style={{ color: '#1d4ed8', fontWeight: '700', fontSize: 12 }}>Posted: {entry.jobsPosted}</Text>
                       </View>
@@ -581,6 +757,24 @@ export default function Admin() {
                         <Text style={{ color: '#166534', fontWeight: '700', fontSize: 12 }}>Accepted: {entry.jobsAccepted}</Text>
                       </View>
                     </View>
+                    {entry.banned ? (
+                      <AppButton
+                        label="Unban User"
+                        onPress={() => unbanUser(entry.email)}
+                        disabled={Boolean(pendingAction)}
+                        loading={pendingAction === `unban:${entry.email}`}
+                        style={{ paddingVertical: 8, backgroundColor: '#166534' }}
+                      />
+                    ) : (
+                      <AppButton
+                        label="Ban User"
+                        variant="danger"
+                        onPress={() => banUser(entry.email)}
+                        disabled={Boolean(pendingAction) || isAdminEmail(entry.email)}
+                        loading={pendingAction === `ban:${entry.email}`}
+                        style={{ paddingVertical: 8, backgroundColor: '#b91c1c' }}
+                      />
+                    )}
                   </AppCard>
                 ))}
 

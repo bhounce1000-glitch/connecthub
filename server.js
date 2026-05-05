@@ -1935,6 +1935,11 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
     const beforeData = snap.data() || {};
     const actorProfileSnap = await adminDb.collection('users').doc(actorEmail).get().catch(() => null);
     const actorProfile = actorProfileSnap && actorProfileSnap.exists ? (actorProfileSnap.data() || {}) : {};
+
+    if (actorProfile.banned === true) {
+      return sendError(res, req, 403, 'account_banned', 'Your account has been suspended. Contact support for assistance.');
+    }
+
     const actorPlan = normalizePlan(actorProfile.subscriptionPlan || 'free');
     const actorPlanConfig = SUBSCRIPTION_PLAN_CONFIG[actorPlan] || SUBSCRIPTION_PLAN_CONFIG.free;
     const actorSubscriptionStatus = String(actorProfile.subscriptionStatus || '').trim().toLowerCase();
@@ -2442,6 +2447,104 @@ app.get('/portfolio/:email', async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'PORTFOLIO_FETCH_ERROR');
     return sendError(res, req, 500, 'portfolio_fetch_failed', 'Could not fetch portfolio');
+  }
+});
+
+// ── Admin: Ban / Unban user ────────────────────────────────────────────────
+app.post('/admin/users/:email/ban', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const targetEmail = String(req.params.email || '').trim().toLowerCase();
+    const reason = String(req.body?.reason || '').trim();
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+
+    if (!targetEmail) return sendError(res, req, 400, 'missing_email', 'email is required');
+    if (isAdminEmail(targetEmail)) return sendError(res, req, 403, 'cannot_ban_admin', 'Cannot ban an admin account');
+
+    const nowIso = new Date().toISOString();
+    await adminDb.collection('users').doc(targetEmail).set({
+      banned: true,
+      bannedAt: nowIso,
+      bannedBy: actorEmail,
+      bannedReason: reason || 'Suspended by admin',
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    await writeAuditLog({ actorEmail, eventType: 'user_banned', metadata: { targetEmail, reason } });
+    await writeNotification(targetEmail, 'Your account has been suspended. Contact support for assistance.');
+
+    return sendSuccess(res, req, { message: `${targetEmail} has been banned.` });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_BAN_ERROR');
+    return sendError(res, req, 500, 'ban_failed', 'Could not ban user');
+  }
+});
+
+app.post('/admin/users/:email/unban', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const targetEmail = String(req.params.email || '').trim().toLowerCase();
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+
+    if (!targetEmail) return sendError(res, req, 400, 'missing_email', 'email is required');
+
+    const nowIso = new Date().toISOString();
+    await adminDb.collection('users').doc(targetEmail).set({
+      banned: false,
+      unbannedAt: nowIso,
+      unbannedBy: actorEmail,
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    await writeAuditLog({ actorEmail, eventType: 'user_unbanned', metadata: { targetEmail } });
+    await writeNotification(targetEmail, 'Your account suspension has been lifted. Welcome back!');
+
+    return sendSuccess(res, req, { message: `${targetEmail} has been unbanned.` });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_UNBAN_ERROR');
+    return sendError(res, req, 500, 'unban_failed', 'Could not unban user');
+  }
+});
+
+// ── Admin: Analytics ──────────────────────────────────────────────────────
+app.get('/admin/analytics', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const [requestsSnap, usersSnap, transactionsSnap] = await Promise.all([
+      adminDb.collection('requests').get(),
+      adminDb.collection('users').get(),
+      adminDb.collection('transactions').get(),
+    ]);
+
+    const requests = requestsSnap.docs.map((d) => d.data());
+    const users = usersSnap.docs.map((d) => d.data());
+    const transactions = transactionsSnap.docs.map((d) => d.data());
+
+    const totalJobs = requests.length;
+    const paidJobs = requests.filter((r) => r.paid || r.status === 'paid').length;
+    const openJobs = requests.filter((r) => !r.paid && (r.status === 'open' || !r.status)).length;
+    const activeJobs = requests.filter((r) => ['accepted', 'in_progress', 'pending_confirmation'].includes(r.status || '')).length;
+    const disputedJobs = requests.filter((r) => r.status === 'disputed').length;
+
+    const totalRevenue = requests.reduce((sum, r) => sum + parseMoney(r.commission || 0), 0);
+    const totalEscrow = requests.reduce((sum, r) => (r.escrowFunded && r.escrowStatus === 'held' ? sum + parseMoney(r.escrowAmount || 0) : sum), 0);
+
+    const totalUsers = users.length;
+    const bannedUsers = users.filter((u) => u.banned === true).length;
+    const verifiedUsers = users.filter((u) => u.kycStatus === 'verified').length;
+    const proSubs = users.filter((u) => normalizePlan(u.subscriptionPlan) === 'pro' && u.subscriptionStatus === 'active').length;
+    const premiumSubs = users.filter((u) => normalizePlan(u.subscriptionPlan) === 'premium' && u.subscriptionStatus === 'active').length;
+    const subscriptionRevenue = (proSubs * 49) + (premiumSubs * 99);
+
+    const totalTransactionVolume = transactions.reduce((sum, t) => sum + parseMoney(t.amount || 0), 0);
+
+    return sendSuccess(res, req, {
+      data: {
+        jobs: { total: totalJobs, paid: paidJobs, open: openJobs, active: activeJobs, disputed: disputedJobs },
+        revenue: { commissionEarned: parseFloat(totalRevenue.toFixed(2)), subscriptionMRR: subscriptionRevenue, escrowHeld: parseFloat(totalEscrow.toFixed(2)), transactionVolume: parseFloat(totalTransactionVolume.toFixed(2)) },
+        users: { total: totalUsers, verified: verifiedUsers, banned: bannedUsers, proSubscribers: proSubs, premiumSubscribers: premiumSubs },
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_ANALYTICS_ERROR');
+    return sendError(res, req, 500, 'analytics_failed', 'Could not compute analytics');
   }
 });
 
