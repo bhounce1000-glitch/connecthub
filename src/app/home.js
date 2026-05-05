@@ -1,7 +1,7 @@
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { addDoc, collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -17,7 +17,7 @@ import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
-import { apiPost } from '../utils/api-client';
+import { apiPost, assertApiSuccess } from '../utils/api-client';
 import { distanceKm, getLocationCity, getLocationCoords, getLocationLabel } from '../utils/location';
 
 function getEffectiveStatus(item) {
@@ -73,6 +73,7 @@ export default function Home() {
   const profileFetchQueue = useRef(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('all');
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
   const isProvider = String(userProfiles[currentEmail]?.role || '').toLowerCase() === 'provider';
@@ -101,7 +102,7 @@ export default function Home() {
     if (!value) return 'Unavailable';
     const parsedDate = new Date(value);
     if (Number.isNaN(parsedDate.getTime())) return String(value);
-    return parsedDate.toLocaleString();
+                <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>Post a job or browse available providers</Text>
   };
 
   useEffect(() => {
@@ -288,26 +289,25 @@ export default function Home() {
   };
 
   const remindCustomerToFund = async (item) => {
-    const customerEmail = String(item.user || '').trim().toLowerCase();
-    if (!customerEmail) {
-      setNotice({ tone: 'warning', title: 'Missing customer', message: 'Could not determine customer to remind.' });
-      return;
-    }
-
     try {
-      await addDoc(collection(db, 'notifications'), {
-        user: customerEmail,
-        userId: customerEmail,
-        title: '⏳ Awaiting Escrow Funding',
-        body: `Please fund escrow for "${item.title}" so your provider can begin work.`,
-        type: 'general',
-        read: false,
-        createdAt: new Date().toISOString(),
-      });
-      setNotice({ tone: 'success', title: 'Reminder sent', message: `A reminder was sent to ${customerEmail}.` });
+      const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/remind-customer`, {}, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not send reminder');
+      setNotice({ tone: 'success', title: 'Reminder sent', message: 'Customer has been reminded to fund escrow.' });
+      Alert.alert('Reminder sent to customer');
     } catch {
       setNotice({ tone: 'error', title: 'Reminder failed', message: 'Could not send reminder right now.' });
     }
+  };
+
+  const openStatusFilterPicker = () => {
+    Alert.alert('Filter Requests', 'Choose a status to display', [
+      { text: 'All', onPress: () => setStatusFilter('all') },
+      { text: 'Open', onPress: () => setStatusFilter(REQUEST_STATUS.OPEN) },
+      { text: 'Accepted', onPress: () => setStatusFilter(REQUEST_STATUS.ACCEPTED) },
+      { text: 'In Progress', onPress: () => setStatusFilter(REQUEST_STATUS.IN_PROGRESS) },
+      { text: 'Completed', onPress: () => setStatusFilter('completed') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   const handleRefresh = async () => {
@@ -368,6 +368,15 @@ export default function Home() {
       // Category filter
       if (activeCategory !== 'All' && item.category !== activeCategory) return false;
 
+      if (statusFilter !== 'all') {
+        if (statusFilter === 'completed') {
+          const done = [REQUEST_STATUS.COMPLETED, REQUEST_STATUS.PAID].includes(status) || item.paid;
+          if (!done) return false;
+        } else if (status !== statusFilter) {
+          return false;
+        }
+      }
+
       // Providers can narrow by city and near-me radius for faster job discovery.
       if (isProvider) {
         const city = getLocationCity(item.location);
@@ -382,7 +391,7 @@ export default function Home() {
 
       return true;
     });
-  }, [requests, currentEmail, searchText, activeCategory, isProvider, selectedCity, nearMeOnly, currentCoords]);
+  }, [requests, currentEmail, searchText, activeCategory, statusFilter, isProvider, selectedCity, nearMeOnly, currentCoords]);
 
   const renderListHeader = () => (
     <View>
@@ -425,8 +434,8 @@ export default function Home() {
           onChangeText={setSearchText}
           style={{ flex: 1, fontSize: 14, color: AppColors.ink900 }}
         />
-        <TouchableOpacity style={{ marginLeft: 6, backgroundColor: '#eff6ff', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 6 }}>
-          <Text style={{ color: '#1d4ed8', fontWeight: '700' }}>⚙️</Text>
+        <TouchableOpacity onPress={openStatusFilterPicker} style={{ marginLeft: 6, backgroundColor: '#eff6ff', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 6 }}>
+          <Text style={{ color: '#1d4ed8', fontWeight: '700' }}>≡</Text>
         </TouchableOpacity>
         {searchText.length > 0 && (
           <TouchableOpacity onPress={() => setSearchText('')}>
@@ -723,20 +732,26 @@ export default function Home() {
                   <Text style={{ color: '#166534', fontWeight: '800', fontSize: 12 }}>GHS {item.price}</Text>
                 </View>
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6 }}>
-                  <Avatar src={userProfiles[item.user]?.profilePicture} email={item.user} size={20} />
-                  <Text style={{ color: '#6b7280', fontSize: 12 }}>{item.user || 'Unavailable'}</Text>
-                  {item.acceptedBy && (
-                    <>
-                      <Text style={{ color: '#d1d5db', fontSize: 12 }}>→</Text>
-                      <Avatar src={userProfiles[item.acceptedBy]?.profilePicture} email={item.acceptedBy} size={20} />
-                      <Text style={{ color: '#6b7280', fontSize: 12 }}>{item.acceptedBy}</Text>
-                      <SubscriptionBadge
-                        plan={userProfiles[item.acceptedBy]?.subscriptionPlan}
-                        style={{ marginLeft: 4 }}
-                      />
-                    </>
-                  )}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e0e7ff', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#3730a3', fontWeight: '800', fontSize: 13 }}>
+                      {String(item.user || '?').trim().charAt(0).toUpperCase() || '?'}
+                    </Text>
+                  </View>
+                  <Text style={{ color: '#6b7280', fontSize: 12, flex: 1 }} numberOfLines={1}>{item.user || 'Unavailable'}</Text>
+                  <Text style={{ color: '#d1d5db', fontSize: 12 }}>→</Text>
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: item.acceptedBy ? '#dbeafe' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: item.acceptedBy ? '#1d4ed8' : '#6b7280', fontWeight: '800', fontSize: 13 }}>
+                      {String(item.acceptedBy || '?').trim().charAt(0).toUpperCase() || '?'}
+                    </Text>
+                  </View>
+                  <Text style={{ color: '#6b7280', fontSize: 12, flex: 1 }} numberOfLines={1}>{item.acceptedBy || 'No provider yet'}</Text>
+                  {item.acceptedBy ? (
+                    <SubscriptionBadge
+                      plan={userProfiles[item.acceptedBy]?.subscriptionPlan}
+                      style={{ marginLeft: 4 }}
+                    />
+                  ) : null}
                 </View>
 
                 {/* Visual status stepper */}

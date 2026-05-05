@@ -2,7 +2,7 @@ import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
 import { addDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -87,6 +87,7 @@ export default function Admin() {
   const [providerProfileMap, setProviderProfileMap] = useState({});
   const [analytics, setAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [expandedRequestMap, setExpandedRequestMap] = useState({});
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -458,6 +459,29 @@ export default function Admin() {
     }
   };
 
+  const confirmBanUser = (email) => {
+    Alert.alert('Ban user?', `This will suspend ${email}.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Ban User', style: 'destructive', onPress: () => banUser(email) },
+    ]);
+  };
+
+  const confirmUnbanUser = (email) => {
+    Alert.alert('Unban user?', `Restore access for ${email}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Unban', onPress: () => unbanUser(email) },
+    ]);
+  };
+
+  const requestStatusMeta = (status) => {
+    if (status === REQUEST_STATUS.ACCEPTED) return { border: '#ea580c', bg: '#ffedd5', text: '#c2410c', label: 'Accepted' };
+    if (status === REQUEST_STATUS.IN_PROGRESS) return { border: '#7c3aed', bg: '#ede9fe', text: '#5b21b6', label: 'In Progress' };
+    if (status === REQUEST_STATUS.PENDING_CONFIRMATION) return { border: '#d97706', bg: '#fef3c7', text: '#b45309', label: 'Pending Confirmation' };
+    if (status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED) return { border: '#16a34a', bg: '#dcfce7', text: '#166534', label: 'Completed' };
+    if (status === REQUEST_STATUS.CANCELLED) return { border: '#64748b', bg: '#f1f5f9', text: '#475569', label: 'Cancelled' };
+    return { border: '#2563eb', bg: '#dbeafe', text: '#1d4ed8', label: 'Open' };
+  };
+
   const unbanUser = async (email) => {
     const key = `unban:${email}`;
     setPendingAction(key);
@@ -744,9 +768,17 @@ export default function Admin() {
                             </View>
                           ) : null}
                         </View>
-                        <Text style={{ color: AppColors.ink500, fontSize: 12 }}>
-                          Role: {entry.role} | KYC: {entry.kycStatus || 'unknown'}
-                        </Text>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                          <View style={{ backgroundColor: '#dbeafe', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ color: '#1d4ed8', fontSize: 11, fontWeight: '800' }}>{String(entry.role || 'customer').toUpperCase()}</Text>
+                          </View>
+                          <View style={{ backgroundColor: entry.kycStatus === KYC_STATUS.VERIFIED ? '#dcfce7' : entry.kycStatus === KYC_STATUS.PENDING_VERIFICATION ? '#fef3c7' : '#fee2e2', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ color: entry.kycStatus === KYC_STATUS.VERIFIED ? '#166534' : entry.kycStatus === KYC_STATUS.PENDING_VERIFICATION ? '#92400e' : '#b91c1c', fontSize: 11, fontWeight: '800' }}>
+                              {entry.kycStatus === KYC_STATUS.VERIFIED ? 'KYC VERIFIED' : entry.kycStatus === KYC_STATUS.PENDING_VERIFICATION ? 'KYC PENDING' : 'KYC UNVERIFIED'}
+                            </Text>
+                          </View>
+                          <SubscriptionBadge plan={entry.subscriptionPlan || 'free'} />
+                        </View>
                       </View>
                     </View>
                     <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
@@ -760,7 +792,7 @@ export default function Admin() {
                     {entry.banned ? (
                       <AppButton
                         label="Unban User"
-                        onPress={() => unbanUser(entry.email)}
+                        onPress={() => confirmUnbanUser(entry.email)}
                         disabled={Boolean(pendingAction)}
                         loading={pendingAction === `unban:${entry.email}`}
                         style={{ paddingVertical: 8, backgroundColor: '#166534' }}
@@ -769,7 +801,7 @@ export default function Admin() {
                       <AppButton
                         label="Ban User"
                         variant="danger"
-                        onPress={() => banUser(entry.email)}
+                        onPress={() => confirmBanUser(entry.email)}
                         disabled={Boolean(pendingAction) || isAdminEmail(entry.email)}
                         loading={pendingAction === `ban:${entry.email}`}
                         style={{ paddingVertical: 8, backgroundColor: '#b91c1c' }}
@@ -827,31 +859,49 @@ export default function Admin() {
                 </>
                 )
           : requests.map((item) => (
-              <AppCard key={item.id} style={{ marginBottom: 12 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <AppCard key={item.id} style={{ marginBottom: 12, borderLeftWidth: 4, borderLeftColor: requestStatusMeta(item.status || REQUEST_STATUS.OPEN).border }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                   <Text style={{ fontWeight: '700', flex: 1 }}>{item.title || item.id}</Text>
-                  <View style={{ backgroundColor: item.paid ? '#dcfce7' : '#fee2e2', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
-                    <Text style={{ color: item.paid ? '#166534' : '#b91c1c', fontWeight: '800', fontSize: 11 }}>{item.paid ? 'PAID ✅' : 'UNPAID ❌'}</Text>
+                  <View style={{ gap: 6, alignItems: 'flex-end' }}>
+                    <View style={{ backgroundColor: requestStatusMeta(item.status || REQUEST_STATUS.OPEN).bg, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
+                      <Text style={{ color: requestStatusMeta(item.status || REQUEST_STATUS.OPEN).text, fontWeight: '800', fontSize: 11 }}>{requestStatusMeta(item.status || REQUEST_STATUS.OPEN).label}</Text>
+                    </View>
+                    <View style={{ backgroundColor: item.paid ? '#dcfce7' : '#fee2e2', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
+                      <Text style={{ color: item.paid ? '#166534' : '#b91c1c', fontWeight: '800', fontSize: 11 }}>{item.paid ? 'PAID ✅' : 'UNPAID ❌'}</Text>
+                    </View>
                   </View>
                 </View>
-                <Text>ID: {item.id}</Text>
-                <Text>User: {item.user || 'Unavailable'}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
-                  {item.acceptedBy ? (
-                    <SubscriptionBadge
-                      plan={providerProfileMap[String(item.acceptedBy || '').trim().toLowerCase()]?.subscriptionPlan}
-                    />
-                  ) : null}
-                </View>
-                <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
-                <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
 
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 6 }}>
-                  <Avatar email={item.user} size={24} />
-                  <Text style={{ marginHorizontal: 6, color: '#94a3b8' }}>→</Text>
-                  <Avatar email={item.acceptedBy} size={24} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 8 }}>
+                  <Avatar email={item.user} size={26} />
+                  <Text style={{ marginHorizontal: 8, color: '#94a3b8', fontWeight: '700' }}>→</Text>
+                  <Avatar email={item.acceptedBy} size={26} />
+                  <Text style={{ color: '#64748b', fontSize: 12, marginLeft: 8 }} numberOfLines={1}>{item.user || 'Customer'} → {item.acceptedBy || 'Unassigned'}</Text>
                 </View>
+
+                <TouchableOpacity
+                  onPress={() => setExpandedRequestMap((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                  style={{ marginBottom: 8, backgroundColor: '#f8fafc', borderRadius: AppRadius.sm, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 10, paddingVertical: 8 }}
+                >
+                  <Text style={{ color: '#334155', fontWeight: '700' }}>{expandedRequestMap[item.id] ? 'Hide Details' : 'View Details'}</Text>
+                </TouchableOpacity>
+
+                {expandedRequestMap[item.id] ? (
+                  <View style={{ marginBottom: 8 }}>
+                    <Text>ID: {item.id}</Text>
+                    <Text>User: {item.user || 'Unavailable'}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text>Provider: {item.acceptedBy || 'Unassigned'}</Text>
+                      {item.acceptedBy ? (
+                        <SubscriptionBadge
+                          plan={providerProfileMap[String(item.acceptedBy || '').trim().toLowerCase()]?.subscriptionPlan}
+                        />
+                      ) : null}
+                    </View>
+                    <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
+                    <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
+                  </View>
+                ) : null}
 
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
                   <AppButton label="View Details" variant="neutral" onPress={() => router.push({ pathname: '/job-details', params: { id: item.id } })} style={{ flex: 1, paddingVertical: 8 }} />
@@ -944,7 +994,7 @@ function DisputeReviewCard({ item, pendingAction, onResolve }) {
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Request: {item.requestId || 'N/A'}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Customer: {item.customerEmail || 'N/A'}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 2 }}>Provider: {item.providerEmail || 'N/A'}</Text>
-      <Text style={{ color: AppColors.ink900, fontSize: 13, marginTop: 4, fontWeight: '700' }}>Reason</Text>
+      <Text style={{ color: AppColors.ink900, fontSize: 13, marginTop: 4, fontWeight: '700' }}>Customer Complaint</Text>
       <Text style={{ color: AppColors.ink700, fontSize: 13 }}>{item.reason || 'No reason provided'}</Text>
       {item.comment ? <Text style={{ color: AppColors.ink500, fontSize: 13, marginTop: 4 }}>Comment: {item.comment}</Text> : null}
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 6 }}>Evidence files: {Array.isArray(item.evidenceUrls) ? item.evidenceUrls.length : 0}</Text>
@@ -999,7 +1049,7 @@ function DisputeReviewCard({ item, pendingAction, onResolve }) {
 
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             <AppButton
-              label="Release To Worker"
+              label="Release to Provider"
               onPress={() => runResolve('release_to_worker')}
               disabled={Boolean(pendingAction)}
               loading={pendingAction === `dispute:${item.id}:release_to_worker`}
@@ -1007,18 +1057,17 @@ function DisputeReviewCard({ item, pendingAction, onResolve }) {
             />
             <AppButton
               label="Refund Customer"
-              variant="danger"
               onPress={() => runResolve('refund_customer')}
               disabled={Boolean(pendingAction)}
               loading={pendingAction === `dispute:${item.id}:refund_customer`}
-              style={{ paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#b91c1c' }}
+              style={{ paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#2563eb' }}
             />
             <AppButton
-              label="Split Amount"
+              label="Split 50/50"
               onPress={() => runResolve('split')}
               disabled={Boolean(pendingAction)}
               loading={pendingAction === `dispute:${item.id}:split`}
-              style={{ paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#7c3aed' }}
+              style={{ paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#ea580c' }}
             />
           </View>
         </View>
@@ -1198,7 +1247,10 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm, gap: 8 }}>
           <AppButton
             label={pendingAction === `kyc:${item.email}:approve` ? 'Approving...' : 'Approve'}
-            onPress={onApprove}
+            onPress={() => Alert.alert('Approve KYC?', `Approve KYC for ${item.email}?`, [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Approve', onPress: onApprove },
+            ])}
             disabled={Boolean(pendingAction) || !canTakeAction}
             style={{ paddingHorizontal: 14, paddingVertical: 9, backgroundColor: '#15803d' }}
           />
@@ -1231,7 +1283,10 @@ function KycReviewCard({ item, pendingAction, onApprove, onReject }) {
             onPress={() => {
               const reason = rejectReason.trim();
               if (!reason) return;
-              onReject(reason);
+              Alert.alert('Reject KYC?', `Reject KYC for ${item.email}?`, [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Reject', style: 'destructive', onPress: () => onReject(reason) },
+              ]);
               setShowRejectForm(false);
               setRejectReason('');
             }}

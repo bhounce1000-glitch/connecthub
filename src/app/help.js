@@ -10,36 +10,28 @@ const SUPPORT_EMAIL = 'bhounce1000@gmail.com';
 
 const FAQS = [
   {
-    q: 'How do I post a job request?',
-    a: 'Tap "Post a Request" on the Home screen, fill in the job details (title, category, location, budget), and submit. Nearby providers will see it and can accept.',
+    q: 'How does escrow work?',
+    a: 'When you pay for a job, your money is held safely by ConnectHub until you confirm the work is done. Only then is the provider paid. This protects both parties.',
   },
   {
-    q: 'Why can\'t I accept more jobs this month?',
-    a: 'Free/Basic plan providers are limited to 5 job accepts per month. Upgrade to Pro (GHS 49/mo) or Premium (GHS 99/mo) for unlimited accepts.',
+    q: 'How do I get my money back if something goes wrong?',
+    a: 'You can dispute a job within 24 hours of the provider marking it complete. Our admin team will review evidence from both sides and resolve fairly.',
   },
   {
-    q: 'My payment is stuck or failed — what do I do?',
-    a: 'Payments are processed via Paystack. If a payment is stuck, wait 10 minutes and refresh. If the issue persists, tap "Contact Support" below and include your job ID and the amount.',
+    q: 'When do I get paid as a provider?',
+    a: 'Payment is released to your ConnectHub wallet immediately after the customer confirms your work is done. You can then withdraw to Mobile Money anytime.',
   },
   {
-    q: 'How do I dispute a completed job?',
-    a: 'On the job details screen, tap "Dispute" before marking it paid. Our admin team reviews disputes within 24 hours. You can also email support with the job details.',
+    q: 'Is my payment information secure?',
+    a: 'Yes. All payments are processed by Paystack, a trusted payment provider. ConnectHub never stores your card or Mobile Money details.',
   },
   {
-    q: 'My account has been suspended — what can I do?',
-    a: 'Account suspensions are issued for violations of our terms. Email support with your registered email address and we will review your case.',
+    q: 'How does KYC verification work?',
+    a: 'KYC (Know Your Customer) is our identity verification process. Submit your national ID and a selfie. Our team reviews within 24 hours. Verified users build more trust.',
   },
   {
-    q: 'How do I verify my identity (KYC)?',
-    a: 'Go to your profile and complete the KYC steps: personal details, ID upload, selfie, and agreement. Verification usually takes 1–2 business days.',
-  },
-  {
-    q: 'How does the referral program work?',
-    a: 'Go to Profile → Invite Friends to get your referral link. When a new user signs up and completes their first paid job using your link, you earn a bonus.',
-  },
-  {
-    q: 'How do I cancel or modify a subscription?',
-    a: 'Subscriptions auto-renew monthly. To cancel, email support before your next renewal date with your registered email. We\'ll cancel and confirm within 24 hours.',
+    q: 'How do I cancel my subscription?',
+    a: 'Go to Profile -> Subscription -> tap Cancel Subscription. You keep your benefits until the end of the billing period.',
   },
 ];
 
@@ -129,43 +121,20 @@ export default function HelpSupport() {
         <Text style={{ fontSize: 13, color: '#93c5fd', letterSpacing: 1, fontWeight: '700' }}>CONNECTHUB</Text>
         <Text style={{ fontSize: 26, fontWeight: '800', color: '#f8fafc', marginTop: 4 }}>Help & Support</Text>
         <Text style={{ color: '#94a3b8', marginTop: 4, fontSize: 13, lineHeight: 18 }}>
-          Find answers to common questions or reach out to our team directly.
+          We're here to help. Find answers below or contact us.
         </Text>
       </View>
 
-      {/* Contact options */}
-      <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 15, marginBottom: 10 }}>
-        Contact Us
-      </Text>
+      <AppCard style={{ marginBottom: 14 }}>
+        <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 16, marginBottom: 6 }}>📧 Email Us</Text>
+        <Text style={{ color: '#64748b', marginBottom: 12 }}>{SUPPORT_EMAIL}</Text>
+        <AppButton label="Send Email" onPress={() => openEmailSupport('Support Request')} style={{ backgroundColor: '#2563eb' }} />
+      </AppCard>
 
-      <ContactOption
-        icon="✉️"
-        title="Email Support"
-        subtitle="We typically respond within 24 hours"
-        color="#2563eb"
-        onPress={() => openEmailSupport('Support Request')}
-      />
-      <ContactOption
-        icon="💳"
-        title="Payment Issue"
-        subtitle="Report a payment problem or dispute"
-        color="#d97706"
-        onPress={() => openEmailSupport('Payment Issue')}
-      />
-      <ContactOption
-        icon="🔒"
-        title="Account Suspended"
-        subtitle="Appeal a suspension or ban"
-        color="#dc2626"
-        onPress={() => openEmailSupport('Account Suspension Appeal')}
-      />
-      <ContactOption
-        icon="🛡️"
-        title="Report a User"
-        subtitle="Report misconduct or fraud"
-        color="#7c3aed"
-        onPress={() => openEmailSupport('User Report')}
-      />
+      <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 15, marginBottom: 10 }}>Contact Us</Text>
+      <ContactOption icon="✉️" title="General Support" subtitle="Questions about your account or jobs" color="#2563eb" onPress={() => openEmailSupport('Support Request')} />
+      <ContactOption icon="💳" title="Payment Issue" subtitle="Report payment errors or delays" color="#d97706" onPress={() => openEmailSupport('Payment Issue')} />
+      <ContactOption icon="🛡️" title="Report a User" subtitle="Report misconduct or fraud" color="#7c3aed" onPress={() => openEmailSupport('User Report')} />
 
       <View style={{ height: 1, backgroundColor: '#e2e8f0', marginVertical: AppSpace.lg }} />
 
@@ -189,13 +158,13 @@ export default function HelpSupport() {
       <View style={{ backgroundColor: '#eff6ff', borderRadius: AppRadius.lg, padding: AppSpace.lg, alignItems: 'center', marginBottom: AppSpace.lg }}>
         <Text style={{ fontSize: 24, marginBottom: 8 }}>💬</Text>
         <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 15, marginBottom: 4, textAlign: 'center' }}>
-          Still need help?
+          Still have questions?
         </Text>
         <Text style={{ color: '#475569', fontSize: 13, textAlign: 'center', lineHeight: 18, marginBottom: 14 }}>
-          Our support team is here to help. Send us an email and we'll get back to you as soon as possible.
+          Our team responds within 24 hours
         </Text>
         <AppButton
-          label="📧  Send Email to Support"
+          label="Contact Support"
           onPress={() => openEmailSupport('Support Request')}
           style={{ backgroundColor: '#2563eb', width: '100%' }}
         />

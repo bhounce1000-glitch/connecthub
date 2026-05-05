@@ -2091,6 +2091,59 @@ app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/jobs/:id/remind-customer', requireAuth, async (req, res) => {
+  try {
+    const requestId = String(req.params.id || '').trim();
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const snap = await requestRef.get();
+    if (!snap.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const data = snap.data() || {};
+    const acceptedBy = String(data.acceptedBy || '').toLowerCase();
+    const customerEmail = String(data.user || '').toLowerCase();
+
+    if (!acceptedBy || acceptedBy !== actorEmail) {
+      return sendError(res, req, 403, 'provider_access_required', 'Only the assigned provider can send reminders');
+    }
+
+    if (!customerEmail) {
+      return sendError(res, req, 400, 'missing_customer', 'Missing customer email');
+    }
+
+    await notifyUser(
+      customerEmail,
+      `Your provider is waiting for escrow funding on "${data.title || requestId}". Please fund escrow to continue.`,
+      'Escrow Funding Reminder',
+      { screen: 'pay', requestId, jobId: requestId }
+    );
+
+    await writeAuditLog({
+      actorEmail,
+      actorUid: req.user?.uid || null,
+      eventType: 'provider_reminded_customer_to_fund',
+      requestId,
+      before: data,
+      after: data,
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Reminder sent to customer',
+      data: { id: requestId, customerEmail },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'JOB_REMIND_CUSTOMER_ERROR');
+    return sendError(res, req, 500, 'job_remind_customer_failed', 'Could not send reminder');
+  }
+});
+
 app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
   try {
     const requestId = req.params.id;
