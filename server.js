@@ -1437,9 +1437,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
     const amount = parseMoney(req.body?.amount);
     const accountName = String(req.body?.accountName || '').trim();
-    const accountNumber = String(req.body?.accountNumber || '').trim();
-    const bankCode = String(req.body?.bankCode || '').trim();
-    const bankName = String(req.body?.bankName || '').trim();
+    const phoneNumber = String(req.body?.phoneNumber || '').trim();
+    const network = String(req.body?.network || '').trim().toUpperCase();
 
     if (!actorEmail) {
       return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
@@ -1449,8 +1448,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       return sendError(res, req, 400, 'invalid_withdrawal_amount', 'Minimum withdrawal amount is GHS 10.00');
     }
 
-    if (!accountName || !accountNumber || !bankCode) {
-      return sendError(res, req, 400, 'missing_bank_details', 'accountName, accountNumber, and bankCode are required');
+    if (!accountName || !phoneNumber || !network) {
+      return sendError(res, req, 400, 'missing_momo_details', 'accountName, phoneNumber, and network are required');
     }
 
     const paystackSecret = getPaystackSecret();
@@ -1478,10 +1477,10 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        type: 'nuban',
+        type: 'mobile_money',
         name: accountName,
-        account_number: accountNumber,
-        bank_code: bankCode,
+        mobile_number: phoneNumber,
+        network,
         currency: 'GHS',
       }),
     });
@@ -1489,7 +1488,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const recipientCode = recipientData?.data?.recipient_code;
 
     if (!recipientResponse.ok || !recipientData?.status || !recipientCode) {
-      return sendError(res, req, 400, 'recipient_creation_failed', 'Could not validate bank account details', recipientData);
+      return sendError(res, req, 400, 'recipient_creation_failed', 'Could not create Mobile Money recipient', recipientData);
     }
 
     const reference = `wd_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -1519,9 +1518,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       walletBalance: admin.firestore.FieldValue.increment(-amount),
       updatedAt: nowIso,
       lastWithdrawalAccountName: accountName,
-      lastWithdrawalAccountNumberMasked: `${accountNumber.slice(0, 2)}******${accountNumber.slice(-2)}`,
-      lastWithdrawalBankCode: bankCode,
-      lastWithdrawalBankName: bankName || null,
+      lastWithdrawalMomoNumber: `${phoneNumber.slice(0, 3)}****${phoneNumber.slice(-3)}`,
+      lastWithdrawalNetwork: network,
     }, { merge: true });
 
     await adminDb.collection('wallet_withdrawals').doc(reference).set({
@@ -1532,9 +1530,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       currency: 'GHS',
       status: 'PENDING',
       accountName,
-      accountNumberMasked: `${accountNumber.slice(0, 2)}******${accountNumber.slice(-2)}`,
-      bankCode,
-      bankName: bankName || null,
+      momoNumberMasked: `${phoneNumber.slice(0, 3)}****${phoneNumber.slice(-3)}`,
+      network,
       recipientCode,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -1560,8 +1557,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: nowIso,
       transferCode,
-      bankCode,
-      bankName: bankName || null,
+      momoNetwork: network,
     });
 
     await notifyUser(

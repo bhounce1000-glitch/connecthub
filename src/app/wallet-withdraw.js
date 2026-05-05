@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -10,13 +10,20 @@ import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
 
+const NETWORKS = [
+  { label: 'MTN', value: 'MTN' },
+  { label: 'Telecel', value: 'TELECEL' },
+  { label: 'AirtelTigo', value: 'ATL' },
+  { label: 'Vodafone', value: 'VOD' },
+  { label: 'Other', value: 'OTHER' },
+];
+
 export default function WalletWithdraw() {
   const router = useRouter();
   const [amount, setAmount] = useState('');
   const [accountName, setAccountName] = useState('');
-  const [accountNumber, setAccountNumber] = useState('');
-  const [bankCode, setBankCode] = useState('');
-  const [bankName, setBankName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [network, setNetwork] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
 
@@ -26,9 +33,16 @@ export default function WalletWithdraw() {
       setNotice({ tone: 'warning', title: 'Invalid amount', message: 'Minimum withdrawal amount is GHS 10.00.' });
       return;
     }
-
-    if (!accountName.trim() || !accountNumber.trim() || !bankCode.trim()) {
-      setNotice({ tone: 'warning', title: 'Missing details', message: 'Account name, account number, and bank code are required.' });
+    if (!network) {
+      setNotice({ tone: 'warning', title: 'Select network', message: 'Please select your Mobile Money network.' });
+      return;
+    }
+    if (!phoneNumber.trim()) {
+      setNotice({ tone: 'warning', title: 'Missing details', message: 'Mobile Money phone number is required.' });
+      return;
+    }
+    if (!accountName.trim()) {
+      setNotice({ tone: 'warning', title: 'Missing details', message: 'Account name is required.' });
       return;
     }
 
@@ -38,15 +52,14 @@ export default function WalletWithdraw() {
       const payload = {
         amount: numericAmount,
         accountName: accountName.trim(),
-        accountNumber: accountNumber.trim(),
-        bankCode: bankCode.trim(),
-        bankName: bankName.trim(),
+        phoneNumber: phoneNumber.trim(),
+        network,
       };
       const { response, data } = await apiPost(`${API_BASE_URL}/wallet/withdraw`, payload, { requireAuth: true });
       const result = assertApiSuccess(response, data, 'Could not start withdrawal');
       const ref = result?.data?.reference || 'N/A';
-      setNotice({ tone: 'success', title: 'Withdrawal submitted', message: `Request sent successfully. Reference: ${ref}` });
-      setTimeout(() => router.replace('/wallet'), 700);
+      setNotice({ tone: 'success', title: 'Withdrawal submitted', message: `Your MoMo withdrawal is being processed. Reference: ${ref}` });
+      setTimeout(() => router.replace('/wallet'), 2000);
     } catch (error) {
       setNotice({ tone: 'error', title: 'Withdrawal failed', message: error.message || 'Could not submit withdrawal.' });
     } finally {
@@ -58,14 +71,14 @@ export default function WalletWithdraw() {
     <ScreenShell
       eyebrow="WALLET"
       title="Withdraw"
-      subtitle="Send wallet funds to your bank account."
+      subtitle="Send wallet funds to your Mobile Money account."
       accentColor="#1e3a8a"
       accentTextColor="#dbeafe"
       backgroundColor="#f8fafc"
       scroll
     >
       <AppCard>
-        <Text style={{ color: '#64748b', marginBottom: 12, fontSize: 12 }}>
+        <Text style={{ color: '#64748b', marginBottom: 16, fontSize: 12 }}>
           Minimum withdrawal: GHS 10.00. Your account must be KYC verified.
         </Text>
 
@@ -77,33 +90,47 @@ export default function WalletWithdraw() {
           placeholder="10"
         />
 
+        {/* Network selector */}
+        <Text style={{ fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 8, marginTop: 4 }}>
+          Mobile Money Network
+        </Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+          {NETWORKS.map(n => {
+            const selected = network === n.value;
+            return (
+              <Pressable
+                key={n.value}
+                onPress={() => setNetwork(n.value)}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 8,
+                  borderRadius: 20,
+                  borderWidth: 1.5,
+                  borderColor: selected ? '#2563eb' : '#cbd5e1',
+                  backgroundColor: selected ? '#dbeafe' : '#f8fafc',
+                }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: selected ? '700' : '500', color: selected ? '#1e3a8a' : '#64748b' }}>
+                  {n.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
         <AppInput
-          label="Account Name"
+          label="MoMo Phone Number"
+          value={phoneNumber}
+          onChangeText={setPhoneNumber}
+          keyboardType="phone-pad"
+          placeholder="e.g. 0241234567"
+        />
+
+        <AppInput
+          label="Account Name (as registered on MoMo)"
           value={accountName}
           onChangeText={setAccountName}
           placeholder="John Mensah"
-        />
-
-        <AppInput
-          label="Account Number"
-          value={accountNumber}
-          onChangeText={setAccountNumber}
-          keyboardType="number-pad"
-          placeholder="0123456789"
-        />
-
-        <AppInput
-          label="Bank Code"
-          value={bankCode}
-          onChangeText={setBankCode}
-          placeholder="e.g. 033"
-        />
-
-        <AppInput
-          label="Bank Name (optional)"
-          value={bankName}
-          onChangeText={setBankName}
-          placeholder="Bank name"
         />
 
         <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 10 }} />
@@ -126,7 +153,7 @@ export default function WalletWithdraw() {
 
       <View style={{ marginTop: 12 }}>
         <Text style={{ color: '#64748b', fontSize: 12 }}>
-          Tip: If you do not know your bank code, contact support from Help & Support.
+          Funds are sent via Paystack to your Mobile Money account. Processing may take a few minutes.
         </Text>
       </View>
     </ScreenShell>
