@@ -12,9 +12,8 @@ import { apiPost, assertApiSuccess } from '../utils/api-client';
 
 const NETWORKS = [
   { label: 'MTN', value: 'MTN' },
-  { label: 'Telecel', value: 'TELECEL' },
+  { label: 'Telecel (Vodafone)', value: 'VOD' },
   { label: 'AirtelTigo', value: 'ATL' },
-  { label: 'Vodafone', value: 'VOD' },
   { label: 'Other', value: 'OTHER' },
 ];
 

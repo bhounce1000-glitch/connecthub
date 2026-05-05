@@ -1437,8 +1437,14 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
     const amount = parseMoney(req.body?.amount);
     const accountName = String(req.body?.accountName || '').trim();
-    const phoneNumber = String(req.body?.phoneNumber || '').trim();
-    const network = String(req.body?.network || '').trim().toUpperCase();
+    const rawPhone = String(req.body?.phoneNumber || '').trim();
+    // Normalize Ghana local numbers (0XXXXXXXXX) to international (233XXXXXXXXX)
+    const phoneNumber = rawPhone.startsWith('0') && rawPhone.length === 10
+      ? '233' + rawPhone.slice(1)
+      : rawPhone;
+    const rawNetwork = String(req.body?.network || '').trim().toUpperCase();
+    // Paystack uses 'VOD' for Vodafone/Telecel Ghana
+    const network = rawNetwork === 'TELECEL' ? 'VOD' : rawNetwork;
 
     if (!actorEmail) {
       return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
@@ -1488,7 +1494,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const recipientCode = recipientData?.data?.recipient_code;
 
     if (!recipientResponse.ok || !recipientData?.status || !recipientCode) {
-      return sendError(res, req, 400, 'recipient_creation_failed', 'Could not create Mobile Money recipient', recipientData);
+      const paystackMsg = recipientData?.message || 'Could not create Mobile Money recipient';
+      return sendError(res, req, 400, 'recipient_creation_failed', paystackMsg, recipientData);
     }
 
     const reference = `wd_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
