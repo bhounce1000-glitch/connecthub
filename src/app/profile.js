@@ -1,5 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
+import { signOut } from 'firebase/auth';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
@@ -12,6 +13,7 @@ import LoadingSkeleton from '../components/ui/loading-skeleton';
 import { KYC_STATUS, isAdminEmail } from '../constants/access';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
 import { db, storage } from '../firebase';
+import { auth } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
 
@@ -147,6 +149,15 @@ export default function Profile() {
     }
   };
 
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+    } catch {
+      // Non-blocking: still navigate to auth gate.
+    }
+    router.replace('/auth');
+  };
+
   const initial = useMemo(() => String(currentEmail || '?').charAt(0).toUpperCase(), [currentEmail]);
   const role = isAdminEmail(currentEmail) ? 'Admin' : String(profile?.role || 'customer').toLowerCase() === 'provider' ? 'Provider' : 'Customer';
   const kycStatus = profile?.kycStatus;
@@ -230,7 +241,7 @@ export default function Profile() {
             <TouchableOpacity onPress={() => router.push('/privacy-policy')} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
               <Text style={{ color: AppColors.ink900 }}>Privacy Policy  →</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.replace('/auth')} style={{ paddingTop: 12 }}>
+            <TouchableOpacity onPress={handleSignOut} style={{ paddingTop: 12 }}>
               <Text style={{ color: '#dc2626', fontWeight: '800' }}>Sign Out</Text>
             </TouchableOpacity>
           </AppCard>
