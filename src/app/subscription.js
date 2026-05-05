@@ -222,14 +222,23 @@ export default function Subscription() {
                 ) : null}
               </View>
             ) : null}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontWeight: '800', fontSize: 18 }}>{plan.name}</Text>
-              <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: `${plan.badge}22` }}>
-                <Text style={{ color: plan.badge, fontWeight: '800' }}>{plan.amount > 0 ? `GHS ${plan.amount}` : 'FREE'}</Text>
-              </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <Text style={{ fontWeight: '800', fontSize: 20 }}>{plan.name}</Text>
+              {plan.amount > 0 ? (
+                <View style={{ alignItems: 'flex-end' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 2 }}>
+                    <Text style={{ color: plan.badge, fontWeight: '900', fontSize: 26 }}>GHS {plan.amount}</Text>
+                    <Text style={{ color: '#64748b', fontWeight: '600', fontSize: 13 }}>/mo</Text>
+                  </View>
+                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>{annual}</Text>
+                </View>
+              ) : (
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ color: plan.badge, fontWeight: '900', fontSize: 22 }}>FREE</Text>
+                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>{annual}</Text>
+                </View>
+              )}
             </View>
-            <Text style={{ color: '#0f172a', marginTop: 6, fontWeight: '700' }}>{plan.amount > 0 ? '/month' : ''}</Text>
-            <Text style={{ color: '#64748b', marginTop: 2, fontSize: 12 }}>{annual}</Text>
             <View style={{ marginTop: 8 }}>
               {plan.features.map((feature) => <Text key={feature} style={{ color: '#334155', marginBottom: 3 }}>{feature}</Text>)}
             </View>
