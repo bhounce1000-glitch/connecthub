@@ -124,6 +124,9 @@ export default function WalletWithdraw() {
           keyboardType="phone-pad"
           placeholder="e.g. 0241234567"
         />
+        <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: -10, marginBottom: 12 }}>
+          Enter your local number (e.g. 0241234567) or international format (e.g. 233241234567).
+        </Text>
 
         <AppInput
           label="Account Name (as registered on MoMo)"

@@ -1437,14 +1437,18 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
     const amount = parseMoney(req.body?.amount);
     const accountName = String(req.body?.accountName || '').trim();
-    const rawPhone = String(req.body?.phoneNumber || '').trim();
-    // Normalize Ghana local numbers (0XXXXXXXXX) to international (233XXXXXXXXX)
-    const phoneNumber = rawPhone.startsWith('0') && rawPhone.length === 10
-      ? '233' + rawPhone.slice(1)
-      : rawPhone;
+    // Normalize phone: strip spaces/dashes, handle 0XXXXXXXXX → 233XXXXXXXXX and +233XXXXXXXXX → 233XXXXXXXXX
+    const rawPhone = String(req.body?.phoneNumber || '').replace(/[\s\-]/g, '').trim();
+    let phoneNumber = rawPhone;
+    if (rawPhone.startsWith('+233')) {
+      phoneNumber = rawPhone.slice(1); // +233... → 233...
+    } else if (rawPhone.startsWith('0') && rawPhone.length === 10) {
+      phoneNumber = '233' + rawPhone.slice(1); // 0XXXXXXXXX → 233XXXXXXXXX
+    }
     const rawNetwork = String(req.body?.network || '').trim().toUpperCase();
-    // Paystack uses 'VOD' for Vodafone/Telecel Ghana
-    const network = rawNetwork === 'TELECEL' ? 'VOD' : rawNetwork;
+    // Map any legacy TELECEL value to VOD (Paystack code for Vodafone/Telecel Ghana)
+    const NETWORK_MAP = { TELECEL: 'VOD', VODAFONE: 'VOD', AIRTELTIGO: 'ATL', TIGO: 'ATL', AIRTEL: 'ATL' };
+    const network = NETWORK_MAP[rawNetwork] || rawNetwork;
 
     if (!actorEmail) {
       return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
