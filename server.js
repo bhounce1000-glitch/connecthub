@@ -3486,3 +3486,173 @@ app.post('/chat/notify', requireAuth, async (req, res) => {
     return sendError(res, req, 500, 'chat_notify_failed', 'Could not send chat notification');
   }
 });
+
+app.post('/wallet/topup/init', payInitLimiter, requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const amount = parseMoney(req.body?.amount);
+    const paystackSecret = getPaystackSecret();
+
+    if (!actorEmail) {
+      return sendError(res, req, 401, 'missing_user_email', 'Authenticated user email is missing');
+    }
+
+    if (!amount || amount < 1) {
+      return sendError(res, req, 400, 'invalid_amount', 'Top up amount must be at least GHS 1.00');
+    }
+
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    }
+
+    const callbackUrl = `${NORMALIZED_CALLBACK_BASE_URL}/wallet-topup-return`;
+
+    const response = await fetch('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: actorEmail,
+        amount: Math.round(amount * 100),
+        callback_url: callbackUrl,
+        metadata: {
+          type: 'wallet_topup',
+          ownerEmail: actorEmail,
+          requestId: null,
+        },
+      }),
+    });
+
+    const data = await response.json();
+
+    logger.info({ paystackStatus: data?.status, ref: data?.data?.reference || null, ownerEmail: actorEmail }, 'WALLET_TOPUP_INIT_RESPONSE');
+
+    if (!response.ok || !data?.status || !data?.data?.authorization_url) {
+      return sendError(res, req, response.status || 500, 'wallet_topup_init_failed', data?.message || 'Could not initialize wallet top up');
+    }
+
+    return sendSuccess(res, req, {
+      message: 'Wallet top up initialized',
+      data: {
+        authorization_url: data.data.authorization_url,
+        access_code: data.data.access_code,
+        reference: data.data.reference,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'WALLET_TOPUP_INIT_ERROR');
+    return sendError(res, req, 500, 'wallet_topup_init_failed', 'Could not initialize wallet top up');
+  }
+});
+
+app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const reference = String(req.body?.reference || '').trim();
+    const paystackSecret = getPaystackSecret();
+
+    if (!reference) {
+      return sendError(res, req, 400, 'missing_reference', 'Missing payment reference');
+    }
+
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    }
+
+    const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data?.status || data?.data?.status !== 'success') {
+      return sendError(res, req, 400, 'wallet_topup_not_successful', data?.message || 'Top up payment not successful');
+    }
+
+    const metadata = data?.data?.metadata || {};
+    const metadataType = String(metadata?.type || '').trim().toLowerCase();
+    const metadataOwner = String(metadata?.ownerEmail || '').trim().toLowerCase();
+    const transactionEmail = String(data?.data?.customer?.email || '').trim().toLowerCase();
+    const amountGhs = parseMoney(Number(data?.data?.amount || 0) / 100);
+
+    if (metadataType !== 'wallet_topup') {
+      return sendError(res, req, 400, 'invalid_topup_type', 'This payment reference is not a wallet top up');
+    }
+
+    if (!amountGhs || amountGhs <= 0) {
+      return sendError(res, req, 400, 'invalid_topup_amount', 'Top up amount is invalid');
+    }
+
+    const ownerEmail = metadataOwner || transactionEmail;
+    if (!ownerEmail || ownerEmail !== actorEmail) {
+      return sendError(res, req, 403, 'owner_access_required', 'Only the payment owner can apply this wallet top up');
+    }
+
+    const topupRef = adminDb.collection('wallet_topups').doc(reference);
+    const transactionRef = adminDb.collection('transactions').doc(`wallet_topup_${reference}`);
+    const userRef = adminDb.collection('users').doc(ownerEmail);
+
+    let alreadyApplied = false;
+    await adminDb.runTransaction(async (txn) => {
+      const topupSnap = await txn.get(topupRef);
+      if (topupSnap.exists && topupSnap.data()?.applied === true) {
+        alreadyApplied = true;
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      txn.set(userRef, {
+        walletBalance: admin.firestore.FieldValue.increment(amountGhs),
+        updatedAt: nowIso,
+      }, { merge: true });
+
+      txn.set(topupRef, {
+        reference,
+        ownerEmail,
+        amount: amountGhs,
+        status: 'success',
+        applied: true,
+        appliedAt: nowIso,
+      }, { merge: true });
+
+      txn.set(transactionRef, {
+        senderEmail: 'paystack@system',
+        receiverEmail: ownerEmail,
+        amount: amountGhs,
+        status: 'success',
+        paymentMethod: 'wallet_topup',
+        transactionId: reference,
+        jobTitle: 'Wallet Top-up',
+        type: 'wallet_topup',
+        gatewayResponse: data?.data?.gateway_response || null,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+    });
+
+    if (!alreadyApplied) {
+      await notifyUser(
+        ownerEmail,
+        `Your wallet has been funded with GHS ${amountGhs.toFixed(2)}.`,
+        'Wallet Funded',
+        { screen: 'wallet' }
+      );
+    }
+
+    return sendSuccess(res, req, {
+      message: alreadyApplied ? 'Wallet top up already applied' : 'Wallet top up applied',
+      data: {
+        reference,
+        amount: amountGhs,
+        applied: !alreadyApplied,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'WALLET_TOPUP_VERIFY_ERROR');
+    return sendError(res, req, 500, 'wallet_topup_verify_failed', 'Could not verify wallet top up');
+  }
+});

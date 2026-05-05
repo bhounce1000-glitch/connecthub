@@ -55,7 +55,7 @@ export default function Wallet() {
   };
 
   const handleAddMoney = () => {
-    router.push('/payments');
+    router.push('/wallet-topup');
   };
 
   const loadWallet = async () => {

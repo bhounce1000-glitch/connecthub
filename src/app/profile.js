@@ -12,8 +12,7 @@ import AppNotice from '../components/ui/app-notice';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
 import { KYC_STATUS, isAdminEmail } from '../constants/access';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
-import { db, storage } from '../firebase';
-import { auth } from '../firebase';
+import { auth, db, storage } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
 
