@@ -257,10 +257,7 @@ export default function ProviderSetup() {
           borderColor: '#dbe4ef',
           padding: 16,
           marginBottom: AppSpace.md,
-          shadowColor: '#0f172a',
-          shadowOpacity: 0.06,
-          shadowRadius: 10,
-          shadowOffset: { width: 0, height: 4 },
+          boxShadow: '0px 4px 10px rgba(15, 23, 42, 0.06)',
           elevation: 2,
         }}>
           <Text style={{ fontWeight: '800', color: AppColors.ink900, marginBottom: 10 }}>Personal Info</Text>

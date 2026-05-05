@@ -9,7 +9,7 @@ import LoadingSkeleton from '../components/ui/loading-skeleton';
 import useAuthUser from '../hooks/use-auth-user';
 import { toDisplayDateTime } from '../utils/date-time';
 
-import { collection, doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { db } from '../firebase';
 
 function toEpoch(value) {
@@ -68,6 +68,7 @@ export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const groupedRows = useMemo(() => {
     const now = Date.now();
@@ -96,23 +97,56 @@ export default function Notifications() {
     if (!currentEmail) {
       setNotifications([]);
       setIsLoading(false);
+      setLoadError('');
       return undefined;
     }
 
-    const unsubscribe = onSnapshot(collection(db, 'notifications'), (snapshot) => {
-      const rows = snapshot.docs
-        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-        .filter((item) => {
-          const owner = String(item.userId || item.user || '').trim().toLowerCase();
-          return owner === currentEmail;
-        })
-        .sort((a, b) => toEpoch(b.createdAt) - toEpoch(a.createdAt));
+    setLoadError('');
+    const byUser = new Map();
+    const byUserId = new Map();
 
+    const flushRows = () => {
+      const merged = new Map([...byUser.entries(), ...byUserId.entries()]);
+      const rows = Array.from(merged.values()).sort((a, b) => toEpoch(b.createdAt) - toEpoch(a.createdAt));
       setNotifications(rows);
       setIsLoading(false);
-    });
+    };
 
-    return unsubscribe;
+    const onListenError = (error) => {
+      setLoadError(error?.code === 'permission-denied'
+        ? 'You do not have permission to view notifications right now.'
+        : 'Could not load notifications. Pull to refresh and try again.');
+      setIsLoading(false);
+    };
+
+    const unsubscribeUser = onSnapshot(
+      query(collection(db, 'notifications'), where('user', '==', currentEmail)),
+      (snapshot) => {
+        byUser.clear();
+        snapshot.docs.forEach((docSnap) => {
+          byUser.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+        });
+        flushRows();
+      },
+      onListenError
+    );
+
+    const unsubscribeUserId = onSnapshot(
+      query(collection(db, 'notifications'), where('userId', '==', currentEmail)),
+      (snapshot) => {
+        byUserId.clear();
+        snapshot.docs.forEach((docSnap) => {
+          byUserId.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+        });
+        flushRows();
+      },
+      onListenError
+    );
+
+    return () => {
+      unsubscribeUser();
+      unsubscribeUserId();
+    };
   }, [currentEmail, isAuthReady]);
 
   const handleMarkAsRead = async (item) => {
@@ -160,7 +194,7 @@ export default function Notifications() {
       )}
       hasItems={notifications.length > 0}
       emptyTitle="No notifications yet"
-      emptyDescription="When request updates or payment events arrive, they will appear here."
+      emptyDescription={loadError || 'When request updates or payment events arrive, they will appear here.'}
     >
       <FlatList
         data={groupedRows}

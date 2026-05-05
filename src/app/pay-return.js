@@ -118,9 +118,7 @@ export default function PayReturn() {
         style={{
           borderRadius: 20,
           padding: 24,
-          shadowColor: '#0f172a',
-          shadowOpacity: 0.08,
-          shadowRadius: 20,
+          boxShadow: '0px 6px 20px rgba(15, 23, 42, 0.08)',
           elevation: 6,
         }}
       >

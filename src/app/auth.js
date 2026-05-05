@@ -451,9 +451,7 @@ export default function Auth() {
         borderRadius: AppRadius.xxl,
         padding: AppSpace.xl,
         borderColor: '#dbeafe',
-        shadowColor: '#1e3a8a',
-        shadowOpacity: 0.12,
-        shadowRadius: 18,
+        boxShadow: '0px 6px 18px rgba(30, 58, 138, 0.12)',
         elevation: 6,
       }}
     >

@@ -232,9 +232,7 @@ export default function ResetPasswordScreen() {
         borderRadius: AppRadius.xxl,
         padding: AppSpace.xl,
         borderColor: '#ccfbf1',
-        shadowColor: '#134e4a',
-        shadowOpacity: 0.12,
-        shadowRadius: 18,
+        boxShadow: '0px 6px 18px rgba(19, 78, 74, 0.12)',
         elevation: 6,
       }}
     >

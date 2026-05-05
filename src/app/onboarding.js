@@ -125,10 +125,7 @@ export default function Onboarding() {
                 justifyContent: 'center',
                 alignItems: 'center',
                 marginBottom: 36,
-                shadowColor: item.accent,
-                shadowOpacity: 0.25,
-                shadowRadius: 24,
-                shadowOffset: { width: 0, height: 8 },
+                boxShadow: `0px 8px 24px ${item.accent}40`,
                 elevation: 10,
               }}
             >

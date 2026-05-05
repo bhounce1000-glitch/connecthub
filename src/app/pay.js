@@ -286,9 +286,7 @@ export default function Pay() {
         padding: 22,
         borderRadius: 22,
         borderColor: '#fed7aa',
-        shadowColor: '#9a3412',
-        shadowOpacity: 0.11,
-        shadowRadius: 14,
+        boxShadow: '0px 5px 14px rgba(154, 52, 18, 0.11)',
         elevation: 5,
       }}
     >

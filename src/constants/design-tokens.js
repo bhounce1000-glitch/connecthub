@@ -46,10 +46,7 @@ export const AppType = {
 
 export const AppShadow = {
   card: {
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
+    boxShadow: '0px 4px 12px rgba(15, 23, 42, 0.08)',
     elevation: 3,
   },
 };
