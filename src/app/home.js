@@ -76,6 +76,20 @@ export default function Home() {
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
   const isProvider = String(userProfiles[currentEmail]?.role || '').toLowerCase() === 'provider';
+  const currentPlan = String(userProfiles[currentEmail]?.subscriptionPlan || 'free').toLowerCase();
+  const isFreePlan = currentPlan === 'free' || currentPlan === 'basic';
+  const FREE_ACCEPT_LIMIT = 5;
+
+  const monthlyAcceptsUsed = useMemo(() => {
+    if (!currentEmail || !isProvider) return 0;
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    return requests.filter((r) => {
+      if (String(r.acceptedBy || '').toLowerCase() !== currentEmail) return false;
+      const ts = r.acceptedAt ? new Date(r.acceptedAt).getTime() : (r.createdAt?.seconds ? r.createdAt.seconds * 1000 : 0);
+      return ts >= monthStart;
+    }).length;
+  }, [requests, currentEmail, isProvider]);
 
   useEffect(() => {
     if (isAuthReady && !user) {
@@ -474,6 +488,34 @@ export default function Home() {
       )}
 
       <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
+
+      {isProvider && isFreePlan ? (
+        <View style={{
+          marginBottom: AppSpace.md,
+          borderRadius: AppRadius.md,
+          backgroundColor: monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT ? '#fef2f2' : monthlyAcceptsUsed >= 4 ? '#fefce8' : '#f0fdf4',
+          borderWidth: 1,
+          borderColor: monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT ? '#fca5a5' : monthlyAcceptsUsed >= 4 ? '#fde68a' : '#bbf7d0',
+          padding: 12,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '800', fontSize: 13, color: monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT ? '#b91c1c' : monthlyAcceptsUsed >= 4 ? '#92400e' : '#15803d' }}>
+              {monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT ? '🚫 Monthly limit reached' : `✅ ${monthlyAcceptsUsed} / ${FREE_ACCEPT_LIMIT} jobs accepted this month`}
+            </Text>
+            <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+              {monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT
+                ? 'Upgrade to Pro for unlimited accepts.'
+                : `${FREE_ACCEPT_LIMIT - monthlyAcceptsUsed} accepts remaining. Resets 1st of next month.`}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => router.push('/subscription')} style={{ backgroundColor: '#4f46e5', borderRadius: AppRadius.sm, paddingHorizontal: 10, paddingVertical: 6, marginLeft: 10 }}>
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 11 }}>Upgrade</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {/* Featured Providers */}
       {providers.length > 0 && (

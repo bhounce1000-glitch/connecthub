@@ -24,6 +24,16 @@ service cloud.firestore {
       return email() in ['bhounce1000@gmail.com'];
     }
 
+    function isBanned() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(email())) &&
+        get(/databases/$(database)/documents/users/$(email())).data.banned == true;
+    }
+
+    function notBanned() {
+      return !isBanned();
+    }
+
     function isOwner() {
       return resource.data.user == email();
     }
@@ -57,6 +67,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       allow create: if isSignedIn()
+        && notBanned()
         && request.resource.data.keys().hasAll(['title', 'location', 'price', 'user', 'acceptedBy', 'status', 'paid', 'createdAt'])
         && request.resource.data.keys().hasOnly(['title', 'location', 'price', 'image', 'description', 'category', 'urgency', 'preferredDate', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
         && request.resource.data.title is string
@@ -71,7 +82,7 @@ service cloud.firestore {
 
       allow delete: if false;
 
-      allow update: if isSignedIn() && (
+      allow update: if isSignedIn() && notBanned() && (
         isAdmin()
 
         || (
@@ -130,6 +141,7 @@ service cloud.firestore {
       allow read: if isSignedIn() && isRequestParticipant(requestId);
 
       allow create: if isSignedIn()
+        && notBanned()
         && isRequestParticipant(requestId)
         && request.resource.data.keys().hasOnly(['text', 'user', 'createdAt', 'senderEmail', 'timestamp', 'read'])
         && (request.resource.data.text is string || !('text' in request.resource.data))
@@ -150,8 +162,8 @@ service cloud.firestore {
 
     match /users/{userEmail} {
       allow read: if isSignedIn() && (userEmail == email() || isAdmin());
-      allow create: if isSignedIn() && userEmail == email();
-      allow update: if isSignedIn() && (
+      allow create: if isSignedIn() && notBanned() && userEmail == email();
+      allow update: if isSignedIn() && notBanned() && (
         (userEmail == email() && !('kycStatus' in request.resource.data.diff(resource.data).changedKeys()))
         || isAdmin()
       );
@@ -163,6 +175,7 @@ service cloud.firestore {
 
       // User can create/update their own submission but cannot directly self-verify/reject
       allow create, update: if isSignedIn()
+        && notBanned()
         && userEmail == email()
         && (
           !('kycStatus' in request.resource.data)
@@ -208,6 +221,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       allow create, update: if isSignedIn()
+        && notBanned()
         && providerEmail == email()
         && request.resource.data.keys().hasOnly([
             'email', 'name', 'bio', 'category', 'location', 'phone',
