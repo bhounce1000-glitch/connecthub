@@ -22,8 +22,8 @@ export default function WalletWithdraw() {
 
   const submitWithdrawal = async () => {
     const numericAmount = Number(amount || 0);
-    if (!Number.isFinite(numericAmount) || numericAmount < 50) {
-      setNotice({ tone: 'warning', title: 'Invalid amount', message: 'Minimum withdrawal amount is GHS 50.00.' });
+    if (!Number.isFinite(numericAmount) || numericAmount < 10) {
+      setNotice({ tone: 'warning', title: 'Invalid amount', message: 'Minimum withdrawal amount is GHS 10.00.' });
       return;
     }
 
@@ -66,7 +66,7 @@ export default function WalletWithdraw() {
     >
       <AppCard>
         <Text style={{ color: '#64748b', marginBottom: 12, fontSize: 12 }}>
-          Minimum withdrawal: GHS 50.00. Your account must be KYC verified.
+          Minimum withdrawal: GHS 10.00. Your account must be KYC verified.
         </Text>
 
         <AppInput
@@ -74,7 +74,7 @@ export default function WalletWithdraw() {
           value={amount}
           onChangeText={setAmount}
           keyboardType="numeric"
-          placeholder="50"
+          placeholder="10"
         />
 
         <AppInput

@@ -1445,8 +1445,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
     }
 
-    if (amount < 50) {
-      return sendError(res, req, 400, 'invalid_withdrawal_amount', 'Minimum withdrawal amount is GHS 50.00');
+    if (amount < 10) {
+      return sendError(res, req, 400, 'invalid_withdrawal_amount', 'Minimum withdrawal amount is GHS 10.00');
     }
 
     if (!accountName || !accountNumber || !bankCode) {
