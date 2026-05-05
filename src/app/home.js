@@ -395,6 +395,13 @@ export default function Home() {
             <Text style={{ color: '#94a3b8', marginTop: 2, fontSize: 13 }}>{currentEmail || 'Guest'}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity
+              onPress={() => router.push('/help')}
+              style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.12)', justifyContent: 'center', alignItems: 'center' }}
+              accessibilityLabel="Help & Support"
+            >
+              <Text style={{ fontSize: 16, color: '#fff', fontWeight: '800' }}>?</Text>
+            </TouchableOpacity>
             {unreadCount > 0 && (
               <TouchableOpacity onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
                 <Text style={{ fontSize: 22 }}>🔔</Text>

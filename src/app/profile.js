@@ -392,7 +392,7 @@ export default function Profile() {
                 <Text style={{ fontWeight: '800', color: AppColors.ink900, marginBottom: 8 }}>Settings</Text>
                 <TouchableOpacity onPress={() => router.push('/provider-setup')} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}><Text style={{ color: AppColors.ink900 }}>Edit Profile  →</Text></TouchableOpacity>
                 <TouchableOpacity onPress={() => router.push('/referral')} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}><Text style={{ color: AppColors.ink900 }}>Invite Friends  →</Text></TouchableOpacity>
-                <TouchableOpacity onPress={() => router.push('/notifications')} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}><Text style={{ color: AppColors.ink900 }}>Help & Support  →</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/help')} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}><Text style={{ color: AppColors.ink900 }}>Help & Support  →</Text></TouchableOpacity>
                 <TouchableOpacity onPress={() => router.replace('/auth')} style={{ paddingTop: 12 }}><Text style={{ color: '#dc2626', fontWeight: '700' }}>Sign Out</Text></TouchableOpacity>
               </AppCard>
 
