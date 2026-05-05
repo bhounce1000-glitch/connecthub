@@ -208,14 +208,18 @@ export default function Subscription() {
             : { backgroundColor: '#fff', borderColor: '#e2e8f0' };
         return (
           <AppCard key={plan.key} style={{ marginBottom: 12, borderWidth: 1, ...cardStyle }}>
-            {plan.badgeText ? (
-              <View style={{ position: 'absolute', right: 10, top: 10, backgroundColor: plan.badge, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>{plan.badgeText}</Text>
-              </View>
-            ) : null}
-            {active ? (
-              <View style={{ marginBottom: 8, backgroundColor: '#dcfce7', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, alignSelf: 'flex-start' }}>
-                <Text style={{ color: '#166534', fontWeight: '800', fontSize: 11 }}>✅ CURRENT PLAN</Text>
+            {(plan.badgeText || active) ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                {plan.badgeText ? (
+                  <View style={{ backgroundColor: plan.badge, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                    <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>{plan.badgeText}</Text>
+                  </View>
+                ) : null}
+                {active ? (
+                  <View style={{ backgroundColor: '#dcfce7', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+                    <Text style={{ color: '#166534', fontWeight: '800', fontSize: 11 }}>✅ CURRENT PLAN</Text>
+                  </View>
+                ) : null}
               </View>
             ) : null}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
