@@ -126,6 +126,22 @@ export default function Payments() {
     { key: 'pending', label: 'Pending' },
   ];
 
+  const statusBadge = (status) => {
+    const key = String(status || 'pending').toLowerCase();
+    if (key === 'success') return { bg: '#dcfce7', color: '#166534', label: 'success' };
+    if (key === 'refunded') return { bg: '#ffedd5', color: '#c2410c', label: 'refunded' };
+    if (key === 'resolved') return { bg: '#dbeafe', color: '#1d4ed8', label: 'resolved' };
+    if (key === 'failed' || key === 'abandoned') return { bg: '#fee2e2', color: '#b91c1c', label: key };
+    return { bg: '#e5e7eb', color: '#374151', label: 'pending' };
+  };
+
+  const channelIcon = (value) => {
+    const channel = String(value || '').toLowerCase();
+    if (channel.includes('mobile')) return '📱';
+    if (channel.includes('card')) return '💳';
+    return '💰';
+  };
+
   return (
     <ListScreen
       eyebrow="PAYMENT OPS"
@@ -225,14 +241,20 @@ export default function Payments() {
             key={item.id}
             style={{ marginBottom: 12 }}
           >
-            <Text style={{ fontWeight: '700', fontSize: 16, marginBottom: 6 }}>
-              {item.title || item.id}
-            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <Text style={{ fontWeight: '700', fontSize: 16, flex: 1 }}>
+                {item.title || item.id}
+              </Text>
+              <View style={{ backgroundColor: statusBadge(item.paymentStatus).bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
+                <Text style={{ color: statusBadge(item.paymentStatus).color, fontWeight: '800', fontSize: 11 }}>{statusBadge(item.paymentStatus).label}</Text>
+              </View>
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: '900', color: '#166534', marginBottom: 4 }}>GHS {Number(item.price || 0).toFixed(2)}</Text>
             <Text>ID: {item.id}</Text>
-            <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
+            <Text>Paid: {item.paid ? 'Yes ✅' : 'No ❌'}</Text>
             <Text>Payment status: {item.paymentStatus || 'Unavailable'}</Text>
             <Text>Reference: {item.paymentReference || 'Unavailable'}</Text>
-            <Text>Channel: {item.paymentChannel || 'Unavailable'}</Text>
+            <Text>Channel: {channelIcon(item.paymentChannel)} {item.paymentChannel || 'Unavailable'}</Text>
             <Text>Gateway: {item.gatewayResponse || 'Unavailable'}</Text>
             <Text>User: {item.user || 'Unavailable'}</Text>
             <Text>Accepted by: {item.acceptedBy || 'Unavailable'}</Text>

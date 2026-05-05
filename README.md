@@ -74,6 +74,38 @@ Use this checklist before every release:
 - `npm run lint`: Lint the Expo app.
 - `npm run smoke:api`: Validate core backend payment endpoints and health route.
 - `npm run check:release`: Run lint and API smoke checks together.
+- `npm run migrate:kyc:dry`: Preview KYC status sync changes from `kyc_submissions` to `users`.
+- `npm run migrate:kyc`: Apply the one-time KYC status sync.
+- `npm run migrate:kyc:repair:dry`: Preview auto-repair of blank statuses and malformed doc cleanup.
+- `npm run migrate:kyc:repair`: Apply auto-repair and malformed doc cleanup.
+
+## One-time KYC backfill
+
+Use this migration if existing users are stuck behind stale `users.kycStatus` values.
+
+1. Run a dry run first:
+
+   ```bash
+   npm run migrate:kyc:dry
+   ```
+
+2. If the summary looks correct, run the live migration:
+
+   ```bash
+   npm run migrate:kyc
+   ```
+
+Optional: include users that are missing a `users/{email}` document.
+
+```bash
+node scripts/sync-kyc-status.js --include-missing-users
+```
+
+Optional: run with blank-status auto-repair and malformed cleanup.
+
+```bash
+node scripts/sync-kyc-status.js --auto-repair-blank-status --delete-malformed
+```
 
 For a split deployment, a common setup is:
 

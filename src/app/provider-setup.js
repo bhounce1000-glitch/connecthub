@@ -10,7 +10,7 @@ import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tok
 
 // Firebase
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { KYC_STATUS } from '../constants/access';
+import { CATEGORY_ICONS, KYC_STATUS } from '../constants/access';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
@@ -105,8 +105,8 @@ export default function ProviderSetup() {
 
     if (!trimmedBio) {
       errors.bio = 'Write a short description of what you offer.';
-    } else if (trimmedBio.length > 500) {
-      errors.bio = 'Bio must be 500 characters or fewer.';
+    } else if (trimmedBio.length > 300) {
+      errors.bio = 'Bio must be 300 characters or fewer.';
     }
 
     if (!category) {
@@ -225,10 +225,10 @@ export default function ProviderSetup() {
 
         {/* Availability toggle */}
         <View style={{
-          backgroundColor: AppColors.white,
+          backgroundColor: isAvailable ? '#ecfdf5' : '#f1f5f9',
           borderRadius: AppRadius.lg,
           borderWidth: 1,
-          borderColor: '#dbe4ef',
+          borderColor: isAvailable ? '#86efac' : '#cbd5e1',
           padding: 16,
           marginBottom: AppSpace.md,
           flexDirection: 'row',
@@ -249,7 +249,7 @@ export default function ProviderSetup() {
           />
         </View>
 
-        {/* Main form card */}
+        {/* Section: Personal Info */}
         <View style={{
           backgroundColor: AppColors.white,
           borderRadius: AppRadius.lg,
@@ -263,6 +263,8 @@ export default function ProviderSetup() {
           shadowOffset: { width: 0, height: 4 },
           elevation: 2,
         }}>
+          <Text style={{ fontWeight: '800', color: AppColors.ink900, marginBottom: 10 }}>Personal Info</Text>
+
           <AppInput
             label="Full Name / Business Name *"
             placeholder="e.g. John Mensah Electricals"
@@ -281,6 +283,9 @@ export default function ProviderSetup() {
             multiline
             error={fieldErrors.bio}
           />
+          <Text style={{ color: bio.length > 300 ? '#b91c1c' : AppColors.ink500, fontSize: 12, marginTop: -6, marginBottom: 12, textAlign: 'right' }}>{bio.length}/300</Text>
+
+          <Text style={{ fontWeight: '800', color: AppColors.ink900, marginBottom: 10 }}>Service Details</Text>
 
           {/* Category selector */}
           <Text style={{ fontSize: AppType.body, fontWeight: '600', color: AppColors.ink900, marginBottom: AppSpace.xs }}>
@@ -297,14 +302,19 @@ export default function ProviderSetup() {
                   key={cat}
                   onPress={() => setCategory(cat)}
                   style={{
-                    paddingHorizontal: 14,
-                    paddingVertical: 8,
+                    width: '48%',
+                    paddingVertical: 10,
                     borderRadius: AppRadius.md,
                     backgroundColor: selected ? '#4f46e5' : '#f1f5f9',
                     borderWidth: 1,
                     borderColor: selected ? '#4f46e5' : '#cbd5e1',
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
                   }}
                 >
+                  <Text>{CATEGORY_ICONS[cat] || '✨'}</Text>
                   <Text style={{ fontWeight: '600', fontSize: 13, color: selected ? AppColors.white : AppColors.ink700 }}>
                     {cat}
                   </Text>
@@ -332,15 +342,20 @@ export default function ProviderSetup() {
             keyboardType="phone-pad"
           />
 
-          <AppInput
-            label="Starting Price — GHS (optional)"
-            placeholder="e.g. 50"
-            value={startingPrice}
-            onChangeText={setStartingPrice}
-            editable={!isSaving}
-            error={fieldErrors.startingPrice}
-            keyboardType="numeric"
-          />
+          <Text style={{ fontSize: AppType.body, fontWeight: '600', color: AppColors.ink900, marginBottom: AppSpace.xs }}>Starting Price (optional)</Text>
+          <View style={{ borderWidth: 1, borderColor: fieldErrors.startingPrice ? '#b91c1c' : '#e2e8f0', borderRadius: AppRadius.md, marginBottom: AppSpace.md, flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff' }}>
+            <Text style={{ color: AppColors.ink500, marginLeft: 12, marginRight: 8, fontWeight: '700' }}>GHS</Text>
+            <TextInput
+              value={startingPrice}
+              onChangeText={setStartingPrice}
+              editable={!isSaving}
+              keyboardType="numeric"
+              placeholder="50"
+              placeholderTextColor="#94a3b8"
+              style={{ flex: 1, paddingVertical: 12, paddingRight: 12, color: AppColors.ink900 }}
+            />
+          </View>
+          {fieldErrors.startingPrice ? <Text style={{ color: '#b91c1c', marginTop: -8, marginBottom: 8, fontSize: 13 }}>{fieldErrors.startingPrice}</Text> : null}
 
           <AppInput
             label="Years of Experience (optional)"
@@ -355,6 +370,7 @@ export default function ProviderSetup() {
 
           {/* Skills section */}
           <View style={{ marginTop: 20, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 20 }}>
+            <Text style={{ fontWeight: '800', color: AppColors.ink900, marginBottom: 10 }}>Skills & Tags</Text>
             <Text style={{ fontWeight: '700', fontSize: 14, color: AppColors.ink900, marginBottom: 8 }}>
               🏆 Skills & Tags (optional)
             </Text>
@@ -428,6 +444,11 @@ export default function ProviderSetup() {
                 ))}
               </View>
             )}
+          </View>
+
+          <View style={{ marginTop: 18, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+            <Text style={{ fontWeight: '800', color: AppColors.ink900, marginBottom: 6 }}>Availability</Text>
+            <Text style={{ color: AppColors.ink500, fontSize: 13 }}>Toggle above to control whether clients can discover your profile now.</Text>
           </View>
         </View>
 

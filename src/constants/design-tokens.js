@@ -10,6 +10,7 @@ export const AppColors = {
   green600: '#16a34a',
   emerald700: '#15803d',
   amber600: '#d97706',
+  red600: '#dc2626',
   orange50: '#fff7ed',
   rose700: '#be123c',
   violet600: '#7c3aed',
@@ -20,10 +21,11 @@ export const AppColors = {
 
 export const AppRadius = {
   sm: 8,
-  md: 10,
-  lg: 14,
+  md: 12,
+  lg: 12,
   xl: 18,
   xxl: 22,
+  pill: 20,
 };
 
 export const AppSpace = {
@@ -40,4 +42,14 @@ export const AppType = {
   body: 15,
   title: 20,
   heading: 30,
+};
+
+export const AppShadow = {
+  card: {
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
 };

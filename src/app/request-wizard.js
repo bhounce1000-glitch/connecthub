@@ -5,6 +5,7 @@ import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useState } from 'react';
 import {
+    ActivityIndicator,
     FlatList,
     Image,
     KeyboardAvoidingView,
@@ -21,8 +22,25 @@ import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { auth, db, storage } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 
-const CATEGORIES = Object.keys(CATEGORY_ICONS);
+const CATEGORIES = [
+  { name: 'Cleaning', icon: '🧹' },
+  { name: 'Plumbing', icon: '🔧' },
+  { name: 'Electrical', icon: '⚡' },
+  { name: 'Driving', icon: '🚗' },
+  { name: 'Cooking', icon: '🍳' },
+  { name: 'Beauty', icon: '💇' },
+  { name: 'Construction', icon: '🏗️' },
+  { name: 'Moving', icon: '📦' },
+  { name: 'Security', icon: '🔒' },
+  { name: 'Tech Support', icon: '💻' },
+  { name: 'Gardening', icon: '🌿' },
+  { name: 'Pet Care', icon: '🐾' },
+  { name: 'Tutoring', icon: '📚' },
+  { name: 'Design', icon: '🎨' },
+  { name: 'Other', icon: '✨' },
+];
 const TOTAL_STEPS = 4;
+const STEP_NAMES = ['Category', 'Details', 'Location', 'Review'];
 
 export default function RequestWizard() {
   const router = useRouter();
@@ -230,6 +248,20 @@ export default function RequestWizard() {
           <View style={{ height: 4, backgroundColor: '#334155', borderRadius: 2 }}>
             <View style={{ height: 4, backgroundColor: '#6366f1', borderRadius: 2, width: `${progressPct}%` }} />
           </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+            {STEP_NAMES.map((name, index) => (
+              <Text
+                key={name}
+                style={{
+                  color: step - 1 >= index ? '#c7d2fe' : '#64748b',
+                  fontSize: 11,
+                  fontWeight: step - 1 === index ? '800' : '600',
+                }}
+              >
+                {name}
+              </Text>
+            ))}
+          </View>
         </View>
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: AppSpace.lg }} keyboardShouldPersistTaps="handled">
@@ -247,14 +279,14 @@ export default function RequestWizard() {
               <FlatList
                 data={CATEGORIES}
                 numColumns={2}
-                keyExtractor={(c) => c}
+                keyExtractor={(item) => item.name}
                 scrollEnabled={false}
                 columnWrapperStyle={{ gap: 10, marginBottom: 10 }}
-                renderItem={({ item: cat }) => {
-                  const active = cat === category;
+                renderItem={({ item }) => {
+                  const active = item.name === category;
                   return (
                     <TouchableOpacity
-                      onPress={() => setCategory(cat)}
+                      onPress={() => setCategory(item.name)}
                       style={{
                         flex: 1,
                         paddingVertical: 18,
@@ -266,8 +298,9 @@ export default function RequestWizard() {
                         alignItems: 'center',
                       }}
                     >
-                      <Text style={{ fontSize: 26, marginBottom: 6 }}>{CATEGORY_ICONS[cat] || '✨'}</Text>
-                      <Text style={{ fontWeight: '700', fontSize: 12, color: active ? '#4f46e5' : AppColors.ink700, textAlign: 'center' }}>{cat}</Text>
+                      <Text style={{ fontSize: 26, marginBottom: 6 }}>{item.icon || CATEGORY_ICONS[item.name] || '✨'}</Text>
+                      <Text style={{ fontWeight: '700', fontSize: 12, color: active ? '#4f46e5' : AppColors.ink700, textAlign: 'center' }}>{item.name}</Text>
+                      {active ? <Text style={{ color: '#2563eb', marginTop: 4, fontWeight: '800' }}>✓ Selected</Text> : null}
                     </TouchableOpacity>
                   );
                 }}
@@ -415,13 +448,13 @@ export default function RequestWizard() {
               <Text style={{ color: AppColors.ink500, marginBottom: 20 }}>Confirm your job details before going live.</Text>
 
               <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, padding: 20, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 }}>
-                <Row label="Category" value={`${CATEGORY_ICONS[category] || ''} ${category}`} />
-                <Row label="Title" value={title} />
-                {locationCity ? <Row label="Location" value={locationArea ? `${locationArea}, ${locationCity}` : locationCity} /> : null}
-                {description ? <Row label="Description" value={description} /> : null}
-                {preferredDate ? <Row label="Preferred Date" value={preferredDate} /> : null}
-                <Row label="Budget" value={isFlexible ? 'Flexible' : `GHS ${price}`} />
-                <Row label="Urgency" value={urgency === 'urgent' ? '🚨 Urgent' : '📅 Normal'} />
+                <Row label="📁 Category" value={`${CATEGORY_ICONS[category] || ''} ${category}`} onEdit={() => setStep(1)} />
+                <Row label="📝 Title" value={title} onEdit={() => setStep(2)} />
+                {locationCity ? <Row label="📍 Location" value={locationArea ? `${locationArea}, ${locationCity}` : locationCity} onEdit={() => setStep(2)} /> : null}
+                {description ? <Row label="📄 Description" value={description} onEdit={() => setStep(2)} /> : null}
+                {preferredDate ? <Row label="📅 Preferred Date" value={preferredDate} onEdit={() => setStep(2)} /> : null}
+                <Row label="💰 Budget" value={isFlexible ? 'Flexible' : `GHS ${price}`} onEdit={() => setStep(3)} />
+                <Row label="⏱ Urgency" value={urgency === 'urgent' ? '🚨 Urgent' : '📅 Normal'} onEdit={() => setStep(3)} />
                 {imageUri ? (
                   <Image source={{ uri: imageUri }} style={{ width: '100%', height: 140, borderRadius: AppRadius.md, marginTop: 4 }} resizeMode="cover" />
                 ) : null}
@@ -432,21 +465,29 @@ export default function RequestWizard() {
                 disabled={isSubmitting}
                 style={{ marginTop: 24, backgroundColor: isSubmitting ? '#a5b4fc' : '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 16, alignItems: 'center' }}
               >
-                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>
-                  {isSubmitting ? 'Posting...' : '🚀 Post Job'}
-                </Text>
+                {isSubmitting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>🚀 Post Job</Text>}
               </TouchableOpacity>
             </View>
           )}
 
           {/* Nav buttons (steps 1-3) */}
           {step < TOTAL_STEPS && (
-            <TouchableOpacity
-              onPress={goNext}
-              style={{ marginTop: 24, backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 16, alignItems: 'center' }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Next →</Text>
-            </TouchableOpacity>
+            <View style={{ marginTop: 24, gap: 10 }}>
+              {step > 1 ? (
+                <TouchableOpacity
+                  onPress={goBack}
+                  style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center' }}
+                >
+                  <Text style={{ color: AppColors.ink700, fontWeight: '800', fontSize: 15 }}>Back</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                onPress={goNext}
+                style={{ backgroundColor: '#2563eb', borderRadius: AppRadius.md, paddingVertical: 16, alignItems: 'center' }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Continue</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </ScrollView>
       </View>
@@ -454,11 +495,16 @@ export default function RequestWizard() {
   );
 }
 
-function Row({ label, value }) {
+function Row({ label, value, onEdit }) {
   return (
-    <View style={{ flexDirection: 'row', gap: 8 }}>
+    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
       <Text style={{ color: AppColors.ink500, fontSize: 13, width: 100, flexShrink: 0 }}>{label}:</Text>
       <Text style={{ color: AppColors.ink900, fontWeight: '600', fontSize: 13, flex: 1 }}>{value}</Text>
+      {onEdit ? (
+        <TouchableOpacity onPress={onEdit}>
+          <Text style={{ color: '#2563eb', fontWeight: '700', fontSize: 12 }}>Edit</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }

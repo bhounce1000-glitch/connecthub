@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
 import { db } from '../firebase';
 
 export function useUserProfile(email) {
@@ -25,7 +25,7 @@ export function useUserProfile(email) {
           const normalizeKycStatus = (value) => String(value || '').trim().toLowerCase();
           const userKycStatus = normalizeKycStatus(data.kycStatus);
           const submissionKycStatus = submissionDoc.exists() ? normalizeKycStatus(submissionDoc.data()?.kycStatus) : '';
-          const effectiveKycStatus = userKycStatus || submissionKycStatus;
+          const effectiveKycStatus = submissionKycStatus || userKycStatus;
 
           if (effectiveKycStatus && userKycStatus !== effectiveKycStatus) {
             await setDoc(doc(db, 'users', email), {

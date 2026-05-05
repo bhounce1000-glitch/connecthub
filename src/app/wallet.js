@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 
 import AppCard from '../components/ui/app-card';
@@ -19,6 +19,48 @@ export default function Wallet() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
   const currentEmail = user?.email || '';
+
+  const stats = useMemo(() => {
+    let earned = 0;
+    let pending = 0;
+    let withdrawn = 0;
+    transactions.forEach((row) => {
+      const amount = Number(row.amount || 0);
+      const status = String(row.status || '').toLowerCase();
+      if (row.direction === 'received') {
+        if (status === 'pending') {
+          pending += amount;
+        } else {
+          earned += amount;
+        }
+      }
+      if (row.direction === 'sent') {
+        withdrawn += amount;
+      }
+    });
+    return { earned, pending, withdrawn };
+  }, [transactions]);
+
+  const groupedTransactions = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const startOfWeek = new Date(startOfToday);
+    startOfWeek.setDate(startOfWeek.getDate() - 7);
+
+    const groups = { Today: [], Yesterday: [], 'This Week': [], Earlier: [] };
+    transactions.forEach((item) => {
+      const raw = item?.timestamp?.seconds ? item.timestamp.seconds * 1000 : new Date(item.timestamp || 0).getTime();
+      const time = Number.isFinite(raw) ? raw : 0;
+      if (time >= startOfToday.getTime()) groups.Today.push(item);
+      else if (time >= startOfYesterday.getTime()) groups.Yesterday.push(item);
+      else if (time >= startOfWeek.getTime()) groups['This Week'].push(item);
+      else groups.Earlier.push(item);
+    });
+
+    return Object.entries(groups).filter(([, rows]) => rows.length > 0);
+  }, [transactions]);
 
   useEffect(() => {
     if (!currentEmail) {
@@ -110,8 +152,8 @@ export default function Wallet() {
     <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
       <FlatList
         contentContainerStyle={{ padding: AppSpace.lg }}
-        data={transactions}
-        keyExtractor={(item) => item.id}
+        data={groupedTransactions}
+        keyExtractor={(item) => item[0]}
         ListHeaderComponent={
           <View>
             {/* Header */}
@@ -122,8 +164,23 @@ export default function Wallet() {
               <Text style={{ fontSize: 24, fontWeight: '800', color: AppColors.ink900 }}>💰 Wallet</Text>
             </View>
 
-            <View style={{ flexDirection: 'row', gap: 10, marginBottom: AppSpace.md }}>
-              <StatCard label="Wallet Balance" value={`GHS ${Number(walletBalance || 0).toFixed(2)}`} color="#059669" bg="#ecfdf5" />
+            <View style={{ backgroundColor: '#1d4ed8', borderRadius: AppRadius.lg, padding: 18, marginBottom: AppSpace.md }}>
+              <Text style={{ color: '#bfdbfe', fontWeight: '700', fontSize: 12 }}>ConnectHub Wallet</Text>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 34, marginTop: 4 }}>GHS {Number(walletBalance || 0).toFixed(2)}</Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                <TouchableOpacity disabled style={{ flex: 1, borderWidth: 1, borderColor: '#dbeafe', borderRadius: AppRadius.md, paddingVertical: 10, alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Withdraw</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1, borderRadius: AppRadius.md, paddingVertical: 10, alignItems: 'center', backgroundColor: '#2563eb' }}>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Transaction History</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
+              <StatCard label="Total Earned" value={`GHS ${stats.earned.toFixed(2)}`} color="#166534" bg="#ecfdf5" />
+              <StatCard label="Pending" value={`GHS ${stats.pending.toFixed(2)}`} color="#b45309" bg="#fffbeb" />
+              <StatCard label="Total Withdrawn" value={`GHS ${stats.withdrawn.toFixed(2)}`} color="#b91c1c" bg="#fef2f2" />
             </View>
 
             {errorMessage ? (
@@ -131,15 +188,6 @@ export default function Wallet() {
                 <Text style={{ color: '#991b1b', fontSize: 13 }}>{errorMessage}</Text>
               </View>
             ) : null}
-
-            {/* Withdraw placeholder */}
-            <TouchableOpacity
-              disabled
-              style={{ backgroundColor: '#e0e7ff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', marginBottom: AppSpace.md }}
-            >
-              <Text style={{ color: '#4f46e5', fontWeight: '800', fontSize: 15 }}>🏦 Withdraw to Bank</Text>
-              <Text style={{ color: '#6366f1', fontSize: 12, marginTop: 2 }}>Bank payout coming soon</Text>
-            </TouchableOpacity>
 
             <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 10 }}>Transaction History</Text>
           </View>
@@ -152,39 +200,43 @@ export default function Wallet() {
             </>
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-              <Text style={{ fontSize: 40, marginBottom: 12 }}>📭</Text>
-              <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>No transactions yet</Text>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>👛</Text>
+              <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>Your wallet is empty</Text>
               <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>
-                Transactions you send or receive will appear here.
+                Complete jobs to earn money.
               </Text>
             </View>
           )
         }
         renderItem={({ item }) => {
-          const badge = item.status === 'SUCCESS' ? { text: 'SUCCESS', bg: '#dcfce7', color: '#15803d' }
-            : item.status === 'PENDING' ? { text: 'PENDING', bg: '#fef9c3', color: '#b45309' }
-            : item.status === 'FAILED' ? { text: 'FAILED', bg: '#fee2e2', color: '#b91c1c' }
-            : { text: item.status || 'UNKNOWN', bg: '#f3f4f6', color: '#374151' };
+          const [groupLabel, rows] = item;
           return (
-            <AppCard style={{ marginBottom: 12 }}>
-              <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 3 }} numberOfLines={1}>{item.jobTitle || 'Job'}</Text>
-              <Text style={{ color: AppColors.ink700, marginBottom: 2, fontSize: 13 }}>
-                {item.direction === 'sent' ? 'To' : 'From'}: {item.direction === 'sent' ? (item.receiverName || item.receiverEmail) : (item.senderName || item.senderEmail)}
-              </Text>
-              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Date: {toDisplayDateTime(item.timestamp)}</Text>
-              <Text style={{ color: AppColors.ink900, fontWeight: '700', marginTop: 6 }}>Amount: GHS {Number(item.amount || 0).toFixed(2)}</Text>
-              <Text style={{ color: item.direction === 'sent' ? '#7c2d12' : '#166534', fontSize: 12, marginTop: 2 }}>
-                Type: {item.direction === 'sent' ? 'Sent Payment' : 'Received Payment'}
-              </Text>
-              {item.netAmount != null ? (
-                <Text style={{ color: '#15803d', fontSize: 12, marginTop: 2 }}>Net Amount: GHS {Number(item.netAmount || 0).toFixed(2)}</Text>
-              ) : null}
-              <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Payment method: {item.paymentMethod || 'N/A'}</Text>
-              <View style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: badge.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
-                <Text style={{ color: badge.color, fontWeight: '700', fontSize: 12 }}>{badge.text}</Text>
-              </View>
-              <Text style={{ color: '#64748b', fontSize: 11, marginTop: 8 }}>Transaction ID: {item.transactionId}</Text>
-            </AppCard>
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ color: '#334155', fontWeight: '800', marginBottom: 8 }}>{groupLabel}</Text>
+              {rows.map((row) => {
+                const isReceived = row.direction === 'received';
+                const icon = isReceived ? '↑' : (String(row.paymentMethod || '').includes('withdraw') ? '↗' : '↓');
+                const iconBg = isReceived ? '#dcfce7' : '#fee2e2';
+                const iconColor = isReceived ? '#166534' : '#b91c1c';
+                return (
+                  <AppCard key={row.id} style={{ marginBottom: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: iconBg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                        <Text style={{ color: iconColor, fontWeight: '900' }}>{icon}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{row.jobTitle || 'Transaction'}</Text>
+                        <Text style={{ color: AppColors.ink500, fontSize: 12 }} numberOfLines={1}>{row.transactionId || row.id}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={{ color: isReceived ? '#166534' : '#b91c1c', fontWeight: '800' }}>{isReceived ? '+' : '-'} GHS {Number(row.amount || 0).toFixed(2)}</Text>
+                        <Text style={{ color: '#64748b', fontSize: 11 }}>{toDisplayDateTime(row.timestamp)}</Text>
+                      </View>
+                    </View>
+                  </AppCard>
+                );
+              })}
+            </View>
           );
         }}
       />

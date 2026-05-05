@@ -8,6 +8,7 @@ import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
+import Avatar from '../components/ui/avatar';
 import ListScreen from '../components/ui/list-screen';
 import SubscriptionBadge from '../components/ui/subscription-badge';
 import { KYC_STATUS, REQUEST_STATUS, STATUS_LABELS, isAdminEmail } from '../constants/access';
@@ -484,6 +485,21 @@ export default function Admin() {
       toolbar={(
         <>
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
+            <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Jobs</Text>
+              <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 18 }}>{requests.length}</Text>
+            </AppCard>
+            <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>KYC Pending</Text>
+              <Text style={{ color: '#b45309', fontWeight: '800', fontSize: 18 }}>{pendingKycCount}</Text>
+            </AppCard>
+            <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Disputes</Text>
+              <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 18 }}>{openDisputeCount}</Text>
+            </AppCard>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
             <TouchableOpacity
               onPress={() => setActiveTab('requests')}
               style={{
@@ -714,7 +730,12 @@ export default function Admin() {
                 )
           : requests.map((item) => (
               <AppCard key={item.id} style={{ marginBottom: 12 }}>
-                <Text style={{ fontWeight: '700', marginBottom: 4 }}>{item.title || item.id}</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ fontWeight: '700', flex: 1 }}>{item.title || item.id}</Text>
+                  <View style={{ backgroundColor: item.paid ? '#dcfce7' : '#fee2e2', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
+                    <Text style={{ color: item.paid ? '#166534' : '#b91c1c', fontWeight: '800', fontSize: 11 }}>{item.paid ? 'PAID ✅' : 'UNPAID ❌'}</Text>
+                  </View>
+                </View>
                 <Text>ID: {item.id}</Text>
                 <Text>User: {item.user || 'Unavailable'}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -727,6 +748,17 @@ export default function Admin() {
                 </View>
                 <Text>Status: {STATUS_LABELS[item.status] || item.status || 'Open'}</Text>
                 <Text>Paid: {item.paid ? 'Yes' : 'No'}</Text>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginBottom: 6 }}>
+                  <Avatar email={item.user} size={24} />
+                  <Text style={{ marginHorizontal: 6, color: '#94a3b8' }}>→</Text>
+                  <Avatar email={item.acceptedBy} size={24} />
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                  <AppButton label="View Details" variant="neutral" onPress={() => router.push({ pathname: '/job-details', params: { id: item.id } })} style={{ flex: 1, paddingVertical: 8 }} />
+                  <AppButton label="Force Complete" onPress={() => setStatus(item, REQUEST_STATUS.COMPLETED)} style={{ flex: 1, paddingVertical: 8, backgroundColor: '#0f766e' }} />
+                </View>
 
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm }}>
                   <AppButton

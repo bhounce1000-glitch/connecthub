@@ -165,46 +165,47 @@ export default function Referral() {
         Invite friends to ConnectHub and earn wallet rewards together.
       </Text>
 
-      <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 14 }}>
-        <Text style={{ fontSize: 12, color: '#475569', fontWeight: '700' }}>Your Referral Code</Text>
-        <View style={{ marginTop: 8, backgroundColor: '#dbeafe', borderRadius: 14, paddingVertical: 16, paddingHorizontal: 12, borderWidth: 1, borderColor: '#93c5fd' }}>
-          <Text style={{ fontSize: 28, fontWeight: '800', letterSpacing: 3, textAlign: 'center', color: '#1d4ed8' }}>
+      <View style={{ backgroundColor: '#2563eb', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: '#1d4ed8', marginBottom: 14 }}>
+        <Text style={{ fontSize: 12, color: '#bfdbfe', fontWeight: '700' }}>Your Referral Code</Text>
+        <View style={{ marginTop: 8, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 14, paddingVertical: 16, paddingHorizontal: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+          <Text style={{ fontSize: 30, fontWeight: '900', letterSpacing: 3, textAlign: 'center', color: '#fff', fontFamily: 'monospace' }}>
             {referralCode}
           </Text>
+          <Text style={{ textAlign: 'center', color: '#dbeafe', marginTop: 4, fontSize: 11 }}>Tap to copy</Text>
         </View>
 
         <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
           <TouchableOpacity
             onPress={handleCopy}
-            style={{ flex: 1, backgroundColor: '#1d4ed8', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
+            style={{ flex: 1, borderWidth: 1, borderColor: '#fff', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
           >
             <Text style={{ color: '#fff', fontWeight: '700' }}>Copy Code</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={handleShare}
-            style={{ flex: 1, backgroundColor: '#0f766e', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
+            style={{ flex: 1, backgroundColor: '#fff', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
           >
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Share</Text>
+            <Text style={{ color: '#1d4ed8', fontWeight: '700' }}>Share</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
         <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14 }}>
-          <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 12 }}>Total Referrals</Text>
+          <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 12 }}>👥 Friends Referred</Text>
           <Text style={{ marginTop: 6, fontSize: 25, fontWeight: '800', color: '#0f172a' }}>{referralCount}</Text>
         </View>
         <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14 }}>
-          <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 12 }}>Rewards Earned</Text>
+          <Text style={{ color: '#64748b', fontWeight: '700', fontSize: 12 }}>💰 Total Earned</Text>
           <Text style={{ marginTop: 6, fontSize: 25, fontWeight: '800', color: '#0f172a' }}>GHS {Number(referralEarnings).toFixed(2)}</Text>
         </View>
       </View>
 
       <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14, marginBottom: 14 }}>
         <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 10 }}>How It Works</Text>
-        <Text style={{ color: '#334155', marginBottom: 8 }}>1. Share your code with friends</Text>
-        <Text style={{ color: '#334155', marginBottom: 8 }}>2. Friend signs up using your code</Text>
-        <Text style={{ color: '#334155' }}>3. When friend completes first job, you BOTH earn GHS 10 wallet credit</Text>
+        <View style={{ backgroundColor: '#eff6ff', borderRadius: 10, padding: 10, marginBottom: 8 }}><Text style={{ color: '#1d4ed8', fontWeight: '700' }}>1. 📤 Share your code</Text></View>
+        <View style={{ backgroundColor: '#f8fafc', borderRadius: 10, padding: 10, marginBottom: 8 }}><Text style={{ color: '#334155', fontWeight: '700' }}>2. 👤 Friend signs up</Text></View>
+        <View style={{ backgroundColor: '#ecfdf5', borderRadius: 10, padding: 10 }}><Text style={{ color: '#166534', fontWeight: '700' }}>3. 💰 Both earn GHS 10</Text></View>
       </View>
 
       <View style={{ backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14, marginBottom: 18 }}>
@@ -229,7 +230,12 @@ export default function Referral() {
                   borderBottomColor: '#f1f5f9',
                 }}
               >
-                <Text style={{ color: '#0f172a', fontWeight: '700' }}>{maskEmail(referredEmail)}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                    <Text style={{ color: '#1d4ed8', fontWeight: '800' }}>{(referredEmail[0] || '?').toUpperCase()}</Text>
+                  </View>
+                  <Text style={{ color: '#0f172a', fontWeight: '700' }}>{maskEmail(referredEmail)}</Text>
+                </View>
                 <View
                   style={{
                     paddingHorizontal: 8,

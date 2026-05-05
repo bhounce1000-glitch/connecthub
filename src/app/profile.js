@@ -325,12 +325,19 @@ export default function Profile() {
         <View>
           <AppCard style={{ marginBottom: 12, paddingVertical: 20, alignItems: 'center' }}>
             <Pressable onPress={handleUploadPicture} disabled={isUploading}>
-              <Avatar
-                src={profilePicture}
-                email={currentEmail}
-                size={80}
-                style={{ opacity: isUploading ? 0.6 : 1 }}
-              />
+              <View>
+                <Avatar
+                  src={profilePicture}
+                  email={currentEmail}
+                  size={88}
+                  style={{ opacity: isUploading ? 0.6 : 1 }}
+                />
+                <View style={{ position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: 14, backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
+                  <Text style={{ color: '#fff', fontSize: 12 }}>📷</Text>
+                </View>
+              </View>
+              <Text style={{ fontWeight: '800', color: AppColors.ink900, textAlign: 'center', marginTop: 8, fontSize: 18 }}>{currentEmail.split('@')[0]}</Text>
+              <Text style={{ color: AppColors.ink500, textAlign: 'center', marginTop: 2 }}>{currentEmail}</Text>
               <Text style={{ fontSize: 12, color: AppColors.ink500, marginTop: 8, textAlign: 'center' }}>
                 {isUploading ? 'Uploading...' : 'Tap to change picture'}
               </Text>
@@ -357,19 +364,36 @@ export default function Profile() {
           {/* Overview tab */}
           {activeTab === 'overview' && (
             <View>
-              <AppCard style={{ marginBottom: 12 }}>
-                <Text style={{ color: AppColors.ink500, marginBottom: 6 }}>Jobs Completed</Text>
-                <Text style={{ fontSize: 26, fontWeight: '800', color: AppColors.ink900 }}>{stats.jobs}</Text>
-              </AppCard>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                <AppCard style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 18 }}>🏆</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '900', color: AppColors.ink900, marginTop: 4 }}>{stats.jobs}</Text>
+                  <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Jobs Completed</Text>
+                </AppCard>
+                <AppCard style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 18 }}>⭐</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '900', color: AppColors.ink900, marginTop: 4 }}>{stats.rating || '0.0'}/5</Text>
+                  <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Average Rating</Text>
+                </AppCard>
+                <AppCard style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 18 }}>💰</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '900', color: AppColors.ink900, marginTop: 4 }}>GHS {stats.earned}</Text>
+                  <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Total Earned</Text>
+                </AppCard>
+              </View>
 
-              <AppCard style={{ marginBottom: 12 }}>
-                <Text style={{ color: AppColors.ink500, marginBottom: 6 }}>Average Rating</Text>
-                <Text style={{ fontSize: 26, fontWeight: '800', color: AppColors.ink900 }}>{stats.rating}</Text>
-              </AppCard>
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                <AppButton label="⭐ My Reviews" variant="neutral" onPress={() => handleTabChange('history')} style={{ flex: 1 }} />
+                <AppButton label="🧰 Portfolio" variant="neutral" onPress={() => router.push('/provider-portfolio')} style={{ flex: 1 }} />
+                <AppButton label="🚀 Subscription" variant="neutral" onPress={() => router.push('/subscription')} style={{ flex: 1 }} />
+              </View>
 
               <AppCard>
-                <Text style={{ color: AppColors.ink500, marginBottom: 6 }}>Total Earned</Text>
-                <Text style={{ fontSize: 26, fontWeight: '800', color: AppColors.ink900 }}>GHS {stats.earned}</Text>
+                <Text style={{ fontWeight: '800', color: AppColors.ink900, marginBottom: 8 }}>Settings</Text>
+                <TouchableOpacity onPress={() => router.push('/provider-setup')} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}><Text style={{ color: AppColors.ink900 }}>Edit Profile  →</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/referral')} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}><Text style={{ color: AppColors.ink900 }}>Invite Friends  →</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/notifications')} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}><Text style={{ color: AppColors.ink900 }}>Help & Support  →</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => router.replace('/auth')} style={{ paddingTop: 12 }}><Text style={{ color: '#dc2626', fontWeight: '700' }}>Sign Out</Text></TouchableOpacity>
               </AppCard>
 
               <AppButton

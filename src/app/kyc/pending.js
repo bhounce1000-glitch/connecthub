@@ -38,19 +38,39 @@ export default function KycPending() {
     if (!user?.email) return;
     const email = (user.email || '').trim().toLowerCase();
 
-    const unsub = onSnapshot(doc(db, 'users', email), (snap) => {
-      if (!snap.exists()) return;
-      const userData = snap.data() || {};
-      if (userData.kycStatus === KYC_STATUS.VERIFIED) {
+    const normalizeKycStatus = (value) => String(value || '').trim().toLowerCase();
+    const resolveKycStatus = (userStatus, submissionStatus) => submissionStatus || userStatus || null;
+    let userStatus = null;
+    let submissionStatus = null;
+
+    const routeFromStatus = () => {
+      const status = resolveKycStatus(userStatus, submissionStatus);
+
+      if (status === KYC_STATUS.VERIFIED) {
         router.replace('/home');
-      } else if (userData.kycStatus === KYC_STATUS.REJECTED) {
+      } else if (status === KYC_STATUS.REJECTED) {
         router.replace('/kyc/rejected');
-      } else if (userData.kycStatus === KYC_STATUS.PENDING_VERIFICATION) {
+      } else if (status === KYC_STATUS.PENDING_VERIFICATION) {
         // Stay on pending screen.
+      } else {
+        router.replace('/kyc/step1');
       }
+    };
+
+    const unsubUser = onSnapshot(doc(db, 'users', email), (snap) => {
+      userStatus = snap.exists() ? normalizeKycStatus(snap.data()?.kycStatus) : null;
+      routeFromStatus();
     });
 
-    return unsub;
+    const unsubSubmission = onSnapshot(doc(db, 'kyc_submissions', email), (snap) => {
+      submissionStatus = snap.exists() ? normalizeKycStatus(snap.data()?.kycStatus) : null;
+      routeFromStatus();
+    });
+
+    return () => {
+      unsubUser();
+      unsubSubmission();
+    };
   }, [isAuthReady, router, user]);
 
   if (!isAuthReady) {

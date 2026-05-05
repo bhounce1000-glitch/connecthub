@@ -25,6 +25,7 @@ export default function Providers() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(ALL);
+  const [sortBy, setSortBy] = useState('rating');
 
   useEffect(() => {
     if (isAuthReady && !user) {
@@ -66,7 +67,7 @@ export default function Providers() {
 
   const filtered = useMemo(() => {
     const q = searchText.trim().toLowerCase();
-    return providers.filter((p) => {
+    const rows = providers.filter((p) => {
       const matchesCategory = selectedCategory === ALL || p.category === selectedCategory;
       if (!q) return matchesCategory;
       const inName = (p.name || '').toLowerCase().includes(q);
@@ -75,7 +76,19 @@ export default function Providers() {
       const inCategory = (p.category || '').toLowerCase().includes(q);
       return matchesCategory && (inName || inBio || inLocation || inCategory);
     });
-  }, [providers, searchText, selectedCategory]);
+
+    const sorted = [...rows].sort((a, b) => {
+      if (sortBy === 'price') {
+        return Number(a.startingPrice || 0) - Number(b.startingPrice || 0);
+      }
+      if (sortBy === 'experience') {
+        return Number(b.experience || 0) - Number(a.experience || 0);
+      }
+      return Number(b.avgRating || 0) - Number(a.avgRating || 0);
+    });
+
+    return sorted;
+  }, [providers, searchText, selectedCategory, sortBy]);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#eef2ff', padding: AppSpace.lg }}>
@@ -141,6 +154,27 @@ export default function Providers() {
         }}
       />
 
+      <View style={{ flexDirection: 'row', marginBottom: AppSpace.sm, gap: 8 }}>
+        {['rating', 'price', 'experience'].map((key) => (
+          <TouchableOpacity
+            key={key}
+            onPress={() => setSortBy(key)}
+            style={{
+              borderRadius: AppRadius.md,
+              borderWidth: 1,
+              borderColor: sortBy === key ? '#2563eb' : '#cbd5e1',
+              backgroundColor: sortBy === key ? '#eff6ff' : '#fff',
+              paddingHorizontal: 10,
+              paddingVertical: 7,
+            }}
+          >
+            <Text style={{ color: sortBy === key ? '#1d4ed8' : '#475569', fontWeight: '700', fontSize: 12 }}>
+              {key === 'rating' ? 'Sort: Rating' : key === 'price' ? 'Sort: Price' : 'Sort: Experience'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {/* Provider list */}
       {isLoading ? (
         <View>
@@ -161,10 +195,10 @@ export default function Providers() {
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingVertical: 48 }}>
               <Text style={{ fontSize: 16, color: AppColors.ink500, textAlign: 'center', marginBottom: 6 }}>
-                {searchText || selectedCategory !== ALL ? 'No providers match your search.' : 'No providers available right now.'}
+                {searchText || selectedCategory !== ALL ? `No ${selectedCategory === ALL ? '' : selectedCategory + ' '}providers near you.` : 'No providers available right now.'}
               </Text>
               <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>
-                Check back later or try a different category.
+                Try a different category or location.
               </Text>
             </View>
           }
@@ -185,6 +219,10 @@ export default function Providers() {
 }
 
 function ProviderCard({ provider, onPress }) {
+  const photoCount = Array.isArray(provider.portfolioPhotos) ? provider.portfolioPhotos.length : 0;
+  const rating = Number(provider.avgRating || 0);
+  const stars = rating > 0 ? `${'★'.repeat(Math.round(Math.min(5, rating)))}${'☆'.repeat(5 - Math.round(Math.min(5, rating)))}` : '☆☆☆☆☆';
+
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.88}>
       <AppCard style={{ marginBottom: 14 }}>
@@ -228,10 +266,13 @@ function ProviderCard({ provider, onPress }) {
         </View>
 
         <View style={{ backgroundColor: '#f1f5f9', borderRadius: AppRadius.sm, padding: 10, flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={{ fontSize: 13, color: AppColors.ink700 }}>⭐ {provider.avgRating ? Number(provider.avgRating).toFixed(1) : 'New'}</Text>
-          <Text style={{ fontSize: 13, color: AppColors.ink700 }}>{provider.jobsCompleted || 0} jobs done</Text>
-          <Text style={{ fontSize: 13, color: '#4f46e5', fontWeight: '700' }}>View Profile →</Text>
+          <Text style={{ fontSize: 13, color: AppColors.ink700 }}>{stars} {provider.avgRating ? Number(provider.avgRating).toFixed(1) : 'New'}</Text>
+          <Text style={{ fontSize: 13, color: AppColors.ink700 }}>{provider.jobsCompleted || 0} reviews</Text>
+          <Text style={{ fontSize: 13, color: '#4f46e5', fontWeight: '700' }}>From GHS {provider.startingPrice || '--'}</Text>
         </View>
+
+        {photoCount > 0 ? <Text style={{ marginTop: 8, color: '#475569', fontSize: 12 }}>📷 {photoCount} photos</Text> : null}
+        <AppButton label="View Profile" variant="primary" onPress={onPress} style={{ marginTop: 10 }} />
       </AppCard>
     </TouchableOpacity>
   );

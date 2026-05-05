@@ -40,7 +40,7 @@ export default function Index() {
         const normalizeKycStatus = (value: unknown): string => String(value || '').trim().toLowerCase();
         const userKycStatus = normalizeKycStatus((data as any)?.kycStatus);
         const submissionKycStatus = normalizeKycStatus((submissionData as any)?.kycStatus);
-        const effectiveKycStatus = userKycStatus || submissionKycStatus;
+        const effectiveKycStatus = submissionKycStatus || userKycStatus;
 
         // Self-heal legacy profiles where users.kycStatus was missing or had old casing.
         if (email && effectiveKycStatus && userKycStatus !== effectiveKycStatus) {

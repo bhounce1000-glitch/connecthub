@@ -14,9 +14,9 @@ import useAuthUser from '../hooks/use-auth-user';
 import { apiPost } from '../utils/api-client';
 
 const PLANS = [
-  { key: 'free', name: 'Basic', amount: 0, badge: '#64748b', perks: '5 job accepts per month' },
-  { key: 'pro', name: 'Pro', amount: 49, badge: '#2563eb', perks: 'Unlimited job accepts + Pro badge' },
-  { key: 'premium', name: 'Premium', amount: 99, badge: '#7c3aed', perks: 'Unlimited jobs + premium placement badge' },
+  { key: 'free', name: 'Basic', amount: 0, badge: '#64748b', badgeText: '', features: ['✅ 5 job accepts/month', '✅ Basic listing visibility', '❌ Priority placement'] },
+  { key: 'pro', name: 'Pro', amount: 49, badge: '#2563eb', badgeText: 'POPULAR', features: ['✅ Unlimited job accepts', '✅ Pro badge', '❌ Premium placement'] },
+  { key: 'premium', name: 'Premium', amount: 99, badge: '#d97706', badgeText: 'BEST VALUE', features: ['✅ Unlimited job accepts', '✅ Premium placement', '✅ Highest visibility'] },
 ];
 
 export default function Subscription() {
@@ -200,18 +200,38 @@ export default function Subscription() {
 
       {PLANS.map((plan) => {
         const active = currentPlan === plan.key;
+        const annual = plan.amount > 0 ? `GHS ${(plan.amount * 12).toFixed(0)}/yr` : 'Free forever';
+        const cardStyle = plan.key === 'premium'
+          ? { backgroundColor: '#fef3c7', borderColor: '#f59e0b' }
+          : plan.key === 'pro'
+            ? { backgroundColor: '#eff6ff', borderColor: '#60a5fa' }
+            : { backgroundColor: '#fff', borderColor: '#e2e8f0' };
         return (
-          <AppCard key={plan.key} style={{ marginBottom: 12 }}>
+          <AppCard key={plan.key} style={{ marginBottom: 12, borderWidth: 1, ...cardStyle }}>
+            {plan.badgeText ? (
+              <View style={{ position: 'absolute', right: 10, top: 10, backgroundColor: plan.badge, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>{plan.badgeText}</Text>
+              </View>
+            ) : null}
+            {active ? (
+              <View style={{ marginBottom: 8, backgroundColor: '#dcfce7', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8, alignSelf: 'flex-start' }}>
+                <Text style={{ color: '#166534', fontWeight: '800', fontSize: 11 }}>✅ CURRENT PLAN</Text>
+              </View>
+            ) : null}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={{ fontWeight: '800', fontSize: 18 }}>{plan.name}</Text>
               <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: `${plan.badge}22` }}>
-                <Text style={{ color: plan.badge, fontWeight: '800' }}>{plan.amount > 0 ? `GHS ${plan.amount}/mo` : 'FREE'}</Text>
+                <Text style={{ color: plan.badge, fontWeight: '800' }}>{plan.amount > 0 ? `GHS ${plan.amount}` : 'FREE'}</Text>
               </View>
             </View>
-            <Text style={{ color: '#475569', marginTop: 8 }}>{plan.perks}</Text>
+            <Text style={{ color: '#0f172a', marginTop: 6, fontWeight: '700' }}>{plan.amount > 0 ? '/month' : ''}</Text>
+            <Text style={{ color: '#64748b', marginTop: 2, fontSize: 12 }}>{annual}</Text>
+            <View style={{ marginTop: 8 }}>
+              {plan.features.map((feature) => <Text key={feature} style={{ color: '#334155', marginBottom: 3 }}>{feature}</Text>)}
+            </View>
             <AppButton
-              label={active ? 'Current Plan' : plan.amount > 0 ? `Upgrade to ${plan.name}` : 'Use Basic'}
-              variant={active ? 'neutral' : 'primary'}
+              label={active ? 'Current Plan' : plan.amount > 0 ? `Upgrade to ${plan.name}` : 'Current Plan'}
+              variant={active ? 'neutral' : plan.key === 'premium' ? 'warning' : 'primary'}
               onPress={() => handleUpgrade(plan.key)}
               disabled={active || pendingPlan.length > 0}
               loading={pendingPlan === plan.key}

@@ -1,9 +1,9 @@
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -14,7 +14,7 @@ import LoadingSkeleton from '../components/ui/loading-skeleton';
 import SubscriptionBadge from '../components/ui/subscription-badge';
 import { CATEGORY_ICONS, REQUEST_STATUS, isAdminEmail } from '../constants/access';
 import { API_BASE_URL } from '../constants/api';
-import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
+import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost } from '../utils/api-client';
@@ -25,6 +25,33 @@ function getEffectiveStatus(item) {
   if (item.paid) return REQUEST_STATUS.PAID;
   if (item.acceptedBy) return REQUEST_STATUS.ACCEPTED;
   return REQUEST_STATUS.OPEN;
+}
+
+const STATUS_META = {
+  [REQUEST_STATUS.OPEN]: { border: '#2563eb', pillBg: '#dbeafe', pillText: '#1d4ed8', label: 'Open' },
+  [REQUEST_STATUS.ACCEPTED]: { border: '#f97316', pillBg: '#ffedd5', pillText: '#c2410c', label: 'Accepted' },
+  [REQUEST_STATUS.IN_PROGRESS]: { border: '#7c3aed', pillBg: '#ede9fe', pillText: '#5b21b6', label: 'In Progress' },
+  [REQUEST_STATUS.PENDING_CONFIRMATION]: { border: '#d97706', pillBg: '#fef3c7', pillText: '#b45309', label: 'Pending Confirmation' },
+  [REQUEST_STATUS.COMPLETED]: { border: '#16a34a', pillBg: '#dcfce7', pillText: '#15803d', label: 'Completed' },
+  [REQUEST_STATUS.PAID]: { border: '#166534', pillBg: '#dcfce7', pillText: '#166534', label: 'Paid' },
+};
+
+function formatRelativeTime(value) {
+  let postedMs = 0;
+  if (value?.seconds) {
+    postedMs = value.seconds * 1000;
+  } else {
+    const parsed = new Date(value || 0).getTime();
+    postedMs = Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (!postedMs) return 'Just now';
+
+  const diffMins = Math.max(1, Math.floor((Date.now() - postedMs) / 60000));
+  if (diffMins < 60) return `${diffMins} min ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 }
 
 export default function Home() {
@@ -45,6 +72,7 @@ export default function Home() {
   const [isLocating, setIsLocating] = useState(false);
   const profileFetchQueue = useRef(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
   const isProvider = String(userProfiles[currentEmail]?.role || '').toLowerCase() === 'provider';
@@ -245,6 +273,34 @@ export default function Home() {
     router.push('/wallet');
   };
 
+  const remindCustomerToFund = async (item) => {
+    const customerEmail = String(item.user || '').trim().toLowerCase();
+    if (!customerEmail) {
+      setNotice({ tone: 'warning', title: 'Missing customer', message: 'Could not determine customer to remind.' });
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        user: customerEmail,
+        userId: customerEmail,
+        title: '⏳ Awaiting Escrow Funding',
+        body: `Please fund escrow for "${item.title}" so your provider can begin work.`,
+        type: 'general',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+      setNotice({ tone: 'success', title: 'Reminder sent', message: `A reminder was sent to ${customerEmail}.` });
+    } catch {
+      setNotice({ tone: 'error', title: 'Reminder failed', message: 'Could not send reminder right now.' });
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
+
   const resolveMyLocation = async () => {
     setIsLocating(true);
     try {
@@ -339,15 +395,18 @@ export default function Home() {
       </View>
 
       {/* Search bar */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 10, marginBottom: AppSpace.md }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 10, marginBottom: AppSpace.md, ...AppShadow.card }}>
         <Text style={{ marginRight: 8, fontSize: 16 }}>🔍</Text>
         <TextInput
-          placeholder="Search requests by title, location..."
+          placeholder="Search jobs, services, providers..."
           placeholderTextColor="#94a3b8"
           value={searchText}
           onChangeText={setSearchText}
           style={{ flex: 1, fontSize: 14, color: AppColors.ink900 }}
         />
+        <TouchableOpacity style={{ marginLeft: 6, backgroundColor: '#eff6ff', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 6 }}>
+          <Text style={{ color: '#1d4ed8', fontWeight: '700' }}>⚙️</Text>
+        </TouchableOpacity>
         {searchText.length > 0 && (
           <TouchableOpacity onPress={() => setSearchText('')}>
             <Text style={{ color: '#94a3b8', fontSize: 16, paddingLeft: 8 }}>✕</Text>
@@ -457,7 +516,10 @@ export default function Home() {
 
       {/* Category filter */}
       <View style={{ marginBottom: AppSpace.md }}>
-        <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900, marginBottom: 10 }}>Live Requests</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>📋 Live Requests ({visibleRequests.length})</Text>
+          <View style={{ flex: 1, height: 1, backgroundColor: '#e2e8f0', marginLeft: 10 }} />
+        </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {CATEGORIES.map((cat) => {
             const active = cat === activeCategory;
@@ -554,17 +616,20 @@ export default function Home() {
           data={visibleRequests}
           keyExtractor={(item) => item.id}
           ListHeaderComponent={renderListHeader}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-              <Text style={{ fontSize: 40, marginBottom: 12 }}>📭</Text>
-              <Text style={{ fontSize: 16, color: AppColors.ink500, fontWeight: '700', textAlign: 'center' }}>No active requests right now</Text>
-              <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>Post a new job or check back soon.</Text>
-              <TouchableOpacity
-                onPress={() => router.push('/request-wizard')}
-                style={{ marginTop: 16, backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 12, paddingHorizontal: 24 }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '800' }}>＋ Post a Job</Text>
-              </TouchableOpacity>
+              <Text style={{ fontSize: 46, marginBottom: 12 }}>📭</Text>
+              <Text style={{ fontSize: 18, color: AppColors.ink900, fontWeight: '800', textAlign: 'center' }}>No active jobs yet</Text>
+              <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>Post a job or browse providers to get started.</Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
+                <TouchableOpacity onPress={() => router.push('/request-wizard')} style={{ backgroundColor: '#2563eb', borderRadius: AppRadius.md, paddingVertical: 12, paddingHorizontal: 16 }}>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Post a Job</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/providers')} style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: AppRadius.md, paddingVertical: 12, paddingHorizontal: 16 }}>
+                  <Text style={{ color: AppColors.ink700, fontWeight: '800' }}>Browse Providers</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           }
           renderItem={({ item }) => {
@@ -573,19 +638,29 @@ export default function Home() {
             const isProvider = item.acceptedBy === currentEmail;
             const activeAction = pendingAction?.startsWith(`${item.id}:`) ? pendingAction.split(':')[1] : null;
             const isConfirmingDelete = confirmDeleteId === item.id;
+            const statusMeta = STATUS_META[status] || STATUS_META[REQUEST_STATUS.OPEN];
+            const locationLabel = getLocationLabel(item.location) || item.locationText || 'Location not specified';
+            const parts = String(locationLabel).split(',').map((part) => part.trim()).filter(Boolean);
+            const areaName = parts[0] || locationLabel;
+            const postedAt = formatRelativeTime(item.createdAt);
 
             return (
-              <AppCard style={{ marginBottom: 14 }}>
+              <AppCard style={{ marginBottom: 14, borderLeftWidth: 5, borderLeftColor: statusMeta.border, ...AppShadow.card }}>
                 {/* Header row with category badge */}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                   <Text style={{ fontWeight: '700', fontSize: 16, color: '#111827', flex: 1 }}>{item.title}</Text>
+                  <View style={{ backgroundColor: statusMeta.pillBg, borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 3, marginLeft: 8 }}>
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: statusMeta.pillText }}>{statusMeta.label}</Text>
+                  </View>
+                </View>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                   {item.category && (
-                    <View style={{ backgroundColor: '#ede9fe', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 8 }}>
-                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#4f46e5' }}>
-                        {CATEGORY_ICONS[item.category] || '✨'} {item.category}
-                      </Text>
+                    <View style={{ backgroundColor: '#eef2ff', borderRadius: AppRadius.pill, paddingHorizontal: 8, paddingVertical: 3 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: '#4f46e5' }}>{CATEGORY_ICONS[item.category] || '✨'} {item.category}</Text>
                     </View>
                   )}
+                  <Text style={{ fontSize: 12, color: '#94a3b8' }}>{postedAt}</Text>
                 </View>
 
                 {item.description ? (
@@ -594,8 +669,10 @@ export default function Home() {
                   </Text>
                 ) : null}
 
-                <Text style={{ color: '#334155', fontSize: 13 }}>📍 {getLocationLabel(item.location) || item.locationText || 'Location not specified'}</Text>
-                <Text style={{ color: '#334155', fontSize: 13, marginTop: 2 }}>💰 GHS {item.price}</Text>
+                <Text style={{ color: '#334155', fontSize: 13 }}>📍 <Text style={{ fontWeight: '800', color: AppColors.ink900 }}>{areaName}</Text>{parts.length > 1 ? `, ${parts.slice(1).join(', ')}` : ''}</Text>
+                <View style={{ alignSelf: 'flex-start', backgroundColor: '#dcfce7', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 4, marginTop: 4 }}>
+                  <Text style={{ color: '#166534', fontWeight: '800', fontSize: 12 }}>GHS {item.price}</Text>
+                </View>
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 6 }}>
                   <Avatar src={userProfiles[item.user]?.profilePicture} email={item.user} size={20} />
@@ -622,9 +699,10 @@ export default function Home() {
                 ) : null}
 
                 {isProvider && status === REQUEST_STATUS.ACCEPTED ? (
-                  <View style={{ marginTop: AppSpace.sm, backgroundColor: '#eef2ff', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#c7d2fe' }}>
-                    <Text style={{ color: '#3730a3', fontWeight: '800', fontSize: 12 }}>Waiting For Escrow Funding</Text>
-                    <Text style={{ color: '#4338ca', fontSize: 12, marginTop: 2 }}>Work starts automatically once the customer funds escrow.</Text>
+                  <View style={{ marginTop: AppSpace.sm, backgroundColor: '#fffbeb', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#fcd34d' }}>
+                    <Text style={{ color: '#92400e', fontWeight: '800', fontSize: 13 }}>⏳ Awaiting Payment</Text>
+                    <Text style={{ color: '#b45309', fontSize: 12, marginTop: 2 }}>Work begins once the customer funds escrow.</Text>
+                    <AppButton label="Remind Customer" variant="warning" onPress={() => remindCustomerToFund(item)} style={{ marginTop: 8 }} />
                   </View>
                 ) : null}
 

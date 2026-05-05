@@ -13,6 +13,7 @@ import { Alert, Image, Platform, ScrollView, Text, TouchableOpacity, View } from
 import AppButton from '../../components/ui/app-button';
 import AppInput from '../../components/ui/app-input';
 import AppNotice from '../../components/ui/app-notice';
+import { KYC_STATUS } from '../../constants/access';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db } from '../../firebase';
 import useAuthUser from '../../hooks/use-auth-user';
@@ -111,6 +112,37 @@ export default function KycStep1() {
       router.replace('/auth');
     }
   }, [isAuthReady, router, user]);
+
+  // Guard against direct URL access when KYC has already been reviewed.
+  useEffect(() => {
+    (async () => {
+      if (!isAuthReady || !user?.email) {
+        return;
+      }
+
+      try {
+        const email = (user.email || '').trim().toLowerCase();
+        const [userSnap, submissionSnap] = await Promise.all([
+          getDoc(doc(db, 'users', email)),
+          getDoc(doc(db, 'kyc_submissions', email)),
+        ]);
+
+        const userStatus = String(userSnap.exists() ? userSnap.data()?.kycStatus || '' : '').trim().toLowerCase();
+        const submissionStatus = String(submissionSnap.exists() ? submissionSnap.data()?.kycStatus || '' : '').trim().toLowerCase();
+        const effectiveKycStatus = submissionStatus || userStatus;
+
+        if (effectiveKycStatus === KYC_STATUS.VERIFIED) {
+          router.replace('/home');
+        } else if (effectiveKycStatus === KYC_STATUS.PENDING_VERIFICATION) {
+          router.replace('/kyc/pending');
+        } else if (effectiveKycStatus === KYC_STATUS.REJECTED) {
+          router.replace('/kyc/rejected');
+        }
+      } catch {
+        // If lookup fails, keep step 1 accessible as fallback.
+      }
+    })();
+  }, [isAuthReady, router, user?.email]);
 
   // Pre-fill from any existing draft
   useEffect(() => {

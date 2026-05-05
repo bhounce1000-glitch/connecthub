@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { FlatList, RefreshControl, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -16,6 +16,15 @@ import { AppColors, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import { getLocationLabel } from '../utils/location';
 
+const BADGE_BY_STATUS = {
+  [REQUEST_STATUS.OPEN]: { bg: '#dbeafe', color: '#1d4ed8', label: 'Open' },
+  [REQUEST_STATUS.ACCEPTED]: { bg: '#ffedd5', color: '#c2410c', label: 'Accepted' },
+  [REQUEST_STATUS.IN_PROGRESS]: { bg: '#ede9fe', color: '#5b21b6', label: 'In Progress' },
+  [REQUEST_STATUS.PENDING_CONFIRMATION]: { bg: '#fef3c7', color: '#b45309', label: 'Pending Confirmation' },
+  [REQUEST_STATUS.PAID]: { bg: '#dcfce7', color: '#166534', label: 'Paid' },
+  [REQUEST_STATUS.CANCELLED]: { bg: '#f1f5f9', color: '#475569', label: 'Cancelled' },
+};
+
 export default function MyRequests() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
@@ -25,21 +34,31 @@ export default function MyRequests() {
   const [notice, setNotice] = useState(null);
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-  const [tab, setTab] = useState('active'); // 'active' | 'history'
+  const [tab, setTab] = useState('active'); // 'active' | 'completed' | 'all'
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const ACTIVE_STATUSES = [REQUEST_STATUS.OPEN, REQUEST_STATUS.ACCEPTED, REQUEST_STATUS.IN_PROGRESS, REQUEST_STATUS.PENDING_CONFIRMATION];
-  const HISTORY_STATUSES = [REQUEST_STATUS.COMPLETED, REQUEST_STATUS.PAID, REQUEST_STATUS.DISPUTED, REQUEST_STATUS.CANCELLED];
+  const COMPLETED_STATUSES = [REQUEST_STATUS.PAID];
 
   const visibleRequests = useMemo(() => {
     return myRequests.filter((item) => {
       if (!item.location || !item.price) return false;
       const status = item.status || REQUEST_STATUS.OPEN;
-      return tab === 'active'
-        ? ACTIVE_STATUSES.includes(status)
-        : HISTORY_STATUSES.includes(status) || item.paid;
+      if (tab === 'all') {
+        return true;
+      }
+      if (tab === 'completed') {
+        return COMPLETED_STATUSES.includes(status) || item.paid;
+      }
+      return ACTIVE_STATUSES.includes(status);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myRequests, tab]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
 
   useEffect(() => {
     if (!isAuthReady) {
@@ -131,12 +150,13 @@ export default function MyRequests() {
               style={{ flex: 1, marginRight: 8 }}
             />
             <AppButton
-              label="History"
-              variant={tab === 'history' ? 'primary' : 'neutral'}
-              onPress={() => setTab('history')}
+              label="Completed"
+              variant={tab === 'completed' ? 'primary' : 'neutral'}
+              onPress={() => setTab('completed')}
               style={{ flex: 1 }}
             />
           </View>
+          <AppButton label="All" variant={tab === 'all' ? 'primary' : 'neutral'} onPress={() => setTab('all')} style={{ marginTop: -8, marginBottom: 12 }} />
           <AppNotice
             tone={notice?.tone}
             title={notice?.title}
@@ -154,17 +174,23 @@ export default function MyRequests() {
         </AppCard>
       )}
       hasItems={visibleRequests.length > 0}
-      emptyTitle={tab === 'active' ? 'No active requests' : 'No history yet'}
-      emptyDescription={tab === 'active' ? 'Your open and in-progress requests will appear here.' : 'Completed and paid requests will appear here.'}
+      emptyTitle={tab === 'active' ? 'No active requests' : tab === 'completed' ? 'No completed jobs yet' : 'No requests yet'}
+      emptyDescription={tab === 'active' ? 'Post a job to get started!' : tab === 'completed' ? 'Completed and paid requests will appear here.' : 'Create your first request to get started.'}
     >
         <FlatList
           data={visibleRequests}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <AppCard style={{ marginBottom: 15 }}>
-              <Text style={{ fontWeight: '700', fontSize: 16, color: AppColors.ink900 }}>
-                {item.title}
-              </Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontWeight: '700', fontSize: 16, color: AppColors.ink900, flex: 1 }}>
+                  {item.title}
+                </Text>
+                <View style={{ backgroundColor: (BADGE_BY_STATUS[item.status]?.bg || '#e2e8f0'), borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
+                  <Text style={{ color: (BADGE_BY_STATUS[item.status]?.color || '#334155'), fontWeight: '800', fontSize: 11 }}>{BADGE_BY_STATUS[item.status]?.label || STATUS_LABELS[item.status] || 'Open'}</Text>
+                </View>
+              </View>
 
               {item.description ? (
                 <Text style={{ color: AppColors.ink500, marginTop: 3, fontSize: 13, lineHeight: 18 }} numberOfLines={2}>
@@ -174,16 +200,16 @@ export default function MyRequests() {
 
               <Text style={{ color: AppColors.ink700, marginTop: 4 }}>Location: {getLocationLabel(item.location) || item.locationText || 'N/A'}</Text>
               <Text style={{ color: AppColors.ink700, marginTop: 2 }}>Amount: GHS {item.price}</Text>
-              <Text style={{ color: AppColors.ink500, fontWeight: '600', marginTop: 2 }}>
-                Status: {STATUS_LABELS[item.status] || item.status || 'Open'}
-              </Text>
 
               {item.acceptedBy ? (
-                <Text style={{ color: AppColors.green600, marginTop: 2 }}>
-                  Provider: {item.acceptedBy}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                  <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#dbeafe', justifyContent: 'center', alignItems: 'center', marginRight: 8 }}>
+                    <Text style={{ color: '#1d4ed8', fontWeight: '800' }}>{String(item.acceptedBy).charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <Text style={{ color: AppColors.green600 }}>Provider: {item.acceptedBy}</Text>
+                </View>
               ) : (
-                <Text style={{ color: AppColors.ink500, marginTop: 2, fontStyle: 'italic' }}>No provider yet</Text>
+                <Text style={{ color: '#c2410c', marginTop: 2, fontWeight: '700' }}>Seeking Provider</Text>
               )}
 
               {item.acceptedBy ? (
@@ -224,6 +250,19 @@ export default function MyRequests() {
                     label="Fund Escrow"
                     variant="success"
                     onPress={() => router.push({ pathname: '/pay', params: { id: item.id, amount: item.price, email: currentEmail } })}
+                    style={{ backgroundColor: '#16a34a' }}
+                  />
+                </View>
+              ) : null}
+
+              {(item.status === REQUEST_STATUS.PAID || item.paid) ? (
+                <View style={{ marginTop: AppSpace.sm, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ color: '#d97706', fontWeight: '800' }}>⭐ Leave a rating</Text>
+                  <AppButton
+                    label="Rate"
+                    variant="warning"
+                    onPress={() => router.push({ pathname: '/rate', params: { requestId: item.id, providerEmail: item.acceptedBy || '' } })}
+                    style={{ minWidth: 100 }}
                   />
                 </View>
               ) : null}

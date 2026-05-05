@@ -29,17 +29,34 @@ export default function KycRejected() {
       return undefined;
     }
 
-    const unsubscribe = onSnapshot(doc(db, 'users', email), (snap) => {
-      const status = snap.exists() ? snap.data()?.kycStatus : null;
+    const normalizeKycStatus = (value) => String(value || '').trim().toLowerCase();
+    const resolveKycStatus = (userStatus, submissionStatus) => submissionStatus || userStatus || null;
+    let userStatus = null;
+    let submissionStatus = null;
+
+    const routeFromStatus = () => {
+      const status = resolveKycStatus(userStatus, submissionStatus);
       if (status === KYC_STATUS.PENDING_VERIFICATION) {
         router.replace('/kyc/pending');
       } else if (status === KYC_STATUS.VERIFIED) {
-        // Requested behavior: if status flips while here, move to pending flow first.
-        router.replace('/kyc/pending');
+        router.replace('/home');
       }
+    };
+
+    const unsubscribeUser = onSnapshot(doc(db, 'users', email), (snap) => {
+      userStatus = snap.exists() ? normalizeKycStatus(snap.data()?.kycStatus) : null;
+      routeFromStatus();
     });
 
-    return unsubscribe;
+    const unsubscribeSubmission = onSnapshot(doc(db, 'kyc_submissions', email), (snap) => {
+      submissionStatus = snap.exists() ? normalizeKycStatus(snap.data()?.kycStatus) : null;
+      routeFromStatus();
+    });
+
+    return () => {
+      unsubscribeUser();
+      unsubscribeSubmission();
+    };
   }, [email, isAuthReady, router]);
 
   useEffect(() => {
