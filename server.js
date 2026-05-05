@@ -1485,7 +1485,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       body: JSON.stringify({
         type: 'mobile_money',
         name: accountName,
-        mobile_number: phoneNumber,
+        account_number: phoneNumber,
         network,
         currency: 'GHS',
       }),
