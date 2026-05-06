@@ -39,6 +39,9 @@ const ADMIN_BOOTSTRAP_SECRET = process.env.ADMIN_BOOTSTRAP_SECRET || '';
 const COMMISSION_RATE = parseFloat(process.env.COMMISSION_RATE || '0.10');
 const REFERRAL_BONUS_AMOUNT = parseMoney(process.env.REFERRAL_BONUS_AMOUNT || 10);
 const FREE_PLAN_JOB_LIMIT = Number(process.env.FREE_PLAN_JOB_LIMIT || 5);
+const PAYSTACK_WITHDRAWALS_ENABLED = String(process.env.PAYSTACK_WITHDRAWALS_ENABLED || '').trim().toLowerCase() === 'true';
+const PAYSTACK_WITHDRAWALS_DISABLED_REASON = process.env.PAYSTACK_WITHDRAWALS_DISABLED_REASON
+  || 'Wallet withdrawals are temporarily unavailable because automatic payouts are not enabled on the current Paystack account.';
 const SUBSCRIPTION_PLAN_CONFIG = {
   free: { amount: 0, durationDays: 0, acceptLimit: FREE_PLAN_JOB_LIMIT, badge: 'Basic' },
   pro: { amount: 49, durationDays: 30, acceptLimit: null, badge: 'Pro' },
@@ -1215,6 +1218,18 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.get('/wallet/withdraw-status', (req, res) => {
+  return sendSuccess(res, req, {
+    data: {
+      enabled: PAYSTACK_WITHDRAWALS_ENABLED,
+      reason: PAYSTACK_WITHDRAWALS_ENABLED ? '' : PAYSTACK_WITHDRAWALS_DISABLED_REASON,
+      hint: PAYSTACK_WITHDRAWALS_ENABLED
+        ? ''
+        : 'Enable PAYSTACK_WITHDRAWALS_ENABLED=true after your Paystack account supports third-party payouts and Transfers is enabled.',
+    },
+  });
+});
+
 // Rate limiters
 const payInitLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -1482,6 +1497,19 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
   let transferInitiated = false;
 
   try {
+    if (!PAYSTACK_WITHDRAWALS_ENABLED) {
+      return sendError(
+        res,
+        req,
+        503,
+        'withdrawals_unavailable',
+        PAYSTACK_WITHDRAWALS_DISABLED_REASON,
+        {
+          hint: 'Automatic withdrawals will remain blocked until the Paystack account is upgraded and PAYSTACK_WITHDRAWALS_ENABLED is turned on.',
+        }
+      );
+    }
+
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
     const requestedEmail = String(req.body?.email || '').trim().toLowerCase();
     amount = parseMoney(req.body?.amount);

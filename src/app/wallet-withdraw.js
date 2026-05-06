@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
@@ -8,7 +8,7 @@ import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
-import { apiPost } from '../utils/api-client';
+import { apiGet, apiPost } from '../utils/api-client';
 
 const NETWORKS = [
   { label: 'MTN', value: 'MTN' },
@@ -64,8 +64,54 @@ export default function WalletWithdraw() {
   const [network, setNetwork] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [withdrawalsEnabled, setWithdrawalsEnabled] = useState(false);
+  const [withdrawalsStatusLoaded, setWithdrawalsStatusLoaded] = useState(false);
+  const [withdrawalsUnavailableMessage, setWithdrawalsUnavailableMessage] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadWithdrawStatus = async () => {
+      try {
+        const { response, data } = await apiGet(`${API_BASE_URL}/wallet/withdraw-status`);
+        if (cancelled) return;
+
+        if (response.ok && data?.status) {
+          const enabled = data?.data?.enabled === true;
+          setWithdrawalsEnabled(enabled);
+          setWithdrawalsUnavailableMessage(enabled ? '' : String(data?.data?.reason || 'Withdrawals are currently unavailable.'));
+        } else {
+          setWithdrawalsEnabled(false);
+          setWithdrawalsUnavailableMessage('Could not verify withdrawal availability. Please try again later.');
+        }
+      } catch {
+        if (cancelled) return;
+        setWithdrawalsEnabled(false);
+        setWithdrawalsUnavailableMessage('Could not verify withdrawal availability. Please try again later.');
+      } finally {
+        if (!cancelled) {
+          setWithdrawalsStatusLoaded(true);
+        }
+      }
+    };
+
+    loadWithdrawStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const submitWithdrawal = async () => {
+    if (!withdrawalsEnabled) {
+      setNotice({
+        tone: 'warning',
+        title: 'Withdrawals unavailable',
+        message: withdrawalsUnavailableMessage || 'Withdrawals are currently unavailable.',
+      });
+      return;
+    }
+
     const numericAmount = Number(amount || 0);
     if (!Number.isFinite(numericAmount) || numericAmount < 10) {
       setNotice({ tone: 'warning', title: 'Invalid amount', message: 'Minimum withdrawal amount is GHS 10.00.' });
@@ -162,6 +208,15 @@ export default function WalletWithdraw() {
           Minimum withdrawal: GHS 10.00. Your account must be KYC verified.
         </Text>
 
+        {withdrawalsStatusLoaded && !withdrawalsEnabled ? (
+          <AppNotice
+            tone="warning"
+            title="Withdrawals temporarily unavailable"
+            message={withdrawalsUnavailableMessage}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
+
         <AppInput
           label="Amount (GHS)"
           value={amount}
@@ -223,7 +278,7 @@ export default function WalletWithdraw() {
           label={isSubmitting ? 'Processing...' : 'Confirm Withdrawal'}
           onPress={submitWithdrawal}
           loading={isSubmitting}
-          disabled={isSubmitting}
+          disabled={isSubmitting || !withdrawalsStatusLoaded || !withdrawalsEnabled}
           style={{ backgroundColor: '#2563eb' }}
         />
 
