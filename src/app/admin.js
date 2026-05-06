@@ -1279,7 +1279,14 @@ function WithdrawalReviewCard({ item, pendingAction, onMarkPaid, onReject }) {
               <AppButton
                 label="Confirm Rejection"
                 variant="danger"
-                onPress={() => onReject(item, rejectReason)}
+                onPress={() => Alert.alert(
+                  'Reject withdrawal?',
+                  `Reject GHS ${Number(item.amount || 0).toFixed(2)} for ${item.email || 'this user'} and restore wallet balance?`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Reject', style: 'destructive', onPress: () => onReject(item, rejectReason) },
+                  ]
+                )}
                 disabled={!rejectReason.trim() || Boolean(pendingAction)}
                 loading={pendingAction === `withdrawal:${item.id}:reject`}
                 style={{ backgroundColor: '#7f1d1d' }}

@@ -1452,10 +1452,6 @@ app.post('/referral/signup-bonus', requireAuth, async (req, res) => {
 });
 
 app.post('/wallet/withdraw', requireAuth, async (req, res) => {
-  let debited = false;
-  let debitedUserRef = null;
-  let debitedAmount = 0;
-
   try {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
     const requestedEmail = String(req.body?.email || '').trim().toLowerCase();
@@ -1464,6 +1460,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const provider = String(req.body?.provider || req.body?.network || '').trim();
     const rawPhoneNumber = String(req.body?.phoneNumber || '').trim();
     const normalizedPhone = normalizeGhanaPhone(rawPhoneNumber);
+    const nowIso = new Date().toISOString();
 
     if (!actorEmail) {
       return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
@@ -1485,71 +1482,74 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       return sendError(res, req, 400, 'invalid_phone', 'Enter a valid Ghana MoMo number starting with 0 (e.g. 0241234567)');
     }
 
-    const userRef = adminDb.collection('users').doc(actorEmail);
-    const userSnap = await userRef.get();
-    if (!userSnap.exists) {
-      return sendError(res, req, 404, 'user_not_found', 'User not found');
-    }
-
-    const userData = userSnap.exists ? (userSnap.data() || {}) : {};
-    const walletBalance = parseMoney(userData.walletBalance || 0);
-
-    if (String(userData.kycStatus || '').trim().toLowerCase() !== 'verified') {
-      return sendError(res, req, 403, 'kyc_required', 'Your account must be KYC verified before withdrawing');
-    }
-
-    if (amount > walletBalance) {
-      return sendError(
-        res,
-        req,
-        400,
-        'insufficient_balance',
-        `Insufficient wallet balance. Your balance is GHS ${walletBalance.toFixed(2)}`
-      );
-    }
-
     const withdrawalRef = `WD_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const userRef = adminDb.collection('users').doc(actorEmail);
+    const withdrawalDoc = adminDb.collection('withdrawals').doc();
+    const transactionDoc = adminDb.collection('transactions').doc();
+    let userData = {};
 
-    await userRef.update({
-      walletBalance: admin.firestore.FieldValue.increment(-amount),
-      updatedAt: new Date().toISOString(),
-    });
-    debited = true;
-    debitedUserRef = userRef;
-    debitedAmount = amount;
+    const fail = (statusCode, code, message) => {
+      const err = new Error(message);
+      err.statusCode = statusCode;
+      err.errorCode = code;
+      throw err;
+    };
 
-    const withdrawalDoc = await adminDb.collection('withdrawals').add({
-      type: 'withdrawal',
-      status: 'pending_admin_approval',
-      email: actorEmail,
-      displayName: userData.displayName || actorEmail,
-      amount,
-      provider,
-      phoneNumber: normalizedPhone,
-      accountName,
-      reference: withdrawalRef,
-      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
-      processedAt: null,
-      processedBy: null,
-      notes: null,
-    });
+    await adminDb.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) {
+        fail(404, 'user_not_found', 'User not found');
+      }
 
-    await adminDb.collection('transactions').add({
-      transactionId: withdrawalRef,
-      requestId: null,
-      type: 'withdrawal',
-      senderEmail: actorEmail,
-      receiverEmail: actorEmail,
-      amount,
-      provider,
-      phoneNumber: normalizedPhone,
-      accountName,
-      reference: withdrawalRef,
-      status: 'pending',
-      withdrawalId: withdrawalDoc.id,
-      paymentMethod: 'Manual Withdrawal',
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: new Date().toISOString(),
+      userData = userSnap.data() || {};
+      const walletBalance = parseMoney(userData.walletBalance || 0);
+
+      if (String(userData.kycStatus || '').trim().toLowerCase() !== 'verified') {
+        fail(403, 'kyc_required', 'Your account must be KYC verified before withdrawing');
+      }
+
+      if (amount > walletBalance) {
+        fail(400, 'insufficient_balance', `Insufficient wallet balance. Your balance is GHS ${walletBalance.toFixed(2)}`);
+      }
+
+      tx.set(userRef, {
+        walletBalance: admin.firestore.FieldValue.increment(-amount),
+        updatedAt: nowIso,
+      }, { merge: true });
+
+      tx.set(withdrawalDoc, {
+        type: 'withdrawal',
+        status: 'pending_admin_approval',
+        email: actorEmail,
+        displayName: userData.displayName || actorEmail,
+        amount,
+        provider,
+        phoneNumber: normalizedPhone,
+        accountName,
+        reference: withdrawalRef,
+        requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        processedAt: null,
+        processedBy: null,
+        notes: null,
+      });
+
+      tx.set(transactionDoc, {
+        transactionId: withdrawalRef,
+        requestId: null,
+        type: 'withdrawal',
+        senderEmail: actorEmail,
+        receiverEmail: actorEmail,
+        amount,
+        provider,
+        phoneNumber: normalizedPhone,
+        accountName,
+        reference: withdrawalRef,
+        status: 'pending',
+        withdrawalId: withdrawalDoc.id,
+        paymentMethod: 'Manual Withdrawal',
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: nowIso,
+      });
     });
 
     await adminDb.collection('notifications').add({
@@ -1627,15 +1627,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'WALLET_WITHDRAWAL_ERROR');
 
-    if (debited && debitedUserRef && debitedAmount > 0) {
-      try {
-        await debitedUserRef.set({
-          walletBalance: admin.firestore.FieldValue.increment(debitedAmount),
-          updatedAt: new Date().toISOString(),
-        }, { merge: true });
-      } catch (rollbackError) {
-        logger.error({ err: rollbackError }, 'WALLET_WITHDRAWAL_ROLLBACK_ERROR');
-      }
+    if (error?.statusCode && error?.errorCode) {
+      return sendError(res, req, error.statusCode, error.errorCode, error.message || 'Withdrawal validation failed');
     }
 
     return sendError(res, req, 500, 'server_error', 'An unexpected error occurred. Please try again.');
@@ -1651,22 +1644,32 @@ app.post('/admin/withdrawals/:id/complete', requireAuth, requireAdmin, async (re
     }
 
     const withdrawalRef = adminDb.collection('withdrawals').doc(withdrawalId);
-    const withdrawalSnap = await withdrawalRef.get();
-    if (!withdrawalSnap.exists) {
-      return sendError(res, req, 404, 'withdrawal_not_found', 'Withdrawal request not found');
-    }
+    let withdrawalData = null;
+    const fail = (statusCode, code, message) => {
+      const err = new Error(message);
+      err.statusCode = statusCode;
+      err.errorCode = code;
+      throw err;
+    };
 
-    const withdrawalData = withdrawalSnap.data() || {};
-    if (withdrawalData.status !== 'pending_admin_approval') {
-      return sendError(res, req, 409, 'withdrawal_not_pending', 'Withdrawal is already processed');
-    }
+    await adminDb.runTransaction(async (tx) => {
+      const withdrawalSnap = await tx.get(withdrawalRef);
+      if (!withdrawalSnap.exists) {
+        fail(404, 'withdrawal_not_found', 'Withdrawal request not found');
+      }
 
-    await withdrawalRef.set({
-      status: 'completed',
-      processedAt: admin.firestore.FieldValue.serverTimestamp(),
-      processedBy: adminActor,
-      notes: String(req.body?.notes || '').trim() || null,
-    }, { merge: true });
+      withdrawalData = withdrawalSnap.data() || {};
+      if (withdrawalData.status !== 'pending_admin_approval') {
+        fail(409, 'withdrawal_not_pending', 'Withdrawal is already processed');
+      }
+
+      tx.set(withdrawalRef, {
+        status: 'completed',
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        processedBy: adminActor,
+        notes: String(req.body?.notes || '').trim() || null,
+      }, { merge: true });
+    });
 
     const txSnap = await adminDb.collection('transactions').where('withdrawalId', '==', withdrawalId).limit(5).get();
     await Promise.all(txSnap.docs.map((docSnap) => docSnap.ref.set({ status: 'completed', updatedAt: new Date().toISOString() }, { merge: true })));
@@ -1692,6 +1695,9 @@ app.post('/admin/withdrawals/:id/complete', requireAuth, requireAdmin, async (re
 
     return sendSuccess(res, req, { message: 'Withdrawal marked as paid' });
   } catch (error) {
+    if (error?.statusCode && error?.errorCode) {
+      return sendError(res, req, error.statusCode, error.errorCode, error.message || 'Withdrawal completion failed');
+    }
     logger.error({ err: error }, 'ADMIN_WITHDRAWAL_COMPLETE_ERROR');
     return sendError(res, req, 500, 'withdrawal_complete_failed', 'Could not mark withdrawal as paid');
   }
@@ -1706,34 +1712,51 @@ app.post('/admin/withdrawals/:id/reject', requireAuth, requireAdmin, async (req,
       return sendError(res, req, 400, 'missing_withdrawal_id', 'Withdrawal id is required');
     }
 
+    if (!reason) {
+      return sendError(res, req, 400, 'missing_rejection_reason', 'Rejection reason is required');
+    }
+
     const withdrawalRef = adminDb.collection('withdrawals').doc(withdrawalId);
-    const withdrawalSnap = await withdrawalRef.get();
-    if (!withdrawalSnap.exists) {
-      return sendError(res, req, 404, 'withdrawal_not_found', 'Withdrawal request not found');
-    }
+    let userEmail = '';
+    let amount = 0;
 
-    const withdrawalData = withdrawalSnap.data() || {};
-    if (withdrawalData.status !== 'pending_admin_approval') {
-      return sendError(res, req, 409, 'withdrawal_not_pending', 'Withdrawal is already processed');
-    }
+    const fail = (statusCode, code, message) => {
+      const err = new Error(message);
+      err.statusCode = statusCode;
+      err.errorCode = code;
+      throw err;
+    };
 
-    const userEmail = String(withdrawalData.email || '').trim().toLowerCase();
-    const amount = parseMoney(withdrawalData.amount || 0);
-    if (!userEmail || amount <= 0) {
-      return sendError(res, req, 400, 'invalid_withdrawal_payload', 'Withdrawal payload is invalid');
-    }
+    await adminDb.runTransaction(async (tx) => {
+      const withdrawalSnap = await tx.get(withdrawalRef);
+      if (!withdrawalSnap.exists) {
+        fail(404, 'withdrawal_not_found', 'Withdrawal request not found');
+      }
 
-    await adminDb.collection('users').doc(userEmail).set({
-      walletBalance: admin.firestore.FieldValue.increment(amount),
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
+      const withdrawalData = withdrawalSnap.data() || {};
+      if (withdrawalData.status !== 'pending_admin_approval') {
+        fail(409, 'withdrawal_not_pending', 'Withdrawal is already processed');
+      }
 
-    await withdrawalRef.set({
-      status: 'rejected',
-      processedAt: admin.firestore.FieldValue.serverTimestamp(),
-      processedBy: adminActor,
-      notes: reason || 'Rejected by admin',
-    }, { merge: true });
+      userEmail = String(withdrawalData.email || '').trim().toLowerCase();
+      amount = parseMoney(withdrawalData.amount || 0);
+      if (!userEmail || amount <= 0) {
+        fail(400, 'invalid_withdrawal_payload', 'Withdrawal payload is invalid');
+      }
+
+      const userRef = adminDb.collection('users').doc(userEmail);
+      tx.set(userRef, {
+        walletBalance: admin.firestore.FieldValue.increment(amount),
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+
+      tx.set(withdrawalRef, {
+        status: 'rejected',
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        processedBy: adminActor,
+        notes: reason,
+      }, { merge: true });
+    });
 
     const txSnap = await adminDb.collection('transactions').where('withdrawalId', '==', withdrawalId).limit(5).get();
     await Promise.all(txSnap.docs.map((docSnap) => docSnap.ref.set({ status: 'failed', updatedAt: new Date().toISOString() }, { merge: true })));
@@ -1759,6 +1782,9 @@ app.post('/admin/withdrawals/:id/reject', requireAuth, requireAdmin, async (req,
 
     return sendSuccess(res, req, { message: 'Withdrawal rejected and balance restored' });
   } catch (error) {
+    if (error?.statusCode && error?.errorCode) {
+      return sendError(res, req, error.statusCode, error.errorCode, error.message || 'Withdrawal rejection failed');
+    }
     logger.error({ err: error }, 'ADMIN_WITHDRAWAL_REJECT_ERROR');
     return sendError(res, req, 500, 'withdrawal_reject_failed', 'Could not reject withdrawal');
   }
