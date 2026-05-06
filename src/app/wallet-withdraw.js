@@ -105,17 +105,37 @@ export default function WalletWithdraw() {
       const result = data;
       const withdrawnAmount = Number(result?.data?.amount || numericAmount || 0);
       const ref = result?.data?.reference || 'N/A';
-      setNotice({ tone: 'success', title: 'Withdrawal submitted', message: `Your MoMo withdrawal is being processed. Reference: ${ref}` });
-      Alert.alert(
-        '✅ Withdrawal initiated!',
-        `GHS ${withdrawnAmount.toFixed(2)} is being sent to your MoMo account. This may take a few minutes.`,
-        [
-          {
-            text: 'OK',
-            onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
-          },
-        ]
-      );
+      const isManualReview = result?.data?.status === 'MANUAL_REVIEW' || result?.data?.manualMode === true;
+
+      if (isManualReview) {
+        setNotice({
+          tone: 'warning',
+          title: 'Withdrawal queued',
+          message: `Your withdrawal has been queued for manual processing. Reference: ${ref}`,
+        });
+        Alert.alert(
+          'Withdrawal queued for manual processing',
+          `GHS ${withdrawnAmount.toFixed(2)} has been recorded, but automatic payout is not active on the current Paystack account. Your withdrawal will need manual processing. Reference: ${ref}`,
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
+            },
+          ]
+        );
+      } else {
+        setNotice({ tone: 'success', title: 'Withdrawal submitted', message: `Your MoMo withdrawal is being processed. Reference: ${ref}` });
+        Alert.alert(
+          '✅ Withdrawal initiated!',
+          `GHS ${withdrawnAmount.toFixed(2)} is being sent to your MoMo account. This may take a few minutes.`,
+          [
+            {
+              text: 'OK',
+              onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
+            },
+          ]
+        );
+      }
     } catch (error) {
       setNotice({
         tone: 'error',
