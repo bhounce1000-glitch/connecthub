@@ -55,6 +55,14 @@ function maskValue(value = '') {
   return `${str.slice(0, 3)}${'•'.repeat(Math.max(0, str.length - 6))}${str.slice(-3)}`;
 }
 
+function escapeCsv(value) {
+  const raw = String(value ?? '');
+  if (raw.includes('"') || raw.includes(',') || raw.includes('\n')) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+}
+
 // Safe string extractor — handles objects from country/phone pickers
 function safeStr(val) {
   if (!val) return '';
@@ -79,6 +87,7 @@ export default function Admin() {
   const [kycSubmissions, setKycSubmissions] = useState([]);
   const [disputes, setDisputes] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
+  const [selectedWithdrawalIds, setSelectedWithdrawalIds] = useState([]);
   const [activeTab, setActiveTab] = useState('requests');
   const [withdrawalFilter, setWithdrawalFilter] = useState('pending');
   const [notice, setNotice] = useState(null);
@@ -475,6 +484,163 @@ export default function Admin() {
     if (withdrawalFilter === 'rejected') return withdrawals.filter((w) => String(w.status || '') === 'rejected');
     return withdrawals;
   }, [withdrawalFilter, withdrawals]);
+
+  const pendingVisibleWithdrawals = useMemo(
+    () => filteredWithdrawals.filter((w) => String(w.status || '') === 'pending_admin_approval'),
+    [filteredWithdrawals]
+  );
+
+  useEffect(() => {
+    const pendingSet = new Set(
+      withdrawals
+        .filter((w) => String(w.status || '') === 'pending_admin_approval')
+        .map((w) => String(w.id || ''))
+    );
+    setSelectedWithdrawalIds((prev) => prev.filter((id) => pendingSet.has(id)));
+  }, [withdrawals]);
+
+  const toggleWithdrawalSelection = (withdrawalId) => {
+    const id = String(withdrawalId || '');
+    if (!id) return;
+    setSelectedWithdrawalIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const selectAllVisiblePendingWithdrawals = () => {
+    const ids = pendingVisibleWithdrawals.map((w) => String(w.id || '')).filter(Boolean);
+    setSelectedWithdrawalIds(ids);
+  };
+
+  const clearWithdrawalSelection = () => {
+    setSelectedWithdrawalIds([]);
+  };
+
+  const runBulkMarkPaid = async () => {
+    const selectedRows = pendingVisibleWithdrawals.filter((w) => selectedWithdrawalIds.includes(String(w.id || '')));
+    if (selectedRows.length === 0) {
+      setNotice({
+        tone: 'warning',
+        title: 'No withdrawals selected',
+        message: 'Select at least one pending withdrawal to mark as paid.',
+      });
+      return;
+    }
+
+    setPendingAction('withdrawal:bulk:paid');
+    setNotice(null);
+    let successCount = 0;
+    let failCount = 0;
+    const failedReferences = [];
+
+    for (const withdrawal of selectedRows) {
+      try {
+        const { response, data } = await apiPost(
+          `${API_BASE_URL}/admin/withdrawals/${withdrawal.id}/complete`,
+          {},
+          { requireAuth: true }
+        );
+        assertApiSuccess(response, data, 'Could not mark withdrawal as paid');
+        successCount += 1;
+      } catch {
+        failCount += 1;
+        failedReferences.push(withdrawal.reference || withdrawal.id);
+      }
+    }
+
+    setSelectedWithdrawalIds([]);
+
+    if (failCount === 0) {
+      setNotice({
+        tone: 'success',
+        title: 'Bulk payout updated',
+        message: `Marked ${successCount} withdrawal${successCount === 1 ? '' : 's'} as paid.`,
+      });
+    } else {
+      setNotice({
+        tone: 'warning',
+        title: 'Bulk payout partially complete',
+        message: `Paid ${successCount}; failed ${failCount}. Failed refs: ${failedReferences.slice(0, 4).join(', ')}${failedReferences.length > 4 ? '…' : ''}`,
+      });
+    }
+
+    setPendingAction(null);
+  };
+
+  const confirmBulkMarkPaid = () => {
+    const selectedCount = pendingVisibleWithdrawals.filter((w) => selectedWithdrawalIds.includes(String(w.id || ''))).length;
+    if (selectedCount === 0) {
+      setNotice({ tone: 'warning', title: 'No withdrawals selected', message: 'Select pending withdrawals first.' });
+      return;
+    }
+
+    Alert.alert(
+      'Confirm bulk payout',
+      `Mark ${selectedCount} selected withdrawal${selectedCount === 1 ? '' : 's'} as paid?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Mark Paid', onPress: runBulkMarkPaid },
+      ]
+    );
+  };
+
+  const exportWithdrawalsCsv = () => {
+    const rows = filteredWithdrawals;
+    if (rows.length === 0) {
+      setNotice({ tone: 'warning', title: 'No data to export', message: 'There are no withdrawals in the current filter.' });
+      return;
+    }
+
+    const headers = [
+      'withdrawalId',
+      'reference',
+      'email',
+      'displayName',
+      'amount',
+      'provider',
+      'phoneNumber',
+      'accountName',
+      'status',
+      'requestedAt',
+      'processedAt',
+      'processedBy',
+      'notes',
+    ];
+
+    const csvRows = rows.map((item) => [
+      item.id || '',
+      item.reference || '',
+      item.email || '',
+      item.displayName || '',
+      Number(item.amount || 0).toFixed(2),
+      item.provider || '',
+      item.phoneNumber || '',
+      item.accountName || '',
+      item.status || '',
+      formatIsoDate(item.requestedAt || item.createdAt),
+      formatIsoDate(item.processedAt),
+      item.processedBy || '',
+      item.notes || '',
+    ]);
+
+    const csv = [headers.join(','), ...csvRows.map((line) => line.map(escapeCsv).join(','))].join('\n');
+    const timestamp = new Date().toISOString().replace(/[.:]/g, '-');
+    const fileName = `withdrawals-audit-${withdrawalFilter}-${timestamp}.csv`;
+
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setNotice({ tone: 'success', title: 'CSV exported', message: `Downloaded ${fileName}` });
+      return;
+    }
+
+    setNotice({ tone: 'warning', title: 'Export not supported on this device', message: 'Please use web admin to download CSV exports.' });
+  };
 
   const sendEmailTest = async () => {
     const to = (emailTestTarget || currentEmail).trim().toLowerCase();
@@ -874,6 +1040,43 @@ export default function Admin() {
                     })}
                   </View>
 
+                  <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: '#fdba74' }}>
+                    <Text style={{ color: '#9a3412', fontWeight: '800', marginBottom: 8 }}>
+                      Bulk Actions
+                    </Text>
+                    <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 10 }}>
+                      Selected: {selectedWithdrawalIds.length} • Pending in view: {pendingVisibleWithdrawals.length}
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                      <AppButton
+                        label="Select All Pending"
+                        onPress={selectAllVisiblePendingWithdrawals}
+                        disabled={Boolean(pendingAction) || pendingVisibleWithdrawals.length === 0}
+                        style={{ backgroundColor: '#0f766e', paddingVertical: 9 }}
+                      />
+                      <AppButton
+                        label="Clear Selection"
+                        variant="neutral"
+                        onPress={clearWithdrawalSelection}
+                        disabled={Boolean(pendingAction) || selectedWithdrawalIds.length === 0}
+                        style={{ paddingVertical: 9 }}
+                      />
+                      <AppButton
+                        label={pendingAction === 'withdrawal:bulk:paid' ? 'Processing…' : 'Mark Selected Paid'}
+                        onPress={confirmBulkMarkPaid}
+                        loading={pendingAction === 'withdrawal:bulk:paid'}
+                        disabled={Boolean(pendingAction) || selectedWithdrawalIds.length === 0}
+                        style={{ backgroundColor: '#15803d', paddingVertical: 9 }}
+                      />
+                      <AppButton
+                        label="Export CSV"
+                        onPress={exportWithdrawalsCsv}
+                        disabled={Boolean(pendingAction) || filteredWithdrawals.length === 0}
+                        style={{ backgroundColor: '#1d4ed8', paddingVertical: 9 }}
+                      />
+                    </View>
+                  </AppCard>
+
                   {filteredWithdrawals.map((item) => (
                     <WithdrawalReviewCard
                       key={item.id}
@@ -881,6 +1084,8 @@ export default function Admin() {
                       pendingAction={pendingAction}
                       onMarkPaid={markWithdrawalPaid}
                       onReject={rejectWithdrawal}
+                      isSelected={selectedWithdrawalIds.includes(String(item.id || ''))}
+                      onToggleSelect={toggleWithdrawalSelection}
                     />
                   ))}
                 </>
@@ -1209,7 +1414,7 @@ function DisputeReviewCard({ item, pendingAction, onResolve }) {
   );
 }
 
-function WithdrawalReviewCard({ item, pendingAction, onMarkPaid, onReject }) {
+function WithdrawalReviewCard({ item, pendingAction, onMarkPaid, onReject, isSelected = false, onToggleSelect }) {
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectReason, setShowRejectReason] = useState(false);
   const status = String(item.status || 'pending_admin_approval');
@@ -1247,6 +1452,35 @@ function WithdrawalReviewCard({ item, pendingAction, onMarkPaid, onReject }) {
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 2 }}>Account: {item.accountName || 'N/A'}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 2 }}>Reference: {item.reference || item.id}</Text>
       <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 2 }}>Requested: {formatIsoDate(item.requestedAt || item.createdAt)}</Text>
+
+      {isPending ? (
+        <TouchableOpacity
+          onPress={() => onToggleSelect?.(item.id)}
+          disabled={Boolean(pendingAction)}
+          style={{
+            marginTop: 6,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <View
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 4,
+              borderWidth: 1,
+              borderColor: isSelected ? '#15803d' : '#64748b',
+              backgroundColor: isSelected ? '#15803d' : 'transparent',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {isSelected ? <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>✓</Text> : null}
+          </View>
+          <Text style={{ color: AppColors.ink500, fontSize: 12, fontWeight: '700' }}>Select for bulk payout</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {isPending ? (
         <View style={{ marginTop: 8 }}>
