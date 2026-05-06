@@ -53,13 +53,57 @@ function iconByType(type) {
     case 'kyc_approved': return { icon: '✅', bg: '#dcfce7' };
     case 'kyc_rejected': return { icon: '❌', bg: '#fee2e2' };
     case 'subscription_activated': return { icon: '⭐', bg: '#fef3c7' };
-    case 'referral_bonus': return { icon: '💰', bg: '#dcfce7' };
+    case 'referral_bonus': return { icon: '🎁', bg: '#dcfce7' };
     case 'payment': return { icon: '💵', bg: '#dcfce7' };
     case 'message':
     case 'chat': return { icon: '💬', bg: '#dbeafe' };
     case 'dispute': return { icon: '⚠️', bg: '#fee2e2' };
+    case 'withdrawal_request': return { icon: '📤', bg: '#ffedd5' };
+    case 'withdrawal_pending': return { icon: '⏳', bg: '#fef3c7' };
+    case 'withdrawal_completed': return { icon: '💸', bg: '#dcfce7' };
+    case 'withdrawal_rejected': return { icon: '↩️', bg: '#fee2e2' };
     default: return { icon: '🔔', bg: '#f1f5f9' };
   }
+}
+
+function getRoute(n) {
+  const type = String(n.type || '');
+  if (
+    type === 'withdrawal_request' ||
+    type === 'withdrawal_pending' ||
+    type === 'withdrawal_completed' ||
+    type === 'withdrawal_rejected'
+  ) {
+    return '/wallet';
+  }
+  if (type === 'payment' || type === 'wallet_topup') {
+    return '/wallet';
+  }
+  if (type === 'referral_bonus') {
+    return '/referral';
+  }
+  if (type === 'subscription_activated') {
+    return '/subscription';
+  }
+  if (type === 'kyc_approved' || type === 'kyc_rejected') {
+    return '/profile';
+  }
+  if (type === 'message' || type === 'chat') {
+    if (n.requestId || n.jobId) {
+      return { pathname: '/chat', params: { requestId: n.requestId || n.jobId } };
+    }
+    return '/chat';
+  }
+  if (type === 'dispute') {
+    if (n.requestId) {
+      return { pathname: '/job-details', params: { id: n.requestId } };
+    }
+    return '/history';
+  }
+  if (n.requestId) {
+    return { pathname: '/job-details', params: { id: n.requestId } };
+  }
+  return null;
 }
 
 export default function Notifications() {
@@ -116,6 +160,18 @@ export default function Notifications() {
     } catch {}
   };
 
+  const handlePress = async (n) => {
+    await markAsRead(n);
+    const route = getRoute(n);
+    if (route) {
+      if (typeof route === 'string') {
+        router.push(route);
+      } else {
+        router.push(route);
+      }
+    }
+  };
+
   const markAllRead = async () => {
     const unread = rows.filter((r) => !r.read);
     await Promise.all(unread.map((n) => updateDoc(doc(db, 'notifications', n.id), { read: true }).catch(() => {})));
@@ -164,10 +220,11 @@ export default function Notifications() {
           const n = item.payload;
           const typeMeta = iconByType(n.type);
           const unread = !n.read;
+          const route = getRoute(n);
 
           return (
             <TouchableOpacity
-              onPress={() => markAsRead(n)}
+              onPress={() => handlePress(n)}
               activeOpacity={0.85}
               style={{
                 backgroundColor: unread ? '#fff' : '#f8fafc',
@@ -188,8 +245,11 @@ export default function Notifications() {
 
                 <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{n.title || 'Notification'}</Text>
-                  <Text style={{ color: '#64748b', marginTop: 4, lineHeight: 18 }} numberOfLines={2}>{n.body || n.text || ''}</Text>
-                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 6, alignSelf: 'flex-end' }}>{timeAgo(n.createdAt)}</Text>
+                  <Text style={{ color: '#64748b', marginTop: 4, lineHeight: 18 }}>{n.body || n.text || ''}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                    <Text style={{ color: '#94a3b8', fontSize: 11 }}>{timeAgo(n.createdAt)}</Text>
+                    {route ? <Text style={{ color: '#2563eb', fontSize: 11, fontWeight: '700' }}>View →</Text> : null}
+                  </View>
                 </View>
 
                 {unread ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563eb', marginTop: 4 }} /> : null}
