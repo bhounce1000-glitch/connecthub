@@ -41,6 +41,8 @@ ConnectHub is an Expo app with a small Express backend for Paystack payment init
 - `EXPO_PUBLIC_WEB_BASE_URL`: Base URL the Expo web app uses for return routes.
 - `PAYSTACK_CALLBACK_BASE_URL`: Base URL Paystack should redirect the browser back to after checkout.
 - `BACKEND_PUBLIC_URL`: Public URL the backend should report in logs and external setup docs.
+- `PAYSTACK_WITHDRAWALS_ENABLED`: Set to `true` only after your Paystack account supports third-party payouts and Transfers is enabled. Default should remain `false` for the current ConnectHub setup.
+- `PAYSTACK_WITHDRAWALS_DISABLED_REASON`: Message shown in the withdrawal UI while payouts are disabled.
 - `CORS_ALLOWED_ORIGINS`: Comma-separated browser origins allowed to call the backend (for example `https://app.your-domain.com`).
 - `EXPO_PUBLIC_FIREBASE_API_KEY`: Firebase web API key used by the Expo client.
 - `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN`: Firebase Auth domain for the Expo client.
@@ -57,6 +59,7 @@ ConnectHub is an Expo app with a small Express backend for Paystack payment init
 3. Set `EXPO_PUBLIC_WEB_BASE_URL` and `PAYSTACK_CALLBACK_BASE_URL` to the public web app URL that should receive checkout returns.
 4. Set `BACKEND_PUBLIC_URL` to the public backend URL used for logs and operational docs.
 5. Configure the Paystack dashboard webhook URL to `https://your-backend-host/paystack/webhook`.
+6. Keep `PAYSTACK_WITHDRAWALS_ENABLED=false` until your Paystack account is approved for third-party payouts and Transfers is enabled.
 
 ## End-to-end payment walkthrough
 
@@ -120,8 +123,21 @@ Callback: https://app.your-domain.com/pay-return
 
 - `POST /pay`: Initializes a Paystack transaction.
 - `POST /pay/verify`: Verifies a Paystack reference.
+- `GET /wallet/withdraw-status`: Returns whether wallet withdrawals are currently enabled.
 - `POST /paystack/webhook`: Receives signed Paystack webhook events and updates Firestore when a charge succeeds.
 - `GET /`: Simple health check.
+
+## Wallet withdrawals
+
+Automatic wallet withdrawals depend on Paystack transfer capability. For the current ConnectHub production setup, withdrawals should stay disabled until Paystack allows third-party payouts for the account.
+
+To re-enable automatic withdrawals safely:
+
+1. Upgrade the Paystack business tier so third-party payouts are allowed.
+2. Enable Transfers in the Paystack dashboard.
+3. Confirm the Paystack balance is funded.
+4. Set `PAYSTACK_WITHDRAWALS_ENABLED=true` in Render.
+5. Redeploy the backend.
 
 ## Paystack dashboard
 

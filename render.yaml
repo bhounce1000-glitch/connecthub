@@ -30,3 +30,7 @@ services:
         value: https://connecthub-yrox.onrender.com
       - key: EXPO_PUBLIC_WEB_BASE_URL
         value: https://connecthub-1873e.web.app
+      - key: PAYSTACK_WITHDRAWALS_ENABLED
+        value: false
+      - key: PAYSTACK_WITHDRAWALS_DISABLED_REASON
+        value: Wallet withdrawals are temporarily unavailable while ConnectHub completes Paystack payout activation.
