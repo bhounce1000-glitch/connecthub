@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
@@ -8,7 +8,7 @@ import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
-import { apiGet, apiPost } from '../utils/api-client';
+import { apiPost } from '../utils/api-client';
 
 const NETWORKS = [
   { label: 'MTN', value: 'MTN' },
@@ -23,7 +23,7 @@ const getWithdrawErrorMessage = (errorPayload) => {
   const hint = String(errorPayload?.details?.hint || '').trim();
   switch (errorCode) {
     case 'invalid_phone':
-      return 'Invalid phone number. Enter a Ghana number like 0241234567';
+      return 'Enter a valid 10-digit Ghana number starting with 0';
     case 'insufficient_balance':
       return 'Insufficient wallet balance';
     case 'invalid_amount':
@@ -40,6 +40,10 @@ const getWithdrawErrorMessage = (errorPayload) => {
       return 'Paystack transfer finalization/OTP is required. Complete transfer settings in Paystack before retrying.';
     case 'transfer_pending_approval':
       return 'Paystack transfer capability is pending approval. Complete compliance verification in Paystack.';
+    case 'kyc_required':
+      return 'Complete KYC verification before withdrawing';
+    case 'server_error':
+      return 'Something went wrong. Please try again.';
     case 'transfer_failed':
       if (paystackMessage && hint) {
         return `${paystackMessage} ${hint}`;
@@ -64,55 +68,8 @@ export default function WalletWithdraw() {
   const [network, setNetwork] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
-  const [withdrawalsEnabled, setWithdrawalsEnabled] = useState(false);
-  const [withdrawalsStatusLoaded, setWithdrawalsStatusLoaded] = useState(false);
-  const [withdrawalsUnavailableMessage, setWithdrawalsUnavailableMessage] = useState('');
-  const withdrawalFormDisabled = !withdrawalsStatusLoaded || !withdrawalsEnabled;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadWithdrawStatus = async () => {
-      try {
-        const { response, data } = await apiGet(`${API_BASE_URL}/wallet/withdraw-status`);
-        if (cancelled) return;
-
-        if (response.ok && data?.status) {
-          const enabled = data?.data?.enabled === true;
-          setWithdrawalsEnabled(enabled);
-          setWithdrawalsUnavailableMessage(enabled ? '' : String(data?.data?.reason || 'Withdrawals are currently unavailable.'));
-        } else {
-          setWithdrawalsEnabled(false);
-          setWithdrawalsUnavailableMessage('Could not verify withdrawal availability. Please try again later.');
-        }
-      } catch {
-        if (cancelled) return;
-        setWithdrawalsEnabled(false);
-        setWithdrawalsUnavailableMessage('Could not verify withdrawal availability. Please try again later.');
-      } finally {
-        if (!cancelled) {
-          setWithdrawalsStatusLoaded(true);
-        }
-      }
-    };
-
-    loadWithdrawStatus();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const submitWithdrawal = async () => {
-    if (!withdrawalsEnabled) {
-      setNotice({
-        tone: 'warning',
-        title: 'Withdrawals unavailable',
-        message: withdrawalsUnavailableMessage || 'Withdrawals are currently unavailable.',
-      });
-      return;
-    }
-
     const numericAmount = Number(amount || 0);
     if (!Number.isFinite(numericAmount) || numericAmount < 10) {
       setNotice({ tone: 'warning', title: 'Invalid amount', message: 'Minimum withdrawal amount is GHS 10.00.' });
@@ -151,38 +108,21 @@ export default function WalletWithdraw() {
 
       const result = data;
       const withdrawnAmount = Number(result?.data?.amount || numericAmount || 0);
+      const targetPhone = result?.data?.phoneNumber || phoneNumber.trim();
+      const targetProvider = result?.data?.provider || network;
       const ref = result?.data?.reference || 'N/A';
-      const isManualReview = result?.data?.status === 'MANUAL_REVIEW' || result?.data?.manualMode === true;
 
-      if (isManualReview) {
-        setNotice({
-          tone: 'warning',
-          title: 'Withdrawal queued',
-          message: `Your withdrawal has been queued for manual processing. Reference: ${ref}`,
-        });
-        Alert.alert(
-          'Withdrawal queued for manual processing',
-          `GHS ${withdrawnAmount.toFixed(2)} has been recorded, but automatic payout is not active on the current Paystack account. Your withdrawal will need manual processing. Reference: ${ref}`,
-          [
-            {
-              text: 'OK',
-              onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
-            },
-          ]
-        );
-      } else {
-        setNotice({ tone: 'success', title: 'Withdrawal submitted', message: `Your MoMo withdrawal is being processed. Reference: ${ref}` });
-        Alert.alert(
-          '✅ Withdrawal initiated!',
-          `GHS ${withdrawnAmount.toFixed(2)} is being sent to your MoMo account. This may take a few minutes.`,
-          [
-            {
-              text: 'OK',
-              onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
-            },
-          ]
-        );
-      }
+      setNotice({ tone: 'success', title: 'Withdrawal request submitted', message: `Reference: ${ref}` });
+      Alert.alert(
+        '✅ Withdrawal Request Submitted!',
+        `Your request of GHS ${withdrawnAmount.toFixed(2)} to ${targetProvider} (${targetPhone}) has been received. Our team will process it within 24 hours and you will be notified when done.\n\nReference: ${ref}`,
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
+          },
+        ]
+      );
     } catch (error) {
       setNotice({
         tone: 'error',
@@ -197,8 +137,8 @@ export default function WalletWithdraw() {
   return (
     <ScreenShell
       eyebrow="WALLET"
-      title="Withdraw"
-      subtitle={withdrawalFormDisabled ? 'Wallet withdrawals are currently unavailable.' : 'Send wallet funds to your Mobile Money account.'}
+      title="Withdraw Funds"
+      subtitle="Withdrawal requests are processed within 24 hours by our team. Minimum GHS 10."
       accentColor="#1e3a8a"
       accentTextColor="#dbeafe"
       backgroundColor="#f8fafc"
@@ -209,22 +149,13 @@ export default function WalletWithdraw() {
           Minimum withdrawal: GHS 10.00. Your account must be KYC verified.
         </Text>
 
-        {withdrawalsStatusLoaded && !withdrawalsEnabled ? (
-          <AppNotice
-            tone="warning"
-            title="Withdrawals temporarily unavailable"
-            message={withdrawalsUnavailableMessage}
-            style={{ marginBottom: 12 }}
-          />
-        ) : null}
-
         <AppInput
           label="Amount (GHS)"
           value={amount}
           onChangeText={setAmount}
           keyboardType="numeric"
           placeholder="10"
-          editable={!withdrawalFormDisabled}
+          editable={!isSubmitting}
         />
 
         {/* Network selector */}
@@ -238,7 +169,7 @@ export default function WalletWithdraw() {
               <Pressable
                 key={n.value}
                 onPress={() => {
-                  if (!withdrawalFormDisabled) {
+                  if (!isSubmitting) {
                     setNetwork(n.value);
                   }
                 }}
@@ -249,7 +180,7 @@ export default function WalletWithdraw() {
                   borderWidth: 1.5,
                   borderColor: selected ? '#2563eb' : '#cbd5e1',
                   backgroundColor: selected ? '#dbeafe' : '#f8fafc',
-                  opacity: withdrawalFormDisabled ? 0.55 : 1,
+                  opacity: isSubmitting ? 0.55 : 1,
                 }}
               >
                 <Text style={{ fontSize: 13, fontWeight: selected ? '700' : '500', color: selected ? '#1e3a8a' : '#64748b' }}>
@@ -267,7 +198,7 @@ export default function WalletWithdraw() {
           keyboardType="phone-pad"
           maxLength={12}
           placeholder="e.g. 0241234567"
-          editable={!withdrawalFormDisabled}
+          editable={!isSubmitting}
         />
         <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: -10, marginBottom: 12 }}>
           Enter your 10-digit Ghana number starting with 0 (not country code).
@@ -278,16 +209,16 @@ export default function WalletWithdraw() {
           value={accountName}
           onChangeText={setAccountName}
           placeholder="John Mensah"
-          editable={!withdrawalFormDisabled}
+          editable={!isSubmitting}
         />
 
         <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 10 }} />
 
         <AppButton
-          label={withdrawalFormDisabled ? 'Withdrawals Unavailable' : isSubmitting ? 'Processing...' : 'Confirm Withdrawal'}
+          label={isSubmitting ? 'Submitting...' : 'Confirm Withdrawal'}
           onPress={submitWithdrawal}
           loading={isSubmitting}
-          disabled={isSubmitting || withdrawalFormDisabled}
+          disabled={isSubmitting}
           style={{ backgroundColor: '#2563eb' }}
         />
 
@@ -301,9 +232,7 @@ export default function WalletWithdraw() {
 
       <View style={{ marginTop: 12 }}>
         <Text style={{ color: '#64748b', fontSize: 12 }}>
-          {withdrawalFormDisabled
-            ? 'Withdrawals will be enabled again after ConnectHub completes Paystack payout activation.'
-            : 'Funds are sent via Paystack to your Mobile Money account. Processing may take a few minutes.'}
+          Withdrawal requests are reviewed by the ConnectHub team and processed within 24 hours.
         </Text>
       </View>
     </ScreenShell>

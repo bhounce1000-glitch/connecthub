@@ -1,6 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
-import { addDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -78,7 +78,9 @@ export default function Admin() {
   const [requests, setRequests] = useState([]);
   const [kycSubmissions, setKycSubmissions] = useState([]);
   const [disputes, setDisputes] = useState([]);
+  const [withdrawals, setWithdrawals] = useState([]);
   const [activeTab, setActiveTab] = useState('requests');
+  const [withdrawalFilter, setWithdrawalFilter] = useState('pending');
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -115,6 +117,16 @@ export default function Admin() {
         });
 
       setRequests(rows);
+    });
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+
+    const withdrawalQuery = query(collection(db, 'withdrawals'), orderBy('requestedAt', 'desc'));
+    return onSnapshot(withdrawalQuery, (snapshot) => {
+      const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setWithdrawals(rows);
     });
   }, [isAdmin]);
 
@@ -369,6 +381,52 @@ export default function Admin() {
     }
   };
 
+  const markWithdrawalPaid = async (withdrawal) => {
+    const key = `withdrawal:${withdrawal.id}:paid`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/withdrawals/${withdrawal.id}/complete`,
+        {},
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Could not mark withdrawal as paid');
+      setNotice({
+        tone: 'success',
+        title: 'Withdrawal marked paid',
+        message: `Marked ${withdrawal.reference} as paid successfully.`,
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Action failed', message: error?.message || 'Could not mark withdrawal as paid.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const rejectWithdrawal = async (withdrawal, reason) => {
+    const key = `withdrawal:${withdrawal.id}:reject`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/withdrawals/${withdrawal.id}/reject`,
+        { reason: String(reason || '').trim() },
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Could not reject withdrawal');
+      setNotice({
+        tone: 'success',
+        title: 'Withdrawal rejected',
+        message: `${withdrawal.reference} rejected and wallet restored.`,
+      });
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Action failed', message: error?.message || 'Could not reject withdrawal.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   const users = useMemo(() => {
     const map = new Map();
 
@@ -408,6 +466,15 @@ export default function Admin() {
 
     return Array.from(map.values()).sort((a, b) => a.email.localeCompare(b.email));
   }, [kycSubmissions, requests, usersProfileMap]);
+
+  const pendingWithdrawalCount = withdrawals.filter((w) => String(w.status || '') === 'pending_admin_approval').length;
+  const filteredWithdrawals = useMemo(() => {
+    if (withdrawalFilter === 'all') return withdrawals;
+    if (withdrawalFilter === 'pending') return withdrawals.filter((w) => String(w.status || '') === 'pending_admin_approval');
+    if (withdrawalFilter === 'completed') return withdrawals.filter((w) => String(w.status || '') === 'completed');
+    if (withdrawalFilter === 'rejected') return withdrawals.filter((w) => String(w.status || '') === 'rejected');
+    return withdrawals;
+  }, [withdrawalFilter, withdrawals]);
 
   const sendEmailTest = async () => {
     const to = (emailTestTarget || currentEmail).trim().toLowerCase();
@@ -533,6 +600,10 @@ export default function Admin() {
               <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Disputes</Text>
               <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 18 }}>{openDisputeCount}</Text>
             </AppCard>
+            <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Withdrawals Pending</Text>
+              <Text style={{ color: '#c2410c', fontWeight: '800', fontSize: 18 }}>{pendingWithdrawalCount}</Text>
+            </AppCard>
           </View>
 
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
@@ -582,6 +653,21 @@ export default function Admin() {
             </TouchableOpacity>
 
             <TouchableOpacity
+              onPress={() => setActiveTab('withdrawals')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'withdrawals' ? '#ea580c' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'withdrawals' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Withdrawals ({pendingWithdrawalCount})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               onPress={() => setActiveTab('users')}
               style={{
                 flex: 1,
@@ -622,6 +708,8 @@ export default function Admin() {
             ? kycSubmissions.length > 0
             : activeTab === 'disputes'
               ? disputes.length > 0
+              : activeTab === 'withdrawals'
+                ? filteredWithdrawals.length > 0
               : activeTab === 'analytics'
                 ? true
                 : users.length > 0
@@ -633,6 +721,8 @@ export default function Admin() {
             ? 'No KYC submissions'
             : activeTab === 'disputes'
               ? 'No disputes'
+              : activeTab === 'withdrawals'
+                ? 'No withdrawals found'
               : activeTab === 'analytics'
                 ? 'Loading…'
                 : 'No users found'
@@ -644,6 +734,8 @@ export default function Admin() {
             ? 'KYC submissions will appear here.'
             : activeTab === 'disputes'
               ? 'Disputes opened by customers will appear here.'
+              : activeTab === 'withdrawals'
+                ? 'Withdrawal requests will appear here.'
               : activeTab === 'analytics'
                 ? 'Fetching analytics data…'
                 : 'Users will appear here once activity is detected.'
@@ -752,6 +844,47 @@ export default function Admin() {
                   onResolve={resolveDispute}
                 />
               ))
+            : activeTab === 'withdrawals'
+              ? (
+                <>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                    {[
+                      ['all', 'All'],
+                      ['pending', 'Pending'],
+                      ['completed', 'Completed'],
+                      ['rejected', 'Rejected'],
+                    ].map(([value, label]) => {
+                      const selected = withdrawalFilter === value;
+                      return (
+                        <TouchableOpacity
+                          key={value}
+                          onPress={() => setWithdrawalFilter(value)}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: selected ? '#fb923c' : '#334155',
+                            backgroundColor: selected ? '#fff7ed' : '#0f172a',
+                          }}
+                        >
+                          <Text style={{ color: selected ? '#c2410c' : '#cbd5e1', fontWeight: '700' }}>{label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {filteredWithdrawals.map((item) => (
+                    <WithdrawalReviewCard
+                      key={item.id}
+                      item={item}
+                      pendingAction={pendingAction}
+                      onMarkPaid={markWithdrawalPaid}
+                      onReject={rejectWithdrawal}
+                    />
+                  ))}
+                </>
+              )
             : activeTab === 'users'
               ? (
                 <>
@@ -1072,6 +1205,89 @@ function DisputeReviewCard({ item, pendingAction, onResolve }) {
           </View>
         </View>
       )}
+    </AppCard>
+  );
+}
+
+function WithdrawalReviewCard({ item, pendingAction, onMarkPaid, onReject }) {
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectReason, setShowRejectReason] = useState(false);
+  const status = String(item.status || 'pending_admin_approval');
+  const isPending = status === 'pending_admin_approval';
+  const statusMeta = status === 'completed'
+    ? { bg: '#dcfce7', text: '#166534', label: 'Paid ✅' }
+    : status === 'rejected'
+      ? { bg: '#fee2e2', text: '#b91c1c', label: 'Rejected' }
+      : { bg: '#ffedd5', text: '#c2410c', label: 'Pending' };
+
+  const askMarkPaid = () => {
+    Alert.alert(
+      'Confirm manual payout',
+      `Confirm you have sent GHS ${Number(item.amount || 0).toFixed(2)} to ${item.phoneNumber}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Mark as Paid', onPress: () => onMarkPaid(item) },
+      ]
+    );
+  };
+
+  return (
+    <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: '#fed7aa' }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{item.email || 'Unknown user'}</Text>
+          <Text style={{ color: '#16a34a', fontWeight: '900', marginTop: 3 }}>GHS {Number(item.amount || 0).toFixed(2)}</Text>
+        </View>
+        <View style={{ backgroundColor: statusMeta.bg, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
+          <Text style={{ color: statusMeta.text, fontWeight: '800', fontSize: 11 }}>{statusMeta.label}</Text>
+        </View>
+      </View>
+
+      <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 2 }}>{item.provider || 'Network'} • {item.phoneNumber || 'No number'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 2 }}>Account: {item.accountName || 'N/A'}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 2 }}>Reference: {item.reference || item.id}</Text>
+      <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 2 }}>Requested: {formatIsoDate(item.requestedAt || item.createdAt)}</Text>
+
+      {isPending ? (
+        <View style={{ marginTop: 8 }}>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <AppButton
+              label="Mark as Paid"
+              onPress={askMarkPaid}
+              disabled={Boolean(pendingAction)}
+              loading={pendingAction === `withdrawal:${item.id}:paid`}
+              style={{ flex: 1, backgroundColor: '#15803d', paddingVertical: 9 }}
+            />
+            <AppButton
+              label={showRejectReason ? 'Cancel Reject' : 'Reject'}
+              variant="danger"
+              onPress={() => setShowRejectReason((v) => !v)}
+              disabled={Boolean(pendingAction)}
+              style={{ flex: 1, backgroundColor: '#b91c1c', paddingVertical: 9 }}
+            />
+          </View>
+
+          {showRejectReason ? (
+            <View style={{ marginTop: 8 }}>
+              <AppInput
+                label="Rejection reason"
+                placeholder="Provide reason to user"
+                value={rejectReason}
+                onChangeText={setRejectReason}
+                multiline
+              />
+              <AppButton
+                label="Confirm Rejection"
+                variant="danger"
+                onPress={() => onReject(item, rejectReason)}
+                disabled={!rejectReason.trim() || Boolean(pendingAction)}
+                loading={pendingAction === `withdrawal:${item.id}:reject`}
+                style={{ backgroundColor: '#7f1d1d' }}
+              />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
     </AppCard>
   );
 }

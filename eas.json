@@ -37,6 +37,7 @@
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://connecthub-yrox.onrender.com",
         "EXPO_PUBLIC_WEB_BASE_URL": "https://connecthub-1873e.web.app",
+        "ADMIN_EMAIL": "bhounce1000@gmail.com",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com"
       },

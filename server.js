@@ -35,13 +35,11 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || ADMIN_EMAILS[0] || 'bhounce1000@gmail.com').trim().toLowerCase();
 const ADMIN_BOOTSTRAP_SECRET = process.env.ADMIN_BOOTSTRAP_SECRET || '';
 const COMMISSION_RATE = parseFloat(process.env.COMMISSION_RATE || '0.10');
 const REFERRAL_BONUS_AMOUNT = parseMoney(process.env.REFERRAL_BONUS_AMOUNT || 10);
 const FREE_PLAN_JOB_LIMIT = Number(process.env.FREE_PLAN_JOB_LIMIT || 5);
-const PAYSTACK_WITHDRAWALS_ENABLED = String(process.env.PAYSTACK_WITHDRAWALS_ENABLED || '').trim().toLowerCase() === 'true';
-const PAYSTACK_WITHDRAWALS_DISABLED_REASON = process.env.PAYSTACK_WITHDRAWALS_DISABLED_REASON
-  || 'Wallet withdrawals are temporarily unavailable because automatic payouts are not enabled on the current Paystack account.';
 const SUBSCRIPTION_PLAN_CONFIG = {
   free: { amount: 0, durationDays: 0, acceptLimit: FREE_PLAN_JOB_LIMIT, badge: 'Basic' },
   pro: { amount: 49, durationDays: 30, acceptLimit: null, badge: 'Pro' },
@@ -456,36 +454,11 @@ function normalizeGhanaPhone(phone) {
     cleaned = `0${cleaned.slice(3)}`;
   }
 
-  if (!/^0[0-9]{9}$/.test(cleaned)) {
+  if (!/^0[235][0-9]{8}$/.test(cleaned)) {
     return null;
   }
 
   return cleaned;
-}
-
-function resolveGhanaMomoBankCode(providerValue) {
-  const NETWORK_BANK_CODES = {
-    mtn: 'MTN',
-    MTN: 'MTN',
-    'MTN MoMo': 'MTN',
-    'mtn momo': 'MTN',
-    telecel: 'VOD',
-    Telecel: 'VOD',
-    vodafone: 'VOD',
-    Vodafone: 'VOD',
-    VOD: 'VOD',
-    'Telecel (Vodafone)': 'VOD',
-    airtel: 'ATL',
-    AirtelTigo: 'ATL',
-    airteltigo: 'ATL',
-    ATL: 'ATL',
-    other: 'MTN',
-    Other: 'MTN',
-  };
-
-  return NETWORK_BANK_CODES[providerValue]
-    || NETWORK_BANK_CODES[String(providerValue || '').trim().toLowerCase()]
-    || 'MTN';
 }
 
 function normalizePlan(planValue) {
@@ -1218,18 +1191,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/wallet/withdraw-status', (req, res) => {
-  return sendSuccess(res, req, {
-    data: {
-      enabled: PAYSTACK_WITHDRAWALS_ENABLED,
-      reason: PAYSTACK_WITHDRAWALS_ENABLED ? '' : PAYSTACK_WITHDRAWALS_DISABLED_REASON,
-      hint: PAYSTACK_WITHDRAWALS_ENABLED
-        ? ''
-        : 'Enable PAYSTACK_WITHDRAWALS_ENABLED=true after your Paystack account supports third-party payouts and Transfers is enabled.',
-    },
-  });
-});
-
 // Rate limiters
 const payInitLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -1491,34 +1452,18 @@ app.post('/referral/signup-bonus', requireAuth, async (req, res) => {
 });
 
 app.post('/wallet/withdraw', requireAuth, async (req, res) => {
-  let userRef = null;
-  let amount = 0;
-  let balanceDebited = false;
-  let transferInitiated = false;
+  let debited = false;
+  let debitedUserRef = null;
+  let debitedAmount = 0;
 
   try {
-    if (!PAYSTACK_WITHDRAWALS_ENABLED) {
-      return sendError(
-        res,
-        req,
-        503,
-        'withdrawals_unavailable',
-        PAYSTACK_WITHDRAWALS_DISABLED_REASON,
-        {
-          hint: 'Automatic withdrawals will remain blocked until the Paystack account is upgraded and PAYSTACK_WITHDRAWALS_ENABLED is turned on.',
-        }
-      );
-    }
-
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
     const requestedEmail = String(req.body?.email || '').trim().toLowerCase();
-    amount = parseMoney(req.body?.amount);
+    const amount = parseMoney(req.body?.amount);
     const accountName = String(req.body?.accountName || '').trim();
     const provider = String(req.body?.provider || req.body?.network || '').trim();
     const rawPhoneNumber = String(req.body?.phoneNumber || '').trim();
     const normalizedPhone = normalizeGhanaPhone(rawPhoneNumber);
-    const bankCode = resolveGhanaMomoBankCode(provider);
-    const amountInPesewas = Math.round(amount * 100);
 
     if (!actorEmail) {
       return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
@@ -1537,211 +1482,155 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     }
 
     if (!normalizedPhone) {
-      return sendError(res, req, 400, 'invalid_phone', 'Enter a valid Ghana phone number like 0241234567');
+      return sendError(res, req, 400, 'invalid_phone', 'Enter a valid Ghana MoMo number starting with 0 (e.g. 0241234567)');
     }
 
-    const paystackSecret = getPaystackSecret();
-    if (!paystackSecret) {
-      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
-    }
-
-    userRef = adminDb.collection('users').doc(actorEmail);
+    const userRef = adminDb.collection('users').doc(actorEmail);
     const userSnap = await userRef.get();
+    if (!userSnap.exists) {
+      return sendError(res, req, 404, 'user_not_found', 'User not found');
+    }
+
     const userData = userSnap.exists ? (userSnap.data() || {}) : {};
     const walletBalance = parseMoney(userData.walletBalance || 0);
 
     if (String(userData.kycStatus || '').trim().toLowerCase() !== 'verified') {
-      return sendError(res, req, 403, 'kyc_required', 'KYC verification is required before withdrawals');
+      return sendError(res, req, 403, 'kyc_required', 'Your account must be KYC verified before withdrawing');
     }
 
     if (amount > walletBalance) {
-      return sendError(res, req, 400, 'insufficient_balance', 'Insufficient wallet balance');
-    }
-
-    await userRef.set({
-      walletBalance: admin.firestore.FieldValue.increment(-amount),
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-    balanceDebited = true;
-
-    console.log('=== WITHDRAWAL ATTEMPT ===');
-    console.log('Request ID:', req.requestId);
-    console.log('Email:', actorEmail);
-    console.log('Amount:', amount, 'GHS =', amountInPesewas, 'pesewas');
-    console.log('Raw phone:', rawPhoneNumber);
-    console.log('Normalized phone:', normalizedPhone);
-    console.log('Provider:', provider);
-    console.log('Bank code:', bankCode);
-    console.log('Account name:', accountName);
-
-    const recipientPayload = {
-      type: 'mobile_money',
-      name: accountName,
-      account_number: normalizedPhone,
-      bank_code: bankCode,
-      currency: 'GHS',
-    };
-
-    console.log('Sending to Paystack recipient:', recipientPayload);
-
-    const recipientResponse = await fetch('https://api.paystack.co/transferrecipient', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${paystackSecret}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(recipientPayload),
-    });
-    const recipientData = await recipientResponse.json();
-    console.log('Paystack recipient response:', JSON.stringify(recipientData));
-    const recipientCode = recipientData?.data?.recipient_code;
-
-    if (!recipientResponse.ok || !recipientData?.status || !recipientCode) {
-      await userRef.set({
-        walletBalance: admin.firestore.FieldValue.increment(amount),
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      balanceDebited = false;
-
-      const paystackMsg = recipientData?.message || 'Could not create Mobile Money recipient';
-      return sendError(res, req, 400, 'recipient_creation_failed', paystackMsg, { paystack: recipientData });
-    }
-
-    const reference = `wd_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-    const transferResponse = await fetch('https://api.paystack.co/transfer', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${paystackSecret}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        source: 'balance',
-        amount: amountInPesewas,
-        recipient: recipientCode,
-        reason: `ConnectHub wallet withdrawal (${actorEmail})`,
-        reference,
-        currency: 'GHS',
-      }),
-    });
-    const transferData = await transferResponse.json();
-    console.log('Paystack transfer response:', JSON.stringify(transferData));
-    const transferCode = transferData?.data?.transfer_code || null;
-
-    if (!transferResponse.ok || !transferData?.status) {
-      await userRef.set({
-        walletBalance: admin.firestore.FieldValue.increment(amount),
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      balanceDebited = false;
-
-      const transferMessage = String(transferData?.message || '').trim();
-      const transferMessageLower = transferMessage.toLowerCase();
-      let transferErrorCode = 'transfer_failed';
-      let transferHint = 'Please try again shortly.';
-
-      if (transferMessageLower.includes('insufficient') && transferMessageLower.includes('balance')) {
-        transferErrorCode = 'paystack_insufficient_balance';
-        transferHint = 'Top up your Paystack balance in dashboard.paystack.com then retry.';
-      } else if (transferMessageLower.includes('starter business') || transferMessageLower.includes('third party payouts')) {
-        transferErrorCode = 'paystack_business_tier_restricted';
-        transferHint = 'Upgrade your Paystack account from Starter to a business tier that supports third-party payouts, then enable Transfers.';
-      } else if (transferMessageLower.includes('transfer') && (transferMessageLower.includes('disabled') || transferMessageLower.includes('not enabled') || transferMessageLower.includes('not active'))) {
-        transferErrorCode = 'transfer_disabled';
-        transferHint = 'Enable Transfers in Paystack dashboard under Settings -> Preferences -> Transfers.';
-      } else if (transferMessageLower.includes('otp')) {
-        transferErrorCode = 'transfer_otp_required';
-        transferHint = 'Disable transfer OTP requirement or finalize transfer settings on Paystack.';
-      } else if (transferMessageLower.includes('pending approval') || transferMessageLower.includes('pending review')) {
-        transferErrorCode = 'transfer_pending_approval';
-        transferHint = 'Complete Paystack business/compliance verification for transfers.';
-      }
-
       return sendError(
         res,
         req,
         400,
-        transferErrorCode,
-        transferMessage || 'Transfer initiation failed',
-        { paystack: transferData, hint: transferHint }
+        'insufficient_balance',
+        `Insufficient wallet balance. Your balance is GHS ${walletBalance.toFixed(2)}`
       );
     }
-    transferInitiated = true;
 
-    const nowIso = new Date().toISOString();
-    await userRef.set({
-      updatedAt: nowIso,
-      lastWithdrawalAccountName: accountName,
-      lastWithdrawalMomoNumber: `${normalizedPhone.slice(0, 3)}****${normalizedPhone.slice(-3)}`,
-      lastWithdrawalNetwork: provider,
-    }, { merge: true });
+    const withdrawalRef = `WD_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
-    await adminDb.collection('wallet_withdrawals').doc(reference).set({
-      reference,
-      transferCode,
-      userEmail: actorEmail,
-      amount,
-      currency: 'GHS',
-      status: 'PENDING',
-      accountName,
-      momoNumber: normalizedPhone,
-      momoNumberMasked: `${normalizedPhone.slice(0, 3)}****${normalizedPhone.slice(-3)}`,
-      provider,
-      bankCode,
-      recipientCode,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      walletDebited: true,
-      refunded: false,
-    }, { merge: true });
+    await userRef.update({
+      walletBalance: admin.firestore.FieldValue.increment(-amount),
+      updatedAt: new Date().toISOString(),
+    });
+    debited = true;
+    debitedUserRef = userRef;
+    debitedAmount = amount;
 
-    await adminDb.collection('transactions').add({
-      transactionId: reference,
-      requestId: null,
+    const withdrawalDoc = await adminDb.collection('withdrawals').add({
       type: 'withdrawal',
-      jobTitle: 'Wallet Withdrawal',
-      senderEmail: actorEmail,
-      senderName: actorEmail,
-      receiverEmail: null,
-      receiverName: accountName,
+      status: 'pending_admin_approval',
+      email: actorEmail,
+      displayName: userData.displayName || actorEmail,
       amount,
-      commission: 0,
-      netAmount: amount,
-      paymentMethod: 'Paystack Transfer',
-      status: 'PENDING',
-      participants: [actorEmail],
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: nowIso,
-      transferCode,
-      momoNetwork: provider,
+      provider,
       phoneNumber: normalizedPhone,
-      bankCode,
-      recipientCode,
+      accountName,
+      reference: withdrawalRef,
+      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+      processedAt: null,
+      processedBy: null,
+      notes: null,
     });
 
-    await notifyUser(
-      actorEmail,
-      `Your withdrawal of GHS ${amount.toFixed(2)} is being processed.`,
-      'Withdrawal Initiated',
-      { screen: 'wallet' }
-    );
+    await adminDb.collection('transactions').add({
+      transactionId: withdrawalRef,
+      requestId: null,
+      type: 'withdrawal',
+      senderEmail: actorEmail,
+      receiverEmail: actorEmail,
+      amount,
+      provider,
+      phoneNumber: normalizedPhone,
+      accountName,
+      reference: withdrawalRef,
+      status: 'pending',
+      withdrawalId: withdrawalDoc.id,
+      paymentMethod: 'Manual Withdrawal',
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: new Date().toISOString(),
+    });
+
+    await adminDb.collection('notifications').add({
+      userId: ADMIN_EMAIL,
+      title: 'New Withdrawal Request',
+      body: `${actorEmail} wants to withdraw GHS ${amount.toFixed(2)} to ${provider} (${normalizedPhone}) - ${accountName}`,
+      type: 'withdrawal_request',
+      withdrawalId: withdrawalDoc.id,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const adminDoc = await adminDb.collection('users').doc(ADMIN_EMAIL).get();
+    if (adminDoc.exists && adminDoc.data()?.pushToken) {
+      await sendPushNotification(
+        adminDoc.data().pushToken,
+        'New Withdrawal Request',
+        `${actorEmail} wants GHS ${amount.toFixed(2)} via ${provider}`
+      );
+    }
+
+    await adminDb.collection('notifications').add({
+      userId: actorEmail,
+      title: 'Withdrawal Request Received',
+      body: `Your withdrawal of GHS ${amount.toFixed(2)} to ${provider} (${normalizedPhone}) has been received. Our team will process it within 24 hours.`,
+      type: 'withdrawal_pending',
+      withdrawalId: withdrawalDoc.id,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    if (userData.pushToken) {
+      await sendPushNotification(
+        userData.pushToken,
+        'Withdrawal Request Received',
+        `GHS ${amount.toFixed(2)} will be sent to your ${provider} account within 24 hours.`
+      );
+    }
+
+    if (isEmailConfigured()) {
+      try {
+        await sendPaymentReceiptEmail(
+          actorEmail,
+          userData.displayName || actorEmail,
+          'Withdrawal Request Received - ConnectHub',
+          `<p>Dear ${userData.displayName || actorEmail},</p>
+           <p>Your withdrawal request has been received and is being processed.</p>
+           <table style="width:100%;border-collapse:collapse;">
+             <tr><td style="padding:8px;"><b>Amount</b></td><td>GHS ${amount.toFixed(2)}</td></tr>
+             <tr><td style="padding:8px;"><b>Network</b></td><td>${provider}</td></tr>
+             <tr><td style="padding:8px;"><b>MoMo Number</b></td><td>${normalizedPhone}</td></tr>
+             <tr><td style="padding:8px;"><b>Account Name</b></td><td>${accountName}</td></tr>
+             <tr><td style="padding:8px;"><b>Reference</b></td><td>${withdrawalRef}</td></tr>
+             <tr><td style="padding:8px;"><b>Status</b></td><td>Processing (within 24 hours)</td></tr>
+           </table>
+           <p>You will receive another notification once the payment is sent.</p>
+           <p>Thank you for using ConnectHub!</p>`
+        );
+      } catch (emailError) {
+        logger.warn({ err: emailError, actorEmail }, 'WITHDRAWAL_CONFIRMATION_EMAIL_FAILED');
+      }
+    }
 
     return sendSuccess(res, req, {
-      message: 'Withdrawal initiated successfully',
+      message: 'Your withdrawal request has been received. Processing within 24 hours.',
       data: {
-        reference,
-        transferCode,
+        reference: withdrawalRef,
+        withdrawalId: withdrawalDoc.id,
         amount,
         provider,
         phoneNumber: normalizedPhone,
-        status: 'PENDING',
+        status: 'pending_admin_approval',
       },
     });
   } catch (error) {
     logger.error({ err: error }, 'WALLET_WITHDRAWAL_ERROR');
-    if (balanceDebited && !transferInitiated && userRef && amount > 0) {
+
+    if (debited && debitedUserRef && debitedAmount > 0) {
       try {
-        await userRef.set({
-          walletBalance: admin.firestore.FieldValue.increment(amount),
+        await debitedUserRef.set({
+          walletBalance: admin.firestore.FieldValue.increment(debitedAmount),
           updatedAt: new Date().toISOString(),
         }, { merge: true });
       } catch (rollbackError) {
@@ -1750,6 +1639,128 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     }
 
     return sendError(res, req, 500, 'server_error', 'An unexpected error occurred. Please try again.');
+  }
+});
+
+app.post('/admin/withdrawals/:id/complete', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const withdrawalId = String(req.params.id || '').trim();
+    const adminActor = String(req.user?.email || ADMIN_EMAIL).trim().toLowerCase();
+    if (!withdrawalId) {
+      return sendError(res, req, 400, 'missing_withdrawal_id', 'Withdrawal id is required');
+    }
+
+    const withdrawalRef = adminDb.collection('withdrawals').doc(withdrawalId);
+    const withdrawalSnap = await withdrawalRef.get();
+    if (!withdrawalSnap.exists) {
+      return sendError(res, req, 404, 'withdrawal_not_found', 'Withdrawal request not found');
+    }
+
+    const withdrawalData = withdrawalSnap.data() || {};
+    if (withdrawalData.status !== 'pending_admin_approval') {
+      return sendError(res, req, 409, 'withdrawal_not_pending', 'Withdrawal is already processed');
+    }
+
+    await withdrawalRef.set({
+      status: 'completed',
+      processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      processedBy: adminActor,
+      notes: String(req.body?.notes || '').trim() || null,
+    }, { merge: true });
+
+    const txSnap = await adminDb.collection('transactions').where('withdrawalId', '==', withdrawalId).limit(5).get();
+    await Promise.all(txSnap.docs.map((docSnap) => docSnap.ref.set({ status: 'completed', updatedAt: new Date().toISOString() }, { merge: true })));
+
+    await adminDb.collection('notifications').add({
+      userId: withdrawalData.email,
+      title: 'Withdrawal Paid',
+      body: `GHS ${Number(withdrawalData.amount || 0).toFixed(2)} has been sent to your ${withdrawalData.provider} account ${withdrawalData.phoneNumber}. Please check your MoMo balance.`,
+      type: 'withdrawal_completed',
+      withdrawalId,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const userDoc = await adminDb.collection('users').doc(String(withdrawalData.email || '').trim().toLowerCase()).get();
+    if (userDoc.exists && userDoc.data()?.pushToken) {
+      await sendPushNotification(
+        userDoc.data().pushToken,
+        'Withdrawal Paid',
+        `GHS ${Number(withdrawalData.amount || 0).toFixed(2)} sent to your ${withdrawalData.provider} account ${withdrawalData.phoneNumber}.`
+      );
+    }
+
+    return sendSuccess(res, req, { message: 'Withdrawal marked as paid' });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_WITHDRAWAL_COMPLETE_ERROR');
+    return sendError(res, req, 500, 'withdrawal_complete_failed', 'Could not mark withdrawal as paid');
+  }
+});
+
+app.post('/admin/withdrawals/:id/reject', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const withdrawalId = String(req.params.id || '').trim();
+    const adminActor = String(req.user?.email || ADMIN_EMAIL).trim().toLowerCase();
+    const reason = String(req.body?.reason || '').trim();
+    if (!withdrawalId) {
+      return sendError(res, req, 400, 'missing_withdrawal_id', 'Withdrawal id is required');
+    }
+
+    const withdrawalRef = adminDb.collection('withdrawals').doc(withdrawalId);
+    const withdrawalSnap = await withdrawalRef.get();
+    if (!withdrawalSnap.exists) {
+      return sendError(res, req, 404, 'withdrawal_not_found', 'Withdrawal request not found');
+    }
+
+    const withdrawalData = withdrawalSnap.data() || {};
+    if (withdrawalData.status !== 'pending_admin_approval') {
+      return sendError(res, req, 409, 'withdrawal_not_pending', 'Withdrawal is already processed');
+    }
+
+    const userEmail = String(withdrawalData.email || '').trim().toLowerCase();
+    const amount = parseMoney(withdrawalData.amount || 0);
+    if (!userEmail || amount <= 0) {
+      return sendError(res, req, 400, 'invalid_withdrawal_payload', 'Withdrawal payload is invalid');
+    }
+
+    await adminDb.collection('users').doc(userEmail).set({
+      walletBalance: admin.firestore.FieldValue.increment(amount),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    await withdrawalRef.set({
+      status: 'rejected',
+      processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      processedBy: adminActor,
+      notes: reason || 'Rejected by admin',
+    }, { merge: true });
+
+    const txSnap = await adminDb.collection('transactions').where('withdrawalId', '==', withdrawalId).limit(5).get();
+    await Promise.all(txSnap.docs.map((docSnap) => docSnap.ref.set({ status: 'failed', updatedAt: new Date().toISOString() }, { merge: true })));
+
+    await adminDb.collection('notifications').add({
+      userId: userEmail,
+      title: 'Withdrawal Rejected',
+      body: `Your withdrawal of GHS ${amount.toFixed(2)} was rejected. Reason: ${reason || 'Rejected by admin'}. Your balance has been restored.`,
+      type: 'withdrawal_rejected',
+      withdrawalId,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    const userDoc = await adminDb.collection('users').doc(userEmail).get();
+    if (userDoc.exists && userDoc.data()?.pushToken) {
+      await sendPushNotification(
+        userDoc.data().pushToken,
+        'Withdrawal Rejected',
+        `Your GHS ${amount.toFixed(2)} has been returned to your wallet.`
+      );
+    }
+
+    return sendSuccess(res, req, { message: 'Withdrawal rejected and balance restored' });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_WITHDRAWAL_REJECT_ERROR');
+    return sendError(res, req, 500, 'withdrawal_reject_failed', 'Could not reject withdrawal');
   }
 });
 
