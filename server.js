@@ -1790,6 +1790,95 @@ app.post('/admin/withdrawals/:id/reject', requireAuth, requireAdmin, async (req,
   }
 });
 
+app.post('/admin/notify-withdrawal-paid', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const amount = parseMoney(req.body?.amount || 0);
+    const provider = String(req.body?.provider || '').trim();
+    const phoneNumber = String(req.body?.phoneNumber || '').trim();
+
+    if (!email || amount <= 0) {
+      return sendError(res, req, 400, 'missing_fields', 'email and amount are required');
+    }
+
+    if (!isEmailConfigured()) {
+      return sendSuccess(res, req, { message: 'Email not configured — skipped' });
+    }
+
+    const userDoc = await adminDb.collection('users').doc(email).get();
+    const userData = userDoc.exists ? (userDoc.data() || {}) : {};
+    const displayName = userData.displayName || email;
+    const lastFour = phoneNumber ? phoneNumber.slice(-4) : '****';
+
+    await sendPaymentReceiptEmail(
+      email,
+      displayName,
+      '✅ ConnectHub Withdrawal Successful',
+      `<p>Dear ${displayName},</p>
+       <p>Great news! Your withdrawal has been processed successfully.</p>
+       <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+         <tr style="background:#f0fdf4;"><td style="padding:10px;"><b>Amount Sent</b></td>
+           <td style="padding:10px;color:#16a34a;font-weight:bold;">GHS ${amount.toFixed(2)}</td></tr>
+         <tr><td style="padding:10px;"><b>Network</b></td><td style="padding:10px;">${provider}</td></tr>
+         <tr style="background:#f0fdf4;"><td style="padding:10px;"><b>MoMo Number</b></td>
+           <td style="padding:10px;">****${lastFour}</td></tr>
+         <tr><td style="padding:10px;"><b>Status</b></td><td style="padding:10px;color:#16a34a;">✅ Completed</td></tr>
+       </table>
+       <p>The money should appear in your MoMo wallet within a few minutes. If you do not receive it within 1 hour, please contact our support team.</p>
+       <p>Thank you for using ConnectHub!</p>`
+    );
+
+    return sendSuccess(res, req, { message: 'Withdrawal paid email sent' });
+  } catch (error) {
+    logger.error({ err: error }, 'NOTIFY_WITHDRAWAL_PAID_ERROR');
+    return sendError(res, req, 500, 'notify_failed', 'Could not send withdrawal paid notification email');
+  }
+});
+
+app.post('/admin/notify-withdrawal-rejected', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const amount = parseMoney(req.body?.amount || 0);
+    const provider = String(req.body?.provider || '').trim();
+    const reason = String(req.body?.reason || '').trim();
+
+    if (!email || amount <= 0) {
+      return sendError(res, req, 400, 'missing_fields', 'email and amount are required');
+    }
+
+    if (!isEmailConfigured()) {
+      return sendSuccess(res, req, { message: 'Email not configured — skipped' });
+    }
+
+    const userDoc = await adminDb.collection('users').doc(email).get();
+    const userData = userDoc.exists ? (userDoc.data() || {}) : {};
+    const displayName = userData.displayName || email;
+
+    await sendPaymentReceiptEmail(
+      email,
+      displayName,
+      '❌ ConnectHub Withdrawal Not Processed',
+      `<p>Dear ${displayName},</p>
+       <p>Unfortunately your withdrawal request could not be processed at this time.</p>
+       <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+         <tr><td style="padding:10px;"><b>Amount</b></td><td style="padding:10px;">GHS ${amount.toFixed(2)}</td></tr>
+         <tr><td style="padding:10px;"><b>Network</b></td><td style="padding:10px;">${provider}</td></tr>
+         <tr><td style="padding:10px;"><b>Reason</b></td>
+           <td style="padding:10px;color:#dc2626;">${reason || 'Processing issue'}</td></tr>
+         <tr><td style="padding:10px;"><b>Wallet Balance</b></td>
+           <td style="padding:10px;color:#16a34a;">✅ Restored</td></tr>
+       </table>
+       <p>You can try withdrawing again or contact our support team if you need help.</p>
+       <p>Thank you for using ConnectHub!</p>`
+    );
+
+    return sendSuccess(res, req, { message: 'Withdrawal rejected email sent' });
+  } catch (error) {
+    logger.error({ err: error }, 'NOTIFY_WITHDRAWAL_REJECTED_ERROR');
+    return sendError(res, req, 500, 'notify_failed', 'Could not send withdrawal rejected notification email');
+  }
+});
+
 app.post('/subscription/initiate', requireAuth, async (req, res) => {
   try {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();

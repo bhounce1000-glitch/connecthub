@@ -401,10 +401,21 @@ export default function Admin() {
         { requireAuth: true }
       );
       assertApiSuccess(response, data, 'Could not mark withdrawal as paid');
+      // Fire-and-forget confirmation email (non-blocking)
+      apiPost(
+        `${API_BASE_URL}/admin/notify-withdrawal-paid`,
+        {
+          email: withdrawal.email,
+          amount: Number(withdrawal.amount || 0),
+          provider: withdrawal.provider || '',
+          phoneNumber: withdrawal.phoneNumber || '',
+        },
+        { requireAuth: true }
+      ).catch(() => {});
       setNotice({
         tone: 'success',
         title: 'Withdrawal marked paid',
-        message: `Marked ${withdrawal.reference} as paid successfully.`,
+        message: `Marked ${withdrawal.reference} as paid. Confirmation email queued.`,
       });
     } catch (error) {
       setNotice({ tone: 'error', title: 'Action failed', message: error?.message || 'Could not mark withdrawal as paid.' });
@@ -424,10 +435,21 @@ export default function Admin() {
         { requireAuth: true }
       );
       assertApiSuccess(response, data, 'Could not reject withdrawal');
+      // Fire-and-forget rejection email (non-blocking)
+      apiPost(
+        `${API_BASE_URL}/admin/notify-withdrawal-rejected`,
+        {
+          email: withdrawal.email,
+          amount: Number(withdrawal.amount || 0),
+          provider: withdrawal.provider || '',
+          reason: String(reason || '').trim(),
+        },
+        { requireAuth: true }
+      ).catch(() => {});
       setNotice({
         tone: 'success',
         title: 'Withdrawal rejected',
-        message: `${withdrawal.reference} rejected and wallet restored.`,
+        message: `${withdrawal.reference} rejected, wallet restored, rejection email queued.`,
       });
     } catch (error) {
       setNotice({ tone: 'error', title: 'Action failed', message: error?.message || 'Could not reject withdrawal.' });

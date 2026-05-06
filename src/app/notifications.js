@@ -114,6 +114,7 @@ export default function Notifications() {
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
     if (!isAuthReady) return undefined;
@@ -161,15 +162,10 @@ export default function Notifications() {
   };
 
   const handlePress = async (n) => {
-    await markAsRead(n);
-    const route = getRoute(n);
-    if (route) {
-      if (typeof route === 'string') {
-        router.push(route);
-      } else {
-        router.push(route);
-      }
-    }
+    // Toggle expand/collapse
+    setExpandedId((prev) => (prev === n.id ? null : n.id));
+    // Mark read in background (non-blocking)
+    markAsRead(n);
   };
 
   const markAllRead = async () => {
@@ -221,6 +217,7 @@ export default function Notifications() {
           const typeMeta = iconByType(n.type);
           const unread = !n.read;
           const route = getRoute(n);
+          const isExpanded = expandedId === n.id;
 
           return (
             <TouchableOpacity
@@ -232,28 +229,64 @@ export default function Notifications() {
                 padding: 12,
                 marginBottom: 8,
                 borderWidth: 1,
-                borderColor: '#e2e8f0',
+                borderColor: isExpanded ? '#93c5fd' : '#e2e8f0',
                 borderLeftWidth: unread ? 3 : 1,
                 borderLeftColor: unread ? '#2563eb' : '#e2e8f0',
                 ...AppShadow.card,
               }}
             >
+              {/* Header row */}
               <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: typeMeta.bg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                  <Text>{typeMeta.icon}</Text>
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: typeMeta.bg, alignItems: 'center', justifyContent: 'center', marginRight: 10, flexShrink: 0 }}>
+                  <Text style={{ fontSize: 18 }}>{typeMeta.icon}</Text>
                 </View>
 
-                <View style={{ flex: 1, paddingRight: 8 }}>
-                  <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{n.title || 'Notification'}</Text>
-                  <Text style={{ color: '#64748b', marginTop: 4, lineHeight: 18 }}>{n.body || n.text || ''}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
-                    <Text style={{ color: '#94a3b8', fontSize: 11 }}>{timeAgo(n.createdAt)}</Text>
-                    {route ? <Text style={{ color: '#2563eb', fontSize: 11, fontWeight: '700' }}>View →</Text> : null}
-                  </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 14 }}>{n.title || 'Notification'}</Text>
+                  <Text
+                    style={{ color: '#64748b', marginTop: 3, lineHeight: 18, fontSize: 13 }}
+                    numberOfLines={isExpanded ? undefined : 2}
+                  >
+                    {n.body || n.text || ''}
+                  </Text>
                 </View>
 
-                {unread ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563eb', marginTop: 4 }} /> : null}
+                <View style={{ alignItems: 'flex-end', marginLeft: 8, flexShrink: 0 }}>
+                  {unread ? <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563eb', marginBottom: 4 }} /> : null}
+                  <Text style={{ color: '#94a3b8', fontSize: 10 }}>{isExpanded ? '▲' : '▼'}</Text>
+                </View>
               </View>
+
+              {/* Timestamp always visible */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, marginLeft: 50 }}>
+                <Text style={{ color: '#94a3b8', fontSize: 11 }}>{timeAgo(n.createdAt)}</Text>
+                {!isExpanded && route ? <Text style={{ color: '#2563eb', fontSize: 11, fontWeight: '700' }}>Tap to expand</Text> : null}
+              </View>
+
+              {/* Expanded section */}
+              {isExpanded ? (
+                <View style={{ marginTop: 10, marginLeft: 50, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 10 }}>
+                  {route ? (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setExpandedId(null);
+                        router.push(route);
+                      }}
+                      style={{
+                        backgroundColor: '#2563eb',
+                        borderRadius: 8,
+                        paddingVertical: 8,
+                        paddingHorizontal: 16,
+                        alignSelf: 'flex-start',
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>View →</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={{ color: '#94a3b8', fontSize: 12 }}>No further action needed.</Text>
+                  )}
+                </View>
+              ) : null}
             </TouchableOpacity>
           );
         }}
