@@ -67,6 +67,7 @@ export default function WalletWithdraw() {
   const [withdrawalsEnabled, setWithdrawalsEnabled] = useState(false);
   const [withdrawalsStatusLoaded, setWithdrawalsStatusLoaded] = useState(false);
   const [withdrawalsUnavailableMessage, setWithdrawalsUnavailableMessage] = useState('');
+  const withdrawalFormDisabled = !withdrawalsStatusLoaded || !withdrawalsEnabled;
 
   useEffect(() => {
     let cancelled = false;
@@ -197,7 +198,7 @@ export default function WalletWithdraw() {
     <ScreenShell
       eyebrow="WALLET"
       title="Withdraw"
-      subtitle="Send wallet funds to your Mobile Money account."
+      subtitle={withdrawalFormDisabled ? 'Wallet withdrawals are currently unavailable.' : 'Send wallet funds to your Mobile Money account.'}
       accentColor="#1e3a8a"
       accentTextColor="#dbeafe"
       backgroundColor="#f8fafc"
@@ -223,6 +224,7 @@ export default function WalletWithdraw() {
           onChangeText={setAmount}
           keyboardType="numeric"
           placeholder="10"
+          editable={!withdrawalFormDisabled}
         />
 
         {/* Network selector */}
@@ -235,7 +237,11 @@ export default function WalletWithdraw() {
             return (
               <Pressable
                 key={n.value}
-                onPress={() => setNetwork(n.value)}
+                onPress={() => {
+                  if (!withdrawalFormDisabled) {
+                    setNetwork(n.value);
+                  }
+                }}
                 style={{
                   paddingHorizontal: 14,
                   paddingVertical: 8,
@@ -243,6 +249,7 @@ export default function WalletWithdraw() {
                   borderWidth: 1.5,
                   borderColor: selected ? '#2563eb' : '#cbd5e1',
                   backgroundColor: selected ? '#dbeafe' : '#f8fafc',
+                  opacity: withdrawalFormDisabled ? 0.55 : 1,
                 }}
               >
                 <Text style={{ fontSize: 13, fontWeight: selected ? '700' : '500', color: selected ? '#1e3a8a' : '#64748b' }}>
@@ -260,6 +267,7 @@ export default function WalletWithdraw() {
           keyboardType="phone-pad"
           maxLength={12}
           placeholder="e.g. 0241234567"
+          editable={!withdrawalFormDisabled}
         />
         <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: -10, marginBottom: 12 }}>
           Enter your 10-digit Ghana number starting with 0 (not country code).
@@ -270,15 +278,16 @@ export default function WalletWithdraw() {
           value={accountName}
           onChangeText={setAccountName}
           placeholder="John Mensah"
+          editable={!withdrawalFormDisabled}
         />
 
         <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 10 }} />
 
         <AppButton
-          label={isSubmitting ? 'Processing...' : 'Confirm Withdrawal'}
+          label={withdrawalFormDisabled ? 'Withdrawals Unavailable' : isSubmitting ? 'Processing...' : 'Confirm Withdrawal'}
           onPress={submitWithdrawal}
           loading={isSubmitting}
-          disabled={isSubmitting || !withdrawalsStatusLoaded || !withdrawalsEnabled}
+          disabled={isSubmitting || withdrawalFormDisabled}
           style={{ backgroundColor: '#2563eb' }}
         />
 
@@ -292,7 +301,9 @@ export default function WalletWithdraw() {
 
       <View style={{ marginTop: 12 }}>
         <Text style={{ color: '#64748b', fontSize: 12 }}>
-          Funds are sent via Paystack to your Mobile Money account. Processing may take a few minutes.
+          {withdrawalFormDisabled
+            ? 'Withdrawals will be enabled again after ConnectHub completes Paystack payout activation.'
+            : 'Funds are sent via Paystack to your Mobile Money account. Processing may take a few minutes.'}
         </Text>
       </View>
     </ScreenShell>
