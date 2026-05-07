@@ -1,6 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
-import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, limit, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -98,6 +98,8 @@ export default function Admin() {
   const [providerProfileMap, setProviderProfileMap] = useState({});
   const [analytics, setAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [adminLogs, setAdminLogs] = useState([]);
+  const [fraudAlerts, setFraudAlerts] = useState([]);
   const [expandedRequestMap, setExpandedRequestMap] = useState({});
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
@@ -209,6 +211,55 @@ export default function Admin() {
       setUsersProfileMap(map);
     });
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    const logsQuery = query(collection(db, 'adminLogs'), orderBy('timestamp', 'desc'), limit(20));
+    return onSnapshot(logsQuery, (snapshot) => {
+      setAdminLogs(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    const alertsQuery = query(collection(db, 'fraudAlerts'), orderBy('createdAt', 'desc'), limit(50));
+    return onSnapshot(alertsQuery, (snapshot) => {
+      setFraudAlerts(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+  }, [isAdmin]);
+
+  const confirmAdminAction = (actionName, onConfirm) => {
+    const promptAndRun = () => {
+      if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+        const typed = window.prompt(`Type CONFIRM to proceed with: ${actionName}`) || '';
+        if (typed.trim().toUpperCase() === 'CONFIRM') onConfirm();
+        else Alert.alert('Cancelled', 'Action was not confirmed.');
+        return;
+      }
+
+      if (typeof Alert.prompt === 'function') {
+        Alert.prompt(
+          'Confirm Action',
+          `Type CONFIRM to proceed with: ${actionName}`,
+          (typed) => {
+            if (String(typed || '').trim().toUpperCase() === 'CONFIRM') onConfirm();
+            else Alert.alert('Cancelled', 'Action was not confirmed.');
+          }
+        );
+        return;
+      }
+
+      Alert.alert('Final Confirmation', `Proceed with: ${actionName}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Proceed', style: 'destructive', onPress: onConfirm },
+      ]);
+    };
+
+    Alert.alert('Admin Action Required', `Type CONFIRM to proceed with: ${actionName}`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Proceed', style: 'destructive', onPress: promptAndRun },
+    ]);
+  };
 
   const setStatus = async (item, nextStatus) => {
     setPendingAction(`${item.id}:${nextStatus}`);
@@ -621,46 +672,28 @@ export default function Admin() {
       return;
     }
 
-    Alert.alert(
-      'Confirm bulk payout',
-      `Mark ${selectedCount} selected withdrawal${selectedCount === 1 ? '' : 's'} as paid?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Mark Paid', onPress: runBulkMarkPaid },
-      ]
-    );
+    confirmAdminAction(`Bulk mark ${selectedCount} withdrawal(s) as paid`, runBulkMarkPaid);
   };
 
   const runAutoRefundOverdue = async () => {
-    Alert.alert(
-      'Auto-Refund Overdue',
-      `This will automatically refund all ${overdueWithdrawals.length} withdrawal(s) that have been pending for more than ${SLA_HOURS} hours. Are you sure?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Run Auto-Refund',
-          style: 'destructive',
-          onPress: async () => {
-            setPendingAction('withdrawal:auto-refund');
-            try {
-              const { response, data } = await apiPost(`${API_BASE_URL}/admin/withdrawals/auto-refund-overdue`, {}, { requireAuth: true });
-              if (!response.ok || !data?.status) {
-                throw new Error(data?.message || 'Auto-refund request failed');
-              }
-              setNotice({
-                tone: 'success',
-                title: 'Auto-Refund Complete',
-                message: `Refunded: ${data?.refunded ?? 0} • Skipped: ${data?.skipped ?? 0} • Errors: ${data?.errors ?? 0}`,
-              });
-            } catch (err) {
-              setNotice({ tone: 'error', title: 'Auto-Refund Failed', message: err?.message || 'Could not run auto-refund.' });
-            } finally {
-              setPendingAction(null);
-            }
-          },
-        },
-      ]
-    );
+    confirmAdminAction(`Auto-refund ${overdueWithdrawals.length} overdue withdrawal(s)`, async () => {
+      setPendingAction('withdrawal:auto-refund');
+      try {
+        const { response, data } = await apiPost(`${API_BASE_URL}/admin/withdrawals/auto-refund-overdue`, {}, { requireAuth: true });
+        if (!response.ok || !data?.status) {
+          throw new Error(data?.message || 'Auto-refund request failed');
+        }
+        setNotice({
+          tone: 'success',
+          title: 'Auto-Refund Complete',
+          message: `Refunded: ${data?.refunded ?? 0} • Skipped: ${data?.skipped ?? 0} • Errors: ${data?.errors ?? 0}`,
+        });
+      } catch (err) {
+        setNotice({ tone: 'error', title: 'Auto-Refund Failed', message: err?.message || 'Could not run auto-refund.' });
+      } finally {
+        setPendingAction(null);
+      }
+    });
   };
 
   const exportWithdrawalsCsv = () => {
@@ -758,6 +791,21 @@ export default function Admin() {
     }
   };
 
+  const resolveFraudAlert = async (alertId) => {
+    const key = `fraud:${alertId}:resolve`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/fraud-alerts/${encodeURIComponent(alertId)}/resolve`, {}, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not resolve fraud alert');
+      setNotice({ tone: 'success', title: 'Fraud alert resolved', message: 'Alert marked as resolved.' });
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Action failed', message: error?.message || 'Could not resolve fraud alert.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   const banUser = async (email) => {
     const key = `ban:${email}`;
     setPendingAction(key);
@@ -774,10 +822,7 @@ export default function Admin() {
   };
 
   const confirmBanUser = (email) => {
-    Alert.alert('Ban user?', `This will suspend ${email}.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Ban User', style: 'destructive', onPress: () => banUser(email) },
-    ]);
+    confirmAdminAction(`Ban user ${email}`, () => banUser(email));
   };
 
   const confirmUnbanUser = (email) => {
@@ -943,6 +988,21 @@ export default function Admin() {
                 Analytics
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setActiveTab('fraud')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'fraud' ? '#b91c1c' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'fraud' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Fraud ({fraudAlerts.filter((a) => !a.resolved).length})
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
@@ -959,6 +1019,8 @@ export default function Admin() {
                 ? filteredWithdrawals.length > 0
               : activeTab === 'analytics'
                 ? true
+              : activeTab === 'fraud'
+                ? fraudAlerts.length > 0
                 : users.length > 0
       }
       emptyTitle={
@@ -972,6 +1034,8 @@ export default function Admin() {
                 ? 'No withdrawals found'
               : activeTab === 'analytics'
                 ? 'Loading…'
+              : activeTab === 'fraud'
+                ? 'No fraud alerts'
                 : 'No users found'
       }
       emptyDescription={
@@ -985,6 +1049,8 @@ export default function Admin() {
                 ? 'Withdrawal requests will appear here.'
               : activeTab === 'analytics'
                 ? 'Fetching analytics data…'
+              : activeTab === 'fraud'
+                ? 'Fraud alerts will appear here when risk checks are triggered.'
                 : 'Users will appear here once activity is detected.'
       }
     >
@@ -1063,6 +1129,28 @@ export default function Admin() {
                     </AppCard>
                   </View>
                   <AppButton label="Refresh Analytics" variant="neutral" onPress={loadAnalytics} loading={analyticsLoading} />
+
+                  <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 16, marginBottom: 10, marginTop: 16 }}>Activity Log</Text>
+                  {adminLogs.length === 0 ? (
+                    <Text style={{ color: AppColors.ink500 }}>No recent admin actions.</Text>
+                  ) : adminLogs.map((log) => {
+                    const ts = formatIsoDate(log.timestamp || log.createdAt);
+                    const action = String(log.action || 'unknown');
+                    const adminEmail = String(log.adminEmail || 'unknown');
+                    const target = String(log.details?.targetEmail || log.details?.withdrawalId || log.details?.requestId || log.details?.disputeId || 'n/a');
+                    const actionColor = action.includes('reject') || action.includes('ban') ? '#b91c1c'
+                      : action.includes('approve') || action.includes('paid') || action.includes('resolve') ? '#15803d'
+                        : '#1d4ed8';
+
+                    return (
+                      <AppCard key={log.id} style={{ marginBottom: 8, borderLeftWidth: 3, borderLeftColor: actionColor }}>
+                        <Text style={{ color: AppColors.ink900, fontWeight: '700', marginBottom: 2 }}>{action}</Text>
+                        <Text style={{ color: AppColors.ink500, fontSize: 12 }}>{ts}</Text>
+                        <Text style={{ color: AppColors.ink700, fontSize: 12 }}>Admin: {adminEmail}</Text>
+                        <Text style={{ color: AppColors.ink700, fontSize: 12 }}>Target: {target}</Text>
+                      </AppCard>
+                    );
+                  })}
                 </>
               ) : (
                 <View style={{ alignItems: 'center', paddingVertical: 24 }}>
@@ -1079,7 +1167,7 @@ export default function Admin() {
                 item={item}
                 pendingAction={pendingAction}
                 onApprove={() => reviewKyc(item, 'approve')}
-                onReject={(reason) => reviewKyc(item, 'reject', reason)}
+                onReject={(reason) => confirmAdminAction(`Reject KYC for ${item.email}`, () => reviewKyc(item, 'reject', reason))}
               />
             ))
           : activeTab === 'disputes'
@@ -1188,6 +1276,31 @@ export default function Admin() {
                   ))}
                 </>
               )
+            : activeTab === 'fraud'
+              ? fraudAlerts.map((alert) => {
+                const isResolved = Boolean(alert.resolved);
+                return (
+                  <AppCard key={alert.id} style={{ marginBottom: 10, borderWidth: 1, borderColor: isResolved ? '#86efac' : '#fca5a5' }}>
+                    <Text style={{ color: isResolved ? '#166534' : '#b91c1c', fontWeight: '800', marginBottom: 4 }}>
+                      {String(alert.type || 'fraud_alert').toUpperCase()}
+                    </Text>
+                    <Text style={{ color: AppColors.ink700, fontSize: 13 }}>User: {alert.email || 'N/A'}</Text>
+                    <Text style={{ color: AppColors.ink700, fontSize: 13 }}>Time: {formatIsoDate(alert.createdAt || alert.timestamp)}</Text>
+                    <Text style={{ color: AppColors.ink700, fontSize: 13, marginBottom: 8 }}>
+                      Status: {isResolved ? 'Resolved' : 'Unresolved'}
+                    </Text>
+                    {!isResolved ? (
+                      <AppButton
+                        label={pendingAction === `fraud:${alert.id}:resolve` ? 'Resolving...' : 'Mark Resolved'}
+                        onPress={() => confirmAdminAction(`Resolve fraud alert ${alert.id}`, () => resolveFraudAlert(alert.id))}
+                        loading={pendingAction === `fraud:${alert.id}:resolve`}
+                        disabled={Boolean(pendingAction)}
+                        style={{ backgroundColor: '#0f766e', paddingVertical: 8 }}
+                      />
+                    ) : null}
+                  </AppCard>
+                );
+              })
             : activeTab === 'users'
               ? (
                 <>
@@ -1341,7 +1454,7 @@ export default function Admin() {
 
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
                   <AppButton label="View Details" variant="neutral" onPress={() => router.push({ pathname: '/job-details', params: { id: item.id } })} style={{ flex: 1, paddingVertical: 8 }} />
-                  <AppButton label="Force Complete" onPress={() => setStatus(item, REQUEST_STATUS.COMPLETED)} style={{ flex: 1, paddingVertical: 8, backgroundColor: '#0f766e' }} />
+                  <AppButton label="Force Complete" onPress={() => confirmAdminAction(`Force complete job ${item.id}`, () => setStatus(item, REQUEST_STATUS.COMPLETED))} style={{ flex: 1, paddingVertical: 8, backgroundColor: '#0f766e' }} />
                 </View>
 
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: AppSpace.sm }}>
@@ -1356,7 +1469,7 @@ export default function Admin() {
 
                   <AppButton
                     label="Complete"
-                    onPress={() => setStatus(item, REQUEST_STATUS.COMPLETED)}
+                    onPress={() => confirmAdminAction(`Complete job ${item.id}`, () => setStatus(item, REQUEST_STATUS.COMPLETED))}
                     disabled={Boolean(pendingAction)}
                     loading={pendingAction === `${item.id}:${REQUEST_STATUS.COMPLETED}`}
                     style={{ marginRight: 8, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: AppColors.teal700 }}

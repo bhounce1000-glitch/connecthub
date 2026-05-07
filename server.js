@@ -29,7 +29,7 @@ const PORT = process.env.PORT || 3001;
 const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://connecthub-1873e.web.app';
 const CALLBACK_BASE_URL = process.env.PAYSTACK_CALLBACK_BASE_URL || WEB_BASE_URL;
 const PUBLIC_SERVER_BASE_URL = process.env.BACKEND_PUBLIC_URL || 'https://connecthub-yrox.onrender.com';
-const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || `${WEB_BASE_URL},${CALLBACK_BASE_URL}`)
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || `${WEB_BASE_URL},${CALLBACK_BASE_URL},https://connecthub-1873e.firebaseapp.com,http://localhost:8081,http://localhost:19006,exp://localhost:8081`)
   .split(',')
   .map((item) => item.trim())
   .filter(Boolean);
@@ -53,7 +53,7 @@ const USERNAME_CHANGE_COOLDOWN_SECONDS = Number(process.env.USERNAME_CHANGE_COOL
 const USERNAME_CHANGE_LOCK_THRESHOLD = Number(process.env.USERNAME_CHANGE_LOCK_THRESHOLD || 3);
 const USERNAME_CHANGE_LOCK_SECONDS = Number(process.env.USERNAME_CHANGE_LOCK_SECONDS || 60 * 60);
 const USERNAME_CHANGE_AUDIT_LIMIT = Number(process.env.USERNAME_CHANGE_AUDIT_LIMIT || 20);
-const BLOCKED_EMAIL_DOMAINS = new Set([
+const BLOCKED_DOMAINS_SERVER = [
   'mailinator.com',
   'guerrillamail.com',
   'tempmail.com',
@@ -68,7 +68,64 @@ const BLOCKED_EMAIL_DOMAINS = new Set([
   '10minutemail.com',
   'example.com',
   'test.com',
-]);
+  'tempr.email',
+  'discard.email',
+  'mailnull.com',
+  'spamex.com',
+  'getairmail.com',
+  'filzmail.com',
+  'spam4.me',
+  'bccto.me',
+  'chacuo.net',
+  'mailnesia.com',
+  'mintemail.com',
+  'notsharingmy.info',
+  'putthisinyourspamdatabase.com',
+  'spam.la',
+  'suremail.info',
+  'tradermail.info',
+];
+const BLOCKED_EMAIL_DOMAINS = new Set(BLOCKED_DOMAINS_SERVER);
+const BLOCKED_DOMAIN_KEYWORDS = ['mailinator', 'guerrilla', 'tempmail', 'throwaway', 'disposable', 'trashmail', 'yopmail'];
+const ENCRYPTION_KEY = String(process.env.ENCRYPTION_KEY || '').trim();
+const IV_LENGTH = 16;
+const otpStore = new Map();
+
+class SimpleCache {
+  constructor() {
+    this.store = new Map();
+  }
+
+  set(key, value, ttlMs = 60 * 1000) {
+    this.store.set(key, { value, expires: Date.now() + ttlMs });
+  }
+
+  get(key) {
+    const row = this.store.get(key);
+    if (!row) return null;
+    if (Date.now() > row.expires) {
+      this.store.delete(key);
+      return null;
+    }
+    return row.value;
+  }
+
+  delete(key) {
+    this.store.delete(key);
+  }
+
+  startCleanup() {
+    setInterval(() => {
+      const now = Date.now();
+      for (const [k, v] of this.store.entries()) {
+        if (now > v.expires) this.store.delete(k);
+      }
+    }, 5 * 60 * 1000);
+  }
+}
+
+const cache = new SimpleCache();
+cache.startCleanup();
 
 function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -76,6 +133,8 @@ function trimTrailingSlash(url) {
 
 const NORMALIZED_CALLBACK_BASE_URL = trimTrailingSlash(CALLBACK_BASE_URL);
 const allowedOriginSet = new Set(CORS_ALLOWED_ORIGINS.map((origin) => trimTrailingSlash(origin)));
+
+app.set('trust proxy', 1);
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -86,25 +145,55 @@ app.use(cors({
     }
 
     const normalizedOrigin = trimTrailingSlash(origin);
-    callback(null, allowedOriginSet.has(normalizedOrigin));
+    if (allowedOriginSet.has(normalizedOrigin)) {
+      callback(null, true);
+      return;
+    }
+
+    logger.warn({ origin: normalizedOrigin }, 'CORS_BLOCKED');
+    callback(new Error('Not allowed by CORS'));
   },
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-secret'],
+  credentials: true,
 }));
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'", 'https://js.paystack.co'],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
-      connectSrc: ["'self'", 'https://api.paystack.co', 'https://exp.host', 'https://firestore.googleapis.com', 'https://fcm.googleapis.com'],
+      connectSrc: [
+        "'self'",
+        'https://api.paystack.co',
+        'https://exp.host',
+        'https://firestore.googleapis.com',
+        'https://fcm.googleapis.com',
+        'https://identitytoolkit.googleapis.com',
+        'https://securetoken.googleapis.com',
+        'https://connecthub-yrox.onrender.com',
+      ],
       frameSrc: ['https://js.paystack.co'],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
     },
   },
 }));
 app.use(compression());
+app.use((req, res, next) => {
+  if (req.query && typeof req.query === 'object') {
+    for (const key of Object.keys(req.query)) {
+      if (Array.isArray(req.query[key])) {
+        req.query[key] = req.query[key][0];
+      }
+    }
+  }
+  next();
+});
 app.use((req, res, next) => {
   const generatedId = typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -196,8 +285,45 @@ function getPaystackSecret() {
 }
 
 function isBlockedEmail(email) {
+  if (!email || !String(email).includes('@')) return true;
   const domain = String(email || '').trim().toLowerCase().split('@')[1] || '';
-  return BLOCKED_EMAIL_DOMAINS.has(domain);
+  if (!domain) return true;
+  if (BLOCKED_EMAIL_DOMAINS.has(domain)) return true;
+  return BLOCKED_DOMAIN_KEYWORDS.some((keyword) => domain.includes(keyword));
+}
+
+function normalizeEncryptionKeyBuffer() {
+  const base = ENCRYPTION_KEY || 'connecthub-default-encryption-key-change-me';
+  return crypto.createHash('sha256').update(base).digest();
+}
+
+function encryptField(text) {
+  if (!text) return text;
+  try {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-cbc', normalizeEncryptionKeyBuffer(), iv);
+    let encrypted = cipher.update(String(text));
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+  } catch (error) {
+    logger.error({ err: error }, 'FIELD_ENCRYPT_ERROR');
+    return text;
+  }
+}
+
+function decryptField(text) {
+  if (!text || !String(text).includes(':')) return text;
+  try {
+    const [ivHex, encryptedHex] = String(text).split(':');
+    const iv = Buffer.from(ivHex, 'hex');
+    const encrypted = Buffer.from(encryptedHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', normalizeEncryptionKeyBuffer(), iv);
+    let decrypted = decipher.update(encrypted);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+  } catch (_error) {
+    return text;
+  }
 }
 
 const USERNAME_PATTERN = /^[a-zA-Z0-9 _.-]{3,40}$/;
@@ -291,6 +417,7 @@ async function logAdminAction(adminEmail, action, details = {}) {
       action,
       details,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      userAgent: details.userAgent || 'unknown',
       ip: details.ip || 'unknown',
     });
   } catch (error) {
@@ -1354,10 +1481,11 @@ app.get('/health', (req, res) => {
 // Rate limiters
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_requests', message: 'Too many requests. Please slow down.' },
+  skip: (req) => req.path === '/health',
 });
 
 const authLimiter = rateLimit({
@@ -1368,9 +1496,17 @@ const authLimiter = rateLimit({
   message: { error: 'too_many_auth_attempts', message: 'Too many auth attempts. Please wait 15 minutes.' },
 });
 
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_otp_attempts', message: 'Too many verification attempts. Please wait and try again.' },
+});
+
 const paymentLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 5,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'too_many_payment_requests', message: 'Too many payment requests. Please wait a moment.' },
@@ -1394,10 +1530,90 @@ const usernameAuditLimiter = rateLimit({
 
 app.use(generalLimiter);
 app.use('/auth', authLimiter);
+app.use('/auth/send-otp', otpLimiter);
+app.use('/auth/verify-otp', otpLimiter);
 app.use('/subscription', paymentLimiter);
 app.use('/wallet/withdraw', paymentLimiter);
 app.use('/profile/username/change', usernameChangeLimiter);
 app.use('/profile/username/audit', usernameAuditLimiter);
+
+app.post('/auth/send-otp', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const rawPhone = String(req.body?.phone || '').trim();
+
+    if (!email || !rawPhone) {
+      return sendError(res, req, 400, 'missing_otp_fields', 'Phone and email are required');
+    }
+
+    if (isBlockedEmail(email)) {
+      return sendError(res, req, 400, 'blocked_email_domain', 'Please use a real email address. Temporary or disposable emails are not allowed.');
+    }
+
+    const normalizedPhone = normalizeGhanaPhone(rawPhone);
+    if (!normalizedPhone) {
+      return sendError(res, req, 400, 'invalid_phone', 'Enter a valid Ghana phone number (e.g. 0241234567)');
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires = Date.now() + 10 * 60 * 1000;
+    otpStore.set(email, { otp, expires, phone: normalizedPhone, verified: false });
+
+    if (!isEmailConfigured()) {
+      return sendError(res, req, 503, 'email_not_configured', 'Verification email service is not configured');
+    }
+
+    await sendPaymentReceiptEmail(
+      email,
+      'ConnectHub User',
+      'Your ConnectHub Verification Code',
+      `<div style="font-family:sans-serif;text-align:center;padding:28px;">
+        <h2>ConnectHub Verification</h2>
+        <p>Your verification code is:</p>
+        <div style="font-size:42px;font-weight:700;letter-spacing:10px;background:#f0f9ff;padding:16px;border-radius:12px;margin:16px 0;">${otp}</div>
+        <p style="color:#64748b;">This code expires in 10 minutes.</p>
+      </div>`
+    );
+
+    return sendSuccess(res, req, { message: 'Verification code sent to your email' });
+  } catch (error) {
+    logger.error({ err: error }, 'SEND_OTP_ERROR');
+    return sendError(res, req, 500, 'otp_send_failed', 'Could not send verification code');
+  }
+});
+
+app.post('/auth/verify-otp', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const otp = String(req.body?.otp || '').trim();
+
+    if (!email || !otp) {
+      return sendError(res, req, 400, 'missing_verify_fields', 'Email and OTP are required');
+    }
+
+    const stored = otpStore.get(email);
+    if (!stored) {
+      return sendError(res, req, 400, 'otp_not_found', 'No verification code found. Request a new one.');
+    }
+
+    if (Date.now() > Number(stored.expires || 0)) {
+      otpStore.delete(email);
+      return sendError(res, req, 400, 'otp_expired', 'Verification code expired. Request a new one.');
+    }
+
+    if (stored.otp !== otp) {
+      return sendError(res, req, 400, 'otp_mismatch', 'Incorrect code. Please check and try again.');
+    }
+
+    otpStore.set(email, { ...stored, verified: true });
+    setTimeout(() => otpStore.delete(email), 5 * 60 * 1000);
+
+    return sendSuccess(res, req, { message: 'Phone verified successfully' });
+  } catch (error) {
+    logger.error({ err: error }, 'VERIFY_OTP_ERROR');
+    return sendError(res, req, 500, 'otp_verify_failed', 'Verification failed');
+  }
+});
 
 const payInitLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -1658,6 +1874,81 @@ app.post('/referral/signup-bonus', requireAuth, async (req, res) => {
   }
 });
 
+async function checkWithdrawalFraud(email, amount) {
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const recentWithdrawals = await adminDb
+    .collection('withdrawals')
+    .where('email', '==', email)
+    .where('status', 'in', ['pending_admin_approval', 'completed'])
+    .limit(50)
+    .get();
+
+  const recentCount = recentWithdrawals.docs.filter((docSnap) => {
+    const row = docSnap.data() || {};
+    const ts = toMillis(row.requestedAt || row.createdAt);
+    return ts > 0 && ts > oneDayAgo;
+  }).length;
+
+  if (recentCount >= 3) {
+    await adminDb.collection('fraudAlerts').add({
+      type: 'excessive_withdrawals',
+      email,
+      count: recentCount,
+      amount,
+      resolved: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await adminDb.collection('notifications').add({
+      userId: ADMIN_EMAIL,
+      title: 'Fraud Alert: Multiple Withdrawals',
+      body: `${email} has made ${recentCount} withdrawal requests in 24 hours.`,
+      type: 'fraud_alert',
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { flagged: true, reason: 'Too many withdrawals in 24 hours' };
+  }
+
+  const userDoc = await adminDb.collection('users').doc(email).get();
+  const balance = parseMoney(userDoc.data()?.walletBalance || 0);
+  if (amount > 500 && amount > balance * 0.9) {
+    await adminDb.collection('fraudAlerts').add({
+      type: 'large_withdrawal',
+      email,
+      amount,
+      balance,
+      resolved: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+
+  return { flagged: false };
+}
+
+async function checkJobSpam(email) {
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  const recentJobs = await adminDb.collection('requests').where('user', '==', email).limit(50).get();
+  const recentCount = recentJobs.docs.filter((docSnap) => {
+    const ts = toMillis(docSnap.data()?.createdAt);
+    return ts > 0 && ts > oneHourAgo;
+  }).length;
+
+  if (recentCount >= 10) {
+    await adminDb.collection('fraudAlerts').add({
+      type: 'job_spam',
+      email,
+      count: recentCount,
+      resolved: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return { blocked: true, message: 'Too many job posts in a short time. Please wait before posting again.' };
+  }
+
+  return { blocked: false };
+}
+
 app.post('/wallet/withdraw', requireAuth, async (req, res) => {
   try {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
@@ -1693,6 +1984,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const userRef = adminDb.collection('users').doc(actorEmail);
     const withdrawalDoc = adminDb.collection('withdrawals').doc();
     const transactionDoc = adminDb.collection('transactions').doc();
+    const fraudCheck = await checkWithdrawalFraud(actorEmail, amount);
     let userData = {};
 
     const fail = (statusCode, code, message) => {
@@ -1738,6 +2030,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
         processedAt: null,
         processedBy: null,
         notes: null,
+        fraudFlagged: Boolean(fraudCheck.flagged),
+        fraudReason: fraudCheck.flagged ? String(fraudCheck.reason || 'risk_signal') : null,
       });
 
       tx.set(transactionDoc, {
@@ -2219,6 +2513,13 @@ app.post('/admin/notify-withdrawal-paid', requireAuth, requireAdmin, async (req,
        <p>Thank you for using ConnectHub!</p>`
     );
 
+    await logAdminAction(req.userEmail || req.user?.email || ADMIN_EMAIL, 'withdrawal_paid_notification_sent', {
+      targetEmail: email,
+      amount,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
+
     return sendSuccess(res, req, { message: 'Withdrawal paid email sent' });
   } catch (error) {
     logger.error({ err: error }, 'NOTIFY_WITHDRAWAL_PAID_ERROR');
@@ -2262,6 +2563,14 @@ app.post('/admin/notify-withdrawal-rejected', requireAuth, requireAdmin, async (
        <p>You can try withdrawing again or contact our support team if you need help.</p>
        <p>Thank you for using ConnectHub!</p>`
     );
+
+    await logAdminAction(req.userEmail || req.user?.email || ADMIN_EMAIL, 'withdrawal_rejected_notification_sent', {
+      targetEmail: email,
+      amount,
+      reason,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
 
     return sendSuccess(res, req, { message: 'Withdrawal rejected email sent' });
   } catch (error) {
@@ -3271,13 +3580,67 @@ app.post('/admin/users/:email/unban', requireAuth, requireAdmin, async (req, res
   }
 });
 
+app.get('/admin/activity-logs', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const logsSnap = await adminDb.collection('adminLogs').orderBy('timestamp', 'desc').limit(20).get();
+    const rows = logsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return sendSuccess(res, req, { data: rows });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_ACTIVITY_LOGS_ERROR');
+    return sendError(res, req, 500, 'admin_activity_logs_failed', 'Could not load admin activity logs');
+  }
+});
+
+app.get('/admin/fraud-alerts', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const alertsSnap = await adminDb.collection('fraudAlerts').orderBy('createdAt', 'desc').limit(50).get();
+    const rows = alertsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    return sendSuccess(res, req, { data: rows });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_FRAUD_ALERTS_ERROR');
+    return sendError(res, req, 500, 'admin_fraud_alerts_failed', 'Could not load fraud alerts');
+  }
+});
+
+app.post('/admin/fraud-alerts/:id/resolve', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const alertId = String(req.params.id || '').trim();
+    if (!alertId) {
+      return sendError(res, req, 400, 'missing_alert_id', 'Alert id is required');
+    }
+
+    await adminDb.collection('fraudAlerts').doc(alertId).set({
+      resolved: true,
+      resolvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      resolvedBy: String(req.userEmail || req.user?.email || ADMIN_EMAIL).trim().toLowerCase(),
+    }, { merge: true });
+
+    await logAdminAction(req.userEmail || req.user?.email || ADMIN_EMAIL, 'fraud_alert_resolved', {
+      alertId,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
+
+    return sendSuccess(res, req, { message: 'Fraud alert marked resolved' });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_FRAUD_ALERT_RESOLVE_ERROR');
+    return sendError(res, req, 500, 'admin_fraud_alert_resolve_failed', 'Could not resolve fraud alert');
+  }
+});
+
 // ── Admin: Analytics ──────────────────────────────────────────────────────
 app.get('/admin/analytics', requireAuth, requireAdmin, async (req, res) => {
   try {
+    const cacheKey = 'analytics:overview:v1';
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return sendSuccess(res, req, { data: cached, cached: true });
+    }
+
     const [requestsSnap, usersSnap, transactionsSnap] = await Promise.all([
-      adminDb.collection('requests').get(),
-      adminDb.collection('users').get(),
-      adminDb.collection('transactions').get(),
+      adminDb.collection('requests').limit(50).get(),
+      adminDb.collection('users').limit(100).get(),
+      adminDb.collection('transactions').limit(50).get(),
     ]);
 
     const requests = requestsSnap.docs.map((d) => d.data());
@@ -3302,13 +3665,14 @@ app.get('/admin/analytics', requireAuth, requireAdmin, async (req, res) => {
 
     const totalTransactionVolume = transactions.reduce((sum, t) => sum + parseMoney(t.amount || 0), 0);
 
-    return sendSuccess(res, req, {
-      data: {
-        jobs: { total: totalJobs, paid: paidJobs, open: openJobs, active: activeJobs, disputed: disputedJobs },
-        revenue: { commissionEarned: parseFloat(totalRevenue.toFixed(2)), subscriptionMRR: subscriptionRevenue, escrowHeld: parseFloat(totalEscrow.toFixed(2)), transactionVolume: parseFloat(totalTransactionVolume.toFixed(2)) },
-        users: { total: totalUsers, verified: verifiedUsers, banned: bannedUsers, proSubscribers: proSubs, premiumSubscribers: premiumSubs },
-      },
-    });
+    const analyticsData = {
+      jobs: { total: totalJobs, paid: paidJobs, open: openJobs, active: activeJobs, disputed: disputedJobs },
+      revenue: { commissionEarned: parseFloat(totalRevenue.toFixed(2)), subscriptionMRR: subscriptionRevenue, escrowHeld: parseFloat(totalEscrow.toFixed(2)), transactionVolume: parseFloat(totalTransactionVolume.toFixed(2)) },
+      users: { total: totalUsers, verified: verifiedUsers, banned: bannedUsers, proSubscribers: proSubs, premiumSubscribers: premiumSubs },
+    };
+
+    cache.set(cacheKey, analyticsData, 60 * 1000);
+    return sendSuccess(res, req, { data: analyticsData });
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_ANALYTICS_ERROR');
     return sendError(res, req, 500, 'analytics_failed', 'Could not compute analytics');
@@ -3329,10 +3693,21 @@ function gracefulShutdown(signal) {
     logger.info('SERVER_STOPPED');
     process.exit(0);
   });
+
+  setTimeout(() => {
+    logger.error({ signal }, 'SERVER_FORCED_SHUTDOWN_TIMEOUT');
+    process.exit(1);
+  }, 30000);
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('uncaughtException', (error) => {
+  logger.error({ err: error }, 'UNCAUGHT_EXCEPTION');
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason }, 'UNHANDLED_REJECTION');
+});
 
 // ── Keep-alive: prevent Render free tier from sleeping ──────────────────────
 const KEEP_ALIVE_URL = (process.env.BACKEND_PUBLIC_URL || 'https://connecthub-yrox.onrender.com') + '/health';
@@ -3925,6 +4300,7 @@ app.post('/profile/username/change', requireAuth, async (req, res) => {
         fullNameMatched: true,
         dobMatched: true,
         idNumberMasked: maskIdentifier(providedIdNumber),
+        idNumberEncrypted: encryptField(providedIdNumber),
       };
     }
 
@@ -4033,9 +4409,9 @@ app.get('/profile/username/audit', requireAuth, async (req, res) => {
 app.get('/admin/kyc', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { status } = req.query;
-    let q = adminDb.collection('kyc_submissions').orderBy('submittedAt', 'desc').limit(200);
+    let q = adminDb.collection('kyc_submissions').orderBy('submittedAt', 'desc').limit(100);
     if (status) {
-      q = adminDb.collection('kyc_submissions').where('kycStatus', '==', String(status)).orderBy('submittedAt', 'desc').limit(200);
+      q = adminDb.collection('kyc_submissions').where('kycStatus', '==', String(status)).orderBy('submittedAt', 'desc').limit(100);
     }
     const snap = await q.get();
     const submissions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -4081,6 +4457,12 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
       actorUid: req.user?.uid || null,
       eventType: 'admin_kyc_approved',
       metadata: { targetEmail },
+    });
+
+    await logAdminAction(req.user?.email || ADMIN_EMAIL, 'kyc_approved', {
+      targetEmail,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
     });
 
     return sendSuccess(res, req, {
@@ -4138,6 +4520,13 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
       metadata: { targetEmail, reason },
     });
 
+    await logAdminAction(req.user?.email || ADMIN_EMAIL, 'kyc_rejected', {
+      targetEmail,
+      reason,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
+
     return sendSuccess(res, req, {
       message: 'KYC rejected',
       email: targetEmail,
@@ -4165,6 +4554,12 @@ app.post('/admin/kyc/notify-approved', requireAuth, requireAdmin, async (req, re
     }
 
     await sendKycApprovalEmail({ email, name: displayName });
+
+    await logAdminAction(req.user?.email || ADMIN_EMAIL, 'kyc_approval_notified', {
+      targetEmail: email,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
 
     return sendSuccess(res, req, {
       message: 'KYC approved email sent',
@@ -4195,6 +4590,13 @@ app.post('/admin/kyc/notify-rejected', requireAuth, requireAdmin, async (req, re
     }
 
     await sendKycRejectionEmail({ email, name: displayName, reason });
+
+    await logAdminAction(req.user?.email || ADMIN_EMAIL, 'kyc_rejection_notified', {
+      targetEmail: email,
+      reason,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
 
     return sendSuccess(res, req, {
       message: 'KYC rejected email sent',
@@ -4373,6 +4775,16 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
         customerRefund,
         commission,
       },
+    });
+
+    await logAdminAction(req.user?.email || ADMIN_EMAIL, 'dispute_resolved', {
+      disputeId,
+      requestId,
+      resolution,
+      providerPayout,
+      customerRefund,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
     });
 
     if (providerPayout > 0 && beforeRequest.acceptedBy) {

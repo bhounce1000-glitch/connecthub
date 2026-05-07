@@ -1,18 +1,23 @@
 services:
   - type: web
-    name: connecthub-backend
+    name: connecthub-api
     runtime: node
-    plan: free
+    plan: starter
     rootDir: .
     buildCommand: npm install
-    startCommand: npm run server
+    startCommand: node server.js
     autoDeploy: true
-    healthCheckPath: /
+    healthCheckPath: /health
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetMemoryPercent: 80
+      targetCPUPercent: 70
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 3001
+        value: 10000
       # Set these in the Render dashboard — do NOT commit real values here
       - key: PAYSTACK_SECRET
         sync: false
@@ -25,6 +30,8 @@ services:
       - key: ADMIN_BOOTSTRAP_SECRET
         sync: false
       - key: CRON_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
         sync: false
       - key: WITHDRAWAL_SLA_HOURS
         value: 24

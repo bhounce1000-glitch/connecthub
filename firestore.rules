@@ -1,344 +1,134 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Transaction records: allow read if sender or receiver, deny client writes
-    match /transactions/{txnId} {
-      allow read: if isSignedIn() && (
-        resource.data.senderEmail == email() ||
-        resource.data.receiverEmail == email()
-      );
-      allow write: if false; // Only server can write
-    }
 
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function email() {
-      return isSignedIn() && request.auth.token.email != null
-        ? request.auth.token.email
-        : '';
-    }
-
     function isAdmin() {
-      return email() in ['bhounce1000@gmail.com'];
+      return isSignedIn() && request.auth.token.email == 'bhounce1000@gmail.com';
     }
 
-    function isVerifiedEmail() {
+    function isOwner(email) {
+      return isSignedIn() && request.auth.token.email == email;
+    }
+
+    function isVerified() {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    function isNotDisposableEmail() {
-      let userEmail = email();
-      return !(userEmail.matches('.*@(mailinator|guerrillamail|tempmail|throwam|sharklasers|yopmail|trashmail|fakeinbox|dispostable|maildrop|spamgourmet|10minutemail|example|test)\\..*'));
+    function isNotDisposable() {
+      let userEmail = request.auth.token.email;
+      return !userEmail.matches('.*@mailinator\\.com')
+        && !userEmail.matches('.*@guerrillamail\\.com')
+        && !userEmail.matches('.*@tempmail\\.com')
+        && !userEmail.matches('.*@yopmail\\.com')
+        && !userEmail.matches('.*@trashmail\\.com')
+        && !userEmail.matches('.*@example\\.com')
+        && !userEmail.matches('.*@test\\.com');
     }
 
-    function isBanned() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(email())) &&
-        get(/databases/$(database)/documents/users/$(email())).data.banned == true;
+    function isNotBanned() {
+      return !exists(/databases/$(database)/documents/bannedUsers/$(request.auth.token.email));
     }
 
-    function notBanned() {
-      return !isBanned();
+    function validUser() {
+      return isSignedIn() && isNotDisposable() && isNotBanned();
     }
 
-    function isOwner() {
-      return resource.data.user == email();
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && isOwner(userId)
+        && isNotDisposable()
+        && request.resource.data.keys().hasAll(['email', 'role', 'createdAt']);
+      allow update: if (isOwner(userId) || isAdmin()) && isNotDisposable();
+      allow delete: if isAdmin();
     }
 
-    function validStatus(value) {
-      return value in ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid', 'disputed', 'cancelled'];
-    }
-
-    function changedKeysOnly(keys) {
-      return request.resource.data.diff(resource.data).changedKeys().hasOnly(keys);
-    }
-
-    function requestDoc(requestId) {
-      return get(/databases/$(database)/documents/requests/$(requestId));
-    }
-
-    function requestExists(requestId) {
-      return requestDoc(requestId).data != null;
-    }
-
-    function isRequestParticipant(requestId) {
-      return requestExists(requestId)
-        && (
-          requestDoc(requestId).data.user == email()
-          || requestDoc(requestId).data.acceptedBy == email()
-          || isAdmin()
-        );
+    match /bannedUsers/{email} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     match /requests/{requestId} {
       allow read: if isSignedIn();
-
-      allow create: if isSignedIn()
-        && notBanned()
-        && isVerifiedEmail()
-        && isNotDisposableEmail()
-        && request.resource.data.keys().hasAll(['title', 'location', 'price', 'user', 'acceptedBy', 'status', 'paid', 'createdAt'])
-        && request.resource.data.keys().hasOnly(['title', 'location', 'price', 'image', 'description', 'category', 'urgency', 'preferredDate', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
-        && request.resource.data.title is string
-        && request.resource.data.location is string
-        && (!('image' in request.resource.data) || request.resource.data.image is string)
-        && request.resource.data.user == email()
-        && request.resource.data.paid == false
-        && request.resource.data.acceptedBy == null
-        && request.resource.data.createdAt is timestamp
-        && request.resource.data.status == 'open'
-        && validStatus(request.resource.data.status);
-
-      allow delete: if false;
-
-      allow update: if isSignedIn() && notBanned() && isVerifiedEmail() && (
-        isAdmin()
-
-        || (
-          resource.data.status == 'open'
-          && request.resource.data.status == 'accepted'
-          && request.resource.data.acceptedBy == email()
-          && request.resource.data.user == resource.data.user
-          && request.resource.data.paid == false
-          && changedKeysOnly(['acceptedBy', 'status', 'acceptedAt'])
-        )
-
-        || (
-          resource.data.acceptedBy == email()
-          && resource.data.status == 'in_progress'
-          && request.resource.data.status == 'pending_confirmation'
-          && changedKeysOnly(['status', 'completedAt'])
-        )
-
-        || (
-          isOwner()
-          && resource.data.status == 'open'
-          && request.resource.data.status == 'cancelled'
-          && changedKeysOnly(['status', 'cancelledAt'])
-        )
-
-        || (
-          isOwner()
-          && resource.data.status == 'pending_confirmation'
-          && request.resource.data.status == 'disputed'
-          && changedKeysOnly([
-            'status',
-            'disputeOpenedAt',
-            'disputeOpenedBy',
-            'disputeReason',
-            'disputeComment',
-            'disputeEvidenceUrls',
-            'paymentHold'
-          ])
-        )
-
-        || (
-          isOwner()
-          && resource.data.status == 'paid'
-          && resource.data.rating == null
-          && request.resource.data.status == resource.data.status
-          && request.resource.data.rating is int
-          && request.resource.data.rating >= 1
-          && request.resource.data.rating <= 5
-          && request.resource.data.review is string
-          && changedKeysOnly(['rating', 'review', 'ratedAt'])
-        )
-
-        || (
-          resource.data.acceptedBy == email()
-          && resource.data.status == 'paid'
-          && resource.data.get('customerRating', null) == null
-          && request.resource.data.status == resource.data.status
-          && request.resource.data.customerRating is int
-          && request.resource.data.customerRating >= 1
-          && request.resource.data.customerRating <= 5
-          && request.resource.data.customerReview is string
-          && changedKeysOnly(['customerRating', 'customerReview', 'customerRatedAt'])
-        )
-      );
+      allow create: if validUser()
+        && request.resource.data.keys().hasAll(['title', 'userId', 'status', 'createdAt'])
+        && (request.resource.data.status == 'OPEN' || request.resource.data.status == 'open')
+        && request.resource.data.userId == request.auth.token.email;
+      allow update: if validUser();
+      allow delete: if isAdmin();
     }
 
-    match /chats/{requestId}/messages/{messageId} {
-      allow read: if isSignedIn() && isRequestParticipant(requestId);
-
-      allow create: if isSignedIn()
-        && notBanned()
-        && isRequestParticipant(requestId)
-        && request.resource.data.keys().hasOnly(['text', 'user', 'createdAt', 'senderEmail', 'timestamp', 'read'])
-        && (request.resource.data.text is string || !('text' in request.resource.data))
-        && (request.resource.data.user is string || !('user' in request.resource.data))
-        && (request.resource.data.senderEmail is string || !('senderEmail' in request.resource.data))
-        && (request.resource.data.timestamp is timestamp || !('timestamp' in request.resource.data))
-        && (request.resource.data.read is bool || !('read' in request.resource.data))
-        && (request.resource.data.createdAt is timestamp || !('createdAt' in request.resource.data))
-        && (request.resource.data.senderEmail == email() || !('senderEmail' in request.resource.data));
-
-      allow update: if isSignedIn()
-        && isRequestParticipant(requestId)
-        && changedKeysOnly(['read'])
-        && request.resource.data.read is bool;
-
-      allow delete: if false;
-    }
-
-    match /users/{userEmail} {
-      allow read: if isSignedIn() && (userEmail == email() || isAdmin());
-      allow create: if isSignedIn() && notBanned() && isVerifiedEmail() && isNotDisposableEmail() && userEmail == email();
-      allow update: if isSignedIn() && notBanned() && isVerifiedEmail() && isNotDisposableEmail() && (
-        (
-          userEmail == email()
-          // Server-only fields that must never be client-modified
-          && !request.resource.data.diff(resource.data).changedKeys().hasAny([
-            'kycStatus',
-            'walletBalance',
-            'banned',
-            'subscriptionPlan',
-            'subscriptionStatus',
-            'subscriptionExpiry',
-            'signupBonusAwarded',
-            'referralEarnings',
-            'usernameChangeCount',
-            'usernameChangeLockedUntil',
-            'usernameChangeFailedAttempts',
-            'usernameUpdatedAt',
-            'usernameLastVerification',
-            'usernameSessionsRevokedAt',
-            'usernameLastChangeBy'
-          ])
-        )
+    match /transactions/{txId} {
+      allow read: if isSignedIn() && (
+        resource.data.senderEmail == request.auth.token.email
+        || resource.data.receiverEmail == request.auth.token.email
         || isAdmin()
       );
-      allow delete: if false;
+      allow create, update, delete: if isAdmin();
     }
 
-    match /kyc_submissions/{userEmail} {
-      allow read: if isSignedIn() && (userEmail == email() || isAdmin());
-
-      // User can create/update their own submission but cannot directly self-verify/reject
-      allow create, update: if isSignedIn()
-        && notBanned()
-        && userEmail == email()
-        && (
-          !('kycStatus' in request.resource.data)
-          || request.resource.data.kycStatus in ['not_submitted', 'pending_verification']
-        )
-        && (!('reviewedBy' in request.resource.data) || request.resource.data.reviewedBy == null)
-        && (!('rejectionReason' in request.resource.data) || request.resource.data.rejectionReason is string);
-
-      // Admin can fully review and set final status
-      allow update: if isSignedIn() && isAdmin();
-      allow delete: if false;
-    }
-
-    match /notifications/{notificationId} {
+    match /notifications/{notifId} {
       allow read: if isSignedIn() && (
-        resource.data.user == email() ||
-        resource.data.userId == email()
+        resource.data.userId == request.auth.token.email
+        || isAdmin()
       );
-      allow create: if false;
+      allow create: if isAdmin();
       allow update: if isSignedIn()
-        && (
-          resource.data.user == email() ||
-          resource.data.userId == email()
-        )
-        && changedKeysOnly(['read'])
-        && request.resource.data.read is bool;
-      allow delete: if false;
-    }
-
-    match /adminLogs/{logId} {
-      allow read, write: if isSignedIn() && isAdmin();
-    }
-
-    match /disputes/{disputeId} {
-      allow read: if isSignedIn() && isAdmin();
-      allow create, update, delete: if false;
-    }
-
-    // Username change audit logs — server-only write; no direct client read
-    match /usernameChangeLogs/{logId} {
-      allow read: if false;
-      allow write: if false;
-    }
-
-    // System request audit logs — server-only
-    match /request_audit_logs/{logId} {
-      allow read, write: if false;
-    }
-
-    match /reviewVotes/{voteId} {
-      // Voters can read their own vote records to restore button state client-side.
-      // Server (Admin SDK) handles all writes — no client write rules needed.
-      allow read: if isSignedIn() && (resource == null || resource.data.voterEmail == email());
-      allow write: if false;
-    }
-
-    match /providers/{providerEmail} {
-      allow read: if isSignedIn();
-
-      allow create, update: if isSignedIn()
-        && notBanned()
-        && providerEmail == email()
-        && request.resource.data.keys().hasOnly([
-            'email', 'name', 'bio', 'category', 'location', 'phone',
-            'startingPrice', 'experience', 'isAvailable',
-            'skills',
-            'profilePicture', 'avgRating', 'jobsCompleted',
-            'createdAt', 'updatedAt'
-          ])
-        && request.resource.data.email == email()
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 100
-        && request.resource.data.bio is string
-        && request.resource.data.bio.size() <= 500
-        && request.resource.data.category is string
-        && (!('skills' in request.resource.data) || request.resource.data.skills is list)
-        && request.resource.data.location is string
-        && request.resource.data.location.size() <= 200
-        && request.resource.data.isAvailable is bool
-        && (!('avgRating' in request.resource.data) || resource != null)
-        && (!('jobsCompleted' in request.resource.data) || resource != null);
-
-      allow delete: if isSignedIn() && (providerEmail == email() || isAdmin());
-    }
-
-    match /subscriptions/{subscriptionId} {
-      // Users can read their own subscriptions; admin can read all
-      allow read: if isSignedIn() && (
-        resource.data.userEmail == email() || isAdmin()
-      );
-
-      // Only server can write (via Admin SDK)
-      allow create, update, delete: if false;
+        && resource.data.userId == request.auth.token.email
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isAdmin();
     }
 
     match /withdrawals/{withdrawalId} {
-      // Users can read their own withdrawals; admin can read/write all
       allow read: if isSignedIn() && (
-        resource.data.userEmail == email() ||
-        resource.data.email == email() ||
-        isAdmin()
+        resource.data.email == request.auth.token.email
+        || isAdmin()
       );
-
-      allow create: if isSignedIn() && isVerifiedEmail() && isNotDisposableEmail() && (
-        request.resource.data.email == email() || isAdmin()
-      );
-      allow update, delete: if isSignedIn() && isAdmin();
+      allow create: if validUser() && request.resource.data.email == request.auth.token.email;
+      allow update, delete: if isAdmin();
     }
 
-    match /portfolios/{providerEmail}/items/{itemId} {
-      // Public read access to any provider's portfolio
-      allow read: if isSignedIn();
+    match /kyc_submissions/{email} {
+      allow read: if isOwner(email) || isAdmin();
+      allow create: if isOwner(email) && validUser();
+      allow update: if isOwner(email) || isAdmin();
+      allow delete: if isAdmin();
+    }
 
-      // Provider can create/update/delete their own portfolio items
-      allow create, update, delete: if isSignedIn() && providerEmail == email();
+    match /chats/{jobId}/messages/{messageId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if isSignedIn();
+      allow create: if validUser();
+      allow update, delete: if isAdmin();
+    }
+
+    match /subscriptions/{email} {
+      allow read, write: if isOwner(email) || isAdmin();
+    }
+
+    match /fraudAlerts/{alertId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /adminLogs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /portfolios/{email}/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(email);
+      allow delete: if isOwner(email) || isAdmin();
     }
 
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if isAdmin();
     }
   }
 }

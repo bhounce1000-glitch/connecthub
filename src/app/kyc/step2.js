@@ -24,6 +24,30 @@ const ID_TYPE_HINTS = {
   "Driver's License": 'e.g. D-1234-567890',
   "Voter's ID": 'e.g. VOT-123456789',
 };
+const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif'];
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+function validateFile(file) {
+  if (!file) return { valid: false, error: 'No file selected' };
+
+  if (file.size && file.size > MAX_FILE_SIZE) {
+    return { valid: false, error: 'File too large. Maximum size is 10MB.' };
+  }
+
+  const mime = String(file.type || '').toLowerCase();
+  if (mime && !ALLOWED_TYPES.includes(mime)) {
+    return { valid: false, error: 'Only JPG, PNG, HEIC, or HEIF images are allowed.' };
+  }
+
+  const uri = String(file.uri || file.name || '');
+  const ext = uri.split('.').pop()?.toLowerCase();
+  const allowedExt = ['jpg', 'jpeg', 'png', 'heic', 'heif'];
+  if (ext && !allowedExt.includes(ext)) {
+    return { valid: false, error: 'Only JPG, PNG, HEIC, or HEIF images are allowed.' };
+  }
+
+  return { valid: true };
+}
 
 function normalizeIdNumber(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -114,6 +138,11 @@ async function pickAndUpload(side) {
         const file = e.target.files?.[0];
         if (!file) { resolve(null); return; }
         try {
+          const fileValidation = validateFile(file);
+          if (!fileValidation.valid) {
+            throw new Error(fileValidation.error);
+          }
+
           const auth = getAuth();
           const currentUser = auth.currentUser;
           if (!currentUser?.uid) {
