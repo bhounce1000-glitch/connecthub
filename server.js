@@ -49,6 +49,10 @@ const SUBSCRIPTION_PLAN_CONFIG = {
 };
 const MOBILE_SCHEME = process.env.MOBILE_APP_SCHEME || 'connecthub';
 const RECENT_AUTH_MAX_AGE_SECONDS = Number(process.env.RECENT_AUTH_MAX_AGE_SECONDS || 10 * 60);
+const USERNAME_CHANGE_COOLDOWN_SECONDS = Number(process.env.USERNAME_CHANGE_COOLDOWN_SECONDS || 24 * 60 * 60);
+const USERNAME_CHANGE_LOCK_THRESHOLD = Number(process.env.USERNAME_CHANGE_LOCK_THRESHOLD || 3);
+const USERNAME_CHANGE_LOCK_SECONDS = Number(process.env.USERNAME_CHANGE_LOCK_SECONDS || 60 * 60);
+const USERNAME_CHANGE_AUDIT_LIMIT = Number(process.env.USERNAME_CHANGE_AUDIT_LIMIT || 20);
 const BLOCKED_EMAIL_DOMAINS = new Set([
   'mailinator.com',
   'guerrillamail.com',
@@ -3502,6 +3506,7 @@ app.post('/kyc/notify-submitted', requireAuth, async (req, res) => {
 app.post('/profile/username/change', requireAuth, async (req, res) => {
   try {
     const email = String(req.userEmail || req.user?.email || '').trim().toLowerCase();
+    const userUid = String(req.user?.uid || '').trim();
     if (!email) {
       return sendError(res, req, 401, 'missing_user_email', 'Unable to determine user email');
     }
@@ -3522,6 +3527,8 @@ app.post('/profile/username/change', requireAuth, async (req, res) => {
       return sendError(res, req, 400, 'invalid_username', 'Username must be 3-40 chars and can include letters, numbers, spaces, underscores, hyphens, and dots.');
     }
 
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
     const nextUsernameLower = newUsername.toLowerCase();
     const userRef = adminDb.collection('users').doc(email);
     const userSnap = await userRef.get();
@@ -3531,7 +3538,89 @@ app.post('/profile/username/change', requireAuth, async (req, res) => {
     }
 
     const userData = userSnap.data() || {};
+    const displayName = String(userData.displayName || userData.username || userData.name || email).trim();
     const currentUsername = String(userData.username || userData.displayName || userData.name || '').trim();
+    const lockedUntilMs = toMillis(userData.usernameChangeLockedUntil);
+
+    if (lockedUntilMs > nowMs) {
+      const secondsRemaining = Math.max(1, Math.ceil((lockedUntilMs - nowMs) / 1000));
+      await adminDb.collection('usernameChangeLogs').add({
+        email,
+        outcome: 'failed',
+        reason: 'locked',
+        attemptedUsername: newUsername,
+        attemptedAt: nowIso,
+        createdAt: nowIso,
+        ip: req.ip,
+        secondsRemaining,
+      });
+      await notifyUser(
+        email,
+        'Username change is temporarily locked after multiple failed verification attempts. Please try again later.',
+        'Username Change Locked',
+        { screen: 'profile' }
+      );
+      if (isEmailConfigured()) {
+        await sendPaymentReceiptEmail(
+          email,
+          displayName,
+          'Username Change Locked - ConnectHub',
+          `<p>Hi ${displayName},</p>
+           <p>We blocked a username change attempt because your account is currently locked after repeated failed verification checks.</p>
+           <p><b>Attempted username:</b> ${newUsername}</p>
+           <p><b>Time:</b> ${nowIso}</p>
+           <p><b>Lock expires:</b> ${new Date(lockedUntilMs).toISOString()}</p>
+           <p>If this was not you, reset your password immediately.</p>`
+        ).catch((err) => logger.warn({ err, email }, 'USERNAME_SECURITY_EMAIL_FAILED'));
+      }
+      return sendError(res, req, 429, 'username_change_locked', 'Too many failed attempts. Please try again later.', {
+        lockedUntil: new Date(lockedUntilMs).toISOString(),
+        secondsRemaining,
+      });
+    }
+
+    const lastChangeMs = toMillis(userData.usernameUpdatedAt);
+    const cooldownMs = Math.max(0, USERNAME_CHANGE_COOLDOWN_SECONDS) * 1000;
+    if (Number.isFinite(lastChangeMs) && lastChangeMs > 0 && cooldownMs > 0 && (nowMs - lastChangeMs) < cooldownMs) {
+      const secondsRemaining = Math.max(1, Math.ceil((cooldownMs - (nowMs - lastChangeMs)) / 1000));
+      const nextAllowedAt = new Date(nowMs + secondsRemaining * 1000).toISOString();
+      await adminDb.collection('usernameChangeLogs').add({
+        email,
+        outcome: 'failed',
+        reason: 'cooldown_not_elapsed',
+        attemptedUsername: newUsername,
+        attemptedAt: nowIso,
+        createdAt: nowIso,
+        ip: req.ip,
+        secondsRemaining,
+        nextAllowedAt,
+      });
+      await notifyUser(
+        email,
+        'A cooldown is active for username changes. Please try again after the timer ends.',
+        'Username Cooldown Active',
+        { screen: 'profile' }
+      );
+      if (isEmailConfigured()) {
+        await sendPaymentReceiptEmail(
+          email,
+          displayName,
+          'Username Change Cooldown - ConnectHub',
+          `<p>Hi ${displayName},</p>
+           <p>A username change attempt was blocked because your cooldown window is still active.</p>
+           <p><b>Attempted username:</b> ${newUsername}</p>
+           <p><b>Time:</b> ${nowIso}</p>
+           <p><b>Try again after:</b> ${nextAllowedAt}</p>
+           <p>If this was not you, reset your password immediately.</p>`
+        ).catch((err) => logger.warn({ err, email }, 'USERNAME_SECURITY_EMAIL_FAILED'));
+      }
+      return sendError(res, req, 429, 'username_change_cooldown', 'Username can only be changed after the cooldown period.', {
+        cooldownSeconds: USERNAME_CHANGE_COOLDOWN_SECONDS,
+        secondsRemaining,
+        nextAllowedAt,
+      });
+    }
+
     if (currentUsername && currentUsername.toLowerCase() === nextUsernameLower) {
       return sendError(res, req, 409, 'same_username', 'That is already your current username');
     }
@@ -3580,20 +3669,71 @@ app.post('/profile/username/change', requireAuth, async (req, res) => {
         && providedIdNumber === expectedIdNumber;
 
       if (!detailsMatch) {
+        const priorFailures = Number(userData.usernameChangeFailedAttempts || 0);
+        const nextFailures = priorFailures + 1;
+        const shouldLock = nextFailures >= Math.max(1, USERNAME_CHANGE_LOCK_THRESHOLD);
+        const lockedUntil = shouldLock
+          ? new Date(nowMs + (Math.max(1, USERNAME_CHANGE_LOCK_SECONDS) * 1000)).toISOString()
+          : null;
+
+        await userRef.set({
+          usernameChangeFailedAttempts: nextFailures,
+          usernameChangeLockedUntil: lockedUntil,
+          updatedAt: nowIso,
+        }, { merge: true });
+
         await adminDb.collection('usernameChangeLogs').add({
           email,
           outcome: 'failed',
           reason: 'kyc_details_mismatch',
           attemptedUsername: newUsername,
-          attemptedAt: new Date().toISOString(),
+          attemptedAt: nowIso,
+          createdAt: nowIso,
           ip: req.ip,
+          failureCount: nextFailures,
+          lockedUntil,
         });
-        return sendError(res, req, 403, 'kyc_details_mismatch', 'The submitted verification details do not match your existing KYC record.');
+
+        await notifyUser(
+          email,
+          shouldLock
+            ? 'Username change was locked because repeated verification attempts failed.'
+            : 'A username change attempt failed because the submitted details did not match your KYC profile.',
+          shouldLock ? 'Username Change Locked' : 'Username Change Failed',
+          { screen: 'profile' }
+        );
+
+        if (isEmailConfigured()) {
+          await sendPaymentReceiptEmail(
+            email,
+            displayName,
+            shouldLock ? 'Username Change Locked - ConnectHub' : 'Username Change Attempt Failed - ConnectHub',
+            `<p>Hi ${displayName},</p>
+             <p>We blocked a username change attempt because the verification details did not match your KYC profile.</p>
+             <p><b>Attempted username:</b> ${newUsername}</p>
+             <p><b>IP:</b> ${String(req.ip || 'unknown')}</p>
+             <p><b>Time:</b> ${nowIso}</p>
+             ${shouldLock ? `<p><b>Lock expires:</b> ${lockedUntil}</p>` : `<p><b>Remaining attempts before lock:</b> ${Math.max(0, USERNAME_CHANGE_LOCK_THRESHOLD - nextFailures)}</p>`}
+             <p>If this was not you, reset your password immediately.</p>`
+          ).catch((err) => logger.warn({ err, email }, 'USERNAME_SECURITY_EMAIL_FAILED'));
+        }
+
+        if (shouldLock) {
+          return sendError(res, req, 429, 'username_change_locked', 'Too many failed attempts. Please try again later.', {
+            lockedUntil,
+            failureCount: nextFailures,
+          });
+        }
+
+        return sendError(res, req, 403, 'kyc_details_mismatch', 'The submitted verification details do not match your existing KYC record.', {
+          failureCount: nextFailures,
+          remainingAttempts: Math.max(0, USERNAME_CHANGE_LOCK_THRESHOLD - nextFailures),
+        });
       }
 
       verificationMetadata = {
         mode: 'kyc_auto_match',
-        matchedAt: new Date().toISOString(),
+        matchedAt: nowIso,
         idCardUrl: providedIdCardUrl,
         fullNameMatched: true,
         dobMatched: true,
@@ -3601,18 +3741,19 @@ app.post('/profile/username/change', requireAuth, async (req, res) => {
       };
     }
 
-    const now = new Date().toISOString();
     const nextChangeCount = changeCount + 1;
 
     await userRef.set({
       username: newUsername,
       usernameLower: nextUsernameLower,
       displayName: newUsername,
-      usernameUpdatedAt: now,
+      usernameUpdatedAt: nowIso,
       usernameChangeCount: nextChangeCount,
       usernameLastChangeBy: email,
       usernameLastVerification: verificationMetadata,
-      updatedAt: now,
+      usernameChangeFailedAttempts: 0,
+      usernameChangeLockedUntil: null,
+      updatedAt: nowIso,
     }, { merge: true });
 
     await adminDb.collection('usernameChangeLogs').add({
@@ -3620,21 +3761,80 @@ app.post('/profile/username/change', requireAuth, async (req, res) => {
       outcome: 'success',
       previousUsername: currentUsername || null,
       newUsername,
+      attemptedAt: nowIso,
       usernameChangeCount: nextChangeCount,
       requiresKycReverification,
-      createdAt: now,
+      createdAt: nowIso,
       ip: req.ip,
+      cooldownSeconds: USERNAME_CHANGE_COOLDOWN_SECONDS,
     });
 
-    await notifyUser(email, 'Your username was changed to ' + newUsername + '. If this was not you, contact support immediately.', 'Username Updated', { screen: 'profile' });
+    await notifyUser(
+      email,
+      'Your username was changed to ' + newUsername + '. Other devices were signed out. If this was not you, contact support immediately.',
+      'Username Updated',
+      { screen: 'profile' }
+    );
+
+    if (isEmailConfigured()) {
+      await sendPaymentReceiptEmail(
+        email,
+        displayName,
+        'Username Updated - Security Notice - ConnectHub',
+        `<p>Hi ${displayName},</p>
+         <p>Your username was changed successfully.</p>
+         <p><b>Old username:</b> ${currentUsername || '(none)'}</p>
+         <p><b>New username:</b> ${newUsername}</p>
+         <p><b>Time:</b> ${nowIso}</p>
+         <p><b>IP:</b> ${String(req.ip || 'unknown')}</p>
+         <p>For your security, other sessions were signed out.</p>`
+      ).catch((err) => logger.warn({ err, email }, 'USERNAME_SECURITY_EMAIL_FAILED'));
+    }
+
+    if (userUid) {
+      try {
+        await admin.auth().revokeRefreshTokens(userUid);
+        await userRef.set({ usernameSessionsRevokedAt: nowIso }, { merge: true });
+      } catch (revokeError) {
+        logger.warn({ err: revokeError, userUid, email }, 'USERNAME_REVOKE_SESSIONS_FAILED');
+      }
+    }
 
     return sendSuccess(res, req, {
       message: 'Username updated successfully',
-      data: { username: newUsername, usernameChangeCount: nextChangeCount, requiresKycReverification },
+      data: {
+        username: newUsername,
+        usernameChangeCount: nextChangeCount,
+        requiresKycReverification,
+        cooldownSeconds: USERNAME_CHANGE_COOLDOWN_SECONDS,
+      },
     });
   } catch (error) {
     logger.error({ err: error }, 'PROFILE_USERNAME_CHANGE_ERROR');
     return sendError(res, req, 500, 'username_change_failed', 'Could not change username');
+  }
+});
+
+app.get('/profile/username/audit', requireAuth, async (req, res) => {
+  try {
+    const email = String(req.userEmail || req.user?.email || '').trim().toLowerCase();
+    if (!email) {
+      return sendError(res, req, 401, 'missing_user_email', 'Unable to determine user email');
+    }
+
+    const limit = Math.min(Math.max(Number(req.query?.limit || USERNAME_CHANGE_AUDIT_LIMIT), 1), 50);
+    const logsSnap = await adminDb
+      .collection('usernameChangeLogs')
+      .where('email', '==', email)
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+
+    const rows = logsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    return sendSuccess(res, req, { data: rows });
+  } catch (error) {
+    logger.error({ err: error }, 'PROFILE_USERNAME_AUDIT_ERROR');
+    return sendError(res, req, 500, 'username_audit_failed', 'Could not load username audit history');
   }
 });
 // ── KYC ADMIN ENDPOINTS ──────────────────────────────────────────────────────

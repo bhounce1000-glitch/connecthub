@@ -24,7 +24,7 @@ import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-t
 import { auth, db, storage } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
-import { apiPost } from '../utils/api-client';
+import { apiGet, apiPost } from '../utils/api-client';
 import { formatApiMessage } from '../utils/api-response';
 
 function Stat({ icon, value, label }) {
@@ -72,6 +72,8 @@ export default function Profile() {
   const [isChangingUsername, setIsChangingUsername] = useState(false);
   const [isUploadingVerificationId, setIsUploadingVerificationId] = useState(false);
   const [usernameNotice, setUsernameNotice] = useState(null);
+  const [usernameAudit, setUsernameAudit] = useState([]);
+  const [isLoadingUsernameAudit, setIsLoadingUsernameAudit] = useState(false);
   const [requiresRecentLogin, setRequiresRecentLogin] = useState(false);
   const [reauthPassword, setReauthPassword] = useState('');
   const [isReauthenticating, setIsReauthenticating] = useState(false);
@@ -193,12 +195,32 @@ export default function Profile() {
   const usernameChangeCount = Number(profile?.usernameChangeCount || 0);
   const requiresKycReverification = usernameChangeCount >= 1;
   const currentUsername = String(profile?.username || profile?.name || currentEmail.split('@')[0] || '').trim();
+  const usernameAuditPreview = useMemo(
+    () => (Array.isArray(usernameAudit) ? usernameAudit.slice(0, 5) : []),
+    [usernameAudit]
+  );
 
   useEffect(() => {
     if (!usernameDraft) {
       setUsernameDraft(currentUsername);
     }
   }, [currentUsername, usernameDraft]);
+
+  const loadUsernameAudit = async () => {
+    if (!currentEmail) return;
+    try {
+      setIsLoadingUsernameAudit(true);
+      const { response, data } = await apiGet(`${API_BASE_URL}/profile/username/audit?limit=8`, { requireAuth: true });
+      if (!response.ok || !data?.status || !Array.isArray(data?.data)) {
+        return;
+      }
+      setUsernameAudit(data.data);
+    } catch {
+      // Non-blocking; audit is a visibility feature.
+    } finally {
+      setIsLoadingUsernameAudit(false);
+    }
+  };
 
   const uploadVerificationId = async () => {
     try {
@@ -241,6 +263,11 @@ export default function Profile() {
       setIsUploadingVerificationId(false);
     }
   };
+
+  useEffect(() => {
+    if (!currentEmail) return;
+    loadUsernameAudit();
+  }, [currentEmail]);
 
   const handleUsernameChange = async () => {
     const nextUsername = String(usernameDraft || '').trim();
@@ -292,8 +319,10 @@ export default function Profile() {
       setReauthPassword('');
       setUsernameNotice({ tone: 'success', title: 'Username updated', message: 'Your username was updated successfully.' });
       setUsernameVerification({ fullName: '', dob: '', idNumber: '', idCardUrl: '' });
+      await loadUsernameAudit();
     } catch (error) {
       setUsernameNotice({ tone: 'error', title: 'Update failed', message: error?.message || 'Could not change username right now.' });
+      await loadUsernameAudit();
     } finally {
       setIsChangingUsername(false);
     }
@@ -481,6 +510,36 @@ export default function Profile() {
             >
               <Text style={{ color: '#fff', fontWeight: '800' }}>{isChangingUsername ? 'Updating...' : 'Update Username'}</Text>
             </TouchableOpacity>
+
+            <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ color: '#0f172a', fontWeight: '800' }}>Recent Username Security Activity</Text>
+                <TouchableOpacity onPress={loadUsernameAudit} disabled={isLoadingUsernameAudit}>
+                  <Text style={{ color: '#2563eb', fontWeight: '700', fontSize: 12 }}>{isLoadingUsernameAudit ? 'Refreshing...' : 'Refresh'}</Text>
+                </TouchableOpacity>
+              </View>
+              {usernameAuditPreview.length ? (
+                usernameAuditPreview.map((entry, index) => {
+                  const when = new Date(entry.createdAt || entry.attemptedAt || Date.now());
+                  const whenLabel = Number.isNaN(when.getTime()) ? 'Unknown time' : when.toLocaleString();
+                  const success = String(entry.outcome || '').toLowerCase() === 'success';
+                  const color = success ? '#166534' : '#b91c1c';
+                  const label = success ? 'Success' : 'Blocked';
+                  const detail = success
+                    ? `Changed to ${entry.newUsername || 'new username'}`
+                    : String(entry.reason || 'failed_attempt').replace(/_/g, ' ');
+                  return (
+                    <View key={String(entry.id || `${entry.createdAt || entry.attemptedAt || 'event'}_${index}`)} style={{ marginTop: 8, backgroundColor: '#f8fafc', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', padding: 8 }}>
+                      <Text style={{ color, fontWeight: '800', fontSize: 12 }}>{label}</Text>
+                      <Text style={{ color: '#334155', fontSize: 12, marginTop: 2 }}>{detail}</Text>
+                      <Text style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>{whenLabel}</Text>
+                    </View>
+                  );
+                })
+              ) : (
+                <Text style={{ color: '#64748b', fontSize: 12, marginTop: 8 }}>No recent username security events yet.</Text>
+              )}
+            </View>
           </AppCard>
 
           <AppCard style={{ borderRadius: 12, ...AppShadow.card, marginBottom: 12 }}>
