@@ -643,10 +643,7 @@ export default function Admin() {
           onPress: async () => {
             setPendingAction('withdrawal:auto-refund');
             try {
-              const cronSecret = process.env.EXPO_PUBLIC_CRON_SECRET || '';
-              const { response, data } = await apiPost('/admin/withdrawals/auto-refund-overdue', {}, {
-                headers: { 'x-cron-secret': cronSecret },
-              });
+              const { response, data } = await apiPost(`${API_BASE_URL}/admin/withdrawals/auto-refund-overdue`, {}, { requireAuth: true });
               if (!response.ok || !data?.status) {
                 throw new Error(data?.message || 'Auto-refund request failed');
               }

@@ -2020,13 +2020,54 @@ const CRON_SECRET = String(process.env.CRON_SECRET || '');
  * Called by a cron job (Render cron or external scheduler).
  * Finds all withdrawals in `pending_admin_approval` older than WITHDRAWAL_SLA_HOURS
  * and atomically refunds each one — no admin action needed.
- * Secured by CRON_SECRET header so it cannot be triggered by users.
+ * Secured by either CRON_SECRET header (for scheduler) or authenticated admin access.
  */
 app.post('/admin/withdrawals/auto-refund-overdue', async (req, res) => {
   try {
     const providedSecret = String(req.headers['x-cron-secret'] || '').trim();
-    if (!CRON_SECRET || providedSecret !== CRON_SECRET) {
-      return sendError(res, req, 403, 'cron_forbidden', 'Invalid or missing cron secret');
+
+    // Allow trusted cron caller with secret header, or regular admin auth from dashboard.
+    if (CRON_SECRET && providedSecret === CRON_SECRET) {
+      req.user = {
+        uid: 'cron-auto-refund',
+        email: 'cron@local',
+        admin: true,
+        role: 'admin',
+      };
+      req.userEmail = 'cron@local';
+    } else {
+      const authHeader = String(req.headers.authorization || '');
+      if (!authHeader.startsWith('Bearer ')) {
+        return sendError(res, req, 401, 'missing_bearer_token', 'Missing bearer token');
+      }
+
+      const token = authHeader.slice('Bearer '.length).trim();
+      if (!token || token.length < 10) {
+        return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token format');
+      }
+
+      let decodedToken;
+      try {
+        decodedToken = await admin.auth().verifyIdToken(token, true);
+      } catch (authError) {
+        if (authError?.code === 'auth/id-token-revoked') {
+          return sendError(res, req, 401, 'token_revoked', 'Session expired. Please log in again.');
+        }
+        return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token');
+      }
+
+      const normalizedEmail = String(decodedToken.email || '').trim().toLowerCase();
+      if (!normalizedEmail) {
+        return sendError(res, req, 401, 'invalid_auth_token', 'Authenticated account is missing an email');
+      }
+
+      const hasAdminClaim = decodedToken.admin === true || decodedToken.role === 'admin';
+      if (!hasAdminClaim && !isAdminEmail(normalizedEmail)) {
+        return sendError(res, req, 403, 'admin_access_required', 'Admin access required');
+      }
+
+      req.user = decodedToken;
+      req.userEmail = normalizedEmail;
     }
 
     const nowMs = Date.now();
@@ -2111,7 +2152,7 @@ app.post('/admin/withdrawals/auto-refund-overdue', async (req, res) => {
           ).catch((err) => logger.warn({ err, userEmail }, 'AUTO_REFUND_EMAIL_FAILED'));
         }
 
-        await logAdminAction('system_auto_refund', 'withdrawal_auto_refunded', {
+        await logAdminAction(req.userEmail || 'system_auto_refund', 'withdrawal_auto_refunded', {
           withdrawalId,
           targetEmail: userEmail,
           amount,
