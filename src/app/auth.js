@@ -316,6 +316,26 @@ export default function Auth() {
       const loginCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
       await reload(loginCredential.user);
 
+      // Check Firestore first — existing users are always allowed in regardless of emailVerified.
+      // Only new accounts with no Firestore document are gated behind email verification.
+      const userRef = doc(db, 'users', normalizedEmail);
+      const userSnap = await getDoc(userRef);
+
+      if (userSnap.exists()) {
+        const userData = userSnap.data() || {};
+        if (userData.banned === true) {
+          await signOut(auth);
+          setNotice({ tone: 'error', title: 'Account suspended', message: 'Your account has been suspended. Contact support.' });
+          setIsSubmitting(false);
+          return;
+        }
+        // Existing user — skip emailVerified gate entirely
+        router.replace('/');
+        return;
+      }
+
+      // No Firestore document — treat as brand-new account.
+      // Only enforce email verification for accounts that have never completed signup.
       if (!loginCredential.user.emailVerified) {
         await signOut(auth);
         setNotice({
@@ -678,6 +698,18 @@ export default function Auth() {
           >
             <Text style={{ textAlign: 'center', color: '#0f766e', fontWeight: '600' }}>
               Resend verification email
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {isLogin && notice?.title === 'Email not verified' ? (
+          <TouchableOpacity
+            style={{ paddingVertical: AppSpace.xs }}
+            onPress={() => setNotice(null)}
+            disabled={isSubmitting}
+          >
+            <Text style={{ textAlign: 'center', color: '#2563eb', fontWeight: '600' }}>
+              ✓ Already verified? Tap here to try again
             </Text>
           </TouchableOpacity>
         ) : null}
