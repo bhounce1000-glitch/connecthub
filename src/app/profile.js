@@ -1,6 +1,12 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { signOut } from 'firebase/auth';
+import {
+    EmailAuthProvider,
+    GoogleAuthProvider,
+    reauthenticateWithCredential,
+    reauthenticateWithPopup,
+    signOut,
+} from 'firebase/auth';
 import { useEffect, useMemo, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
 
@@ -66,6 +72,9 @@ export default function Profile() {
   const [isChangingUsername, setIsChangingUsername] = useState(false);
   const [isUploadingVerificationId, setIsUploadingVerificationId] = useState(false);
   const [usernameNotice, setUsernameNotice] = useState(null);
+  const [requiresRecentLogin, setRequiresRecentLogin] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [isReauthenticating, setIsReauthenticating] = useState(false);
 
   useEffect(() => {
     if (isAuthReady && !currentEmail) router.replace('/auth');
@@ -268,14 +277,61 @@ export default function Profile() {
     try {
       const { response, data } = await apiPost(`${API_BASE_URL}/profile/username/change`, payload, { requireAuth: true });
       if (!response.ok || !data?.status) {
+        if (data?.code === 'recent_login_required') {
+          setRequiresRecentLogin(true);
+          setUsernameNotice({
+            tone: 'warning',
+            title: 'Security Check Required',
+            message: formatApiMessage(data, 'Please re-authenticate and try again.'),
+          });
+          return;
+        }
         throw new Error(formatApiMessage(data, 'Could not change username right now.'));
       }
+      setRequiresRecentLogin(false);
+      setReauthPassword('');
       setUsernameNotice({ tone: 'success', title: 'Username updated', message: 'Your username was updated successfully.' });
       setUsernameVerification({ fullName: '', dob: '', idNumber: '', idCardUrl: '' });
     } catch (error) {
       setUsernameNotice({ tone: 'error', title: 'Update failed', message: error?.message || 'Could not change username right now.' });
     } finally {
       setIsChangingUsername(false);
+    }
+  };
+
+  const handleReauthenticate = async () => {
+    try {
+      setIsReauthenticating(true);
+      setUsernameNotice(null);
+
+      const currentUser = auth.currentUser;
+      if (!currentUser || !currentEmail) {
+        throw new Error('Missing user context. Please sign in again.');
+      }
+
+      const providerIds = Array.isArray(currentUser.providerData)
+        ? currentUser.providerData.map((p) => p?.providerId).filter(Boolean)
+        : [];
+
+      if (providerIds.includes('password')) {
+        if (!reauthPassword.trim()) {
+          throw new Error('Enter your password to re-authenticate.');
+        }
+        const credential = EmailAuthProvider.credential(currentEmail, reauthPassword);
+        await reauthenticateWithCredential(currentUser, credential);
+      } else if (Platform.OS === 'web' && providerIds.includes('google.com')) {
+        await reauthenticateWithPopup(currentUser, new GoogleAuthProvider());
+      } else {
+        throw new Error('Please sign out and sign back in to continue this security step.');
+      }
+
+      setRequiresRecentLogin(false);
+      setReauthPassword('');
+      setUsernameNotice({ tone: 'success', title: 'Re-authenticated', message: 'Security check passed. You can now update your username.' });
+    } catch (error) {
+      setUsernameNotice({ tone: 'error', title: 'Re-authentication failed', message: error?.message || 'Could not verify your session.' });
+    } finally {
+      setIsReauthenticating(false);
     }
   };
 
@@ -346,6 +402,28 @@ export default function Profile() {
               onChangeText={setUsernameDraft}
               autoCapitalize="none"
             />
+
+            {requiresRecentLogin ? (
+              <View style={{ marginTop: 6, marginBottom: 10 }}>
+                <Text style={{ color: '#92400e', fontWeight: '700', marginBottom: 6 }}>
+                  Session expired for sensitive action. Re-authenticate to continue.
+                </Text>
+                <AppInput
+                  label="Current Password"
+                  placeholder="Enter your password"
+                  value={reauthPassword}
+                  onChangeText={setReauthPassword}
+                  secureTextEntry
+                />
+                <TouchableOpacity
+                  onPress={handleReauthenticate}
+                  disabled={isReauthenticating}
+                  style={{ backgroundColor: '#0f766e', borderRadius: AppRadius.md, paddingVertical: 10, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>{isReauthenticating ? 'Verifying...' : 'Re-authenticate Now'}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             {requiresKycReverification ? (
               <View style={{ marginTop: 6, marginBottom: 10 }}>

@@ -48,6 +48,7 @@ const SUBSCRIPTION_PLAN_CONFIG = {
   premium: { amount: 99, durationDays: 30, acceptLimit: null, badge: 'Premium' },
 };
 const MOBILE_SCHEME = process.env.MOBILE_APP_SCHEME || 'connecthub';
+const RECENT_AUTH_MAX_AGE_SECONDS = Number(process.env.RECENT_AUTH_MAX_AGE_SECONDS || 10 * 60);
 const BLOCKED_EMAIL_DOMAINS = new Set([
   'mailinator.com',
   'guerrillamail.com',
@@ -226,6 +227,16 @@ function maskIdentifier(value) {
   const raw = String(value || '');
   if (raw.length <= 4) return raw;
   return raw.slice(0, 2) + '*'.repeat(Math.max(0, raw.length - 4)) + raw.slice(-2);
+}
+
+function hasRecentAuth(decodedToken, maxAgeSeconds = RECENT_AUTH_MAX_AGE_SECONDS) {
+  const authTimeSeconds = Number(decodedToken?.auth_time || 0);
+  if (!Number.isFinite(authTimeSeconds) || authTimeSeconds <= 0) {
+    return false;
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return (nowSeconds - authTimeSeconds) <= maxAgeSeconds;
 }
 
 function isAdminEmail(email) {
@@ -3493,6 +3504,17 @@ app.post('/profile/username/change', requireAuth, async (req, res) => {
     const email = String(req.userEmail || req.user?.email || '').trim().toLowerCase();
     if (!email) {
       return sendError(res, req, 401, 'missing_user_email', 'Unable to determine user email');
+    }
+
+    if (!hasRecentAuth(req.user)) {
+      return sendError(
+        res,
+        req,
+        401,
+        'recent_login_required',
+        'For security, please re-authenticate and try again.',
+        { reauthWindowSeconds: RECENT_AUTH_MAX_AGE_SECONDS }
+      );
     }
 
     const newUsername = String(req.body?.newUsername || '').trim();
