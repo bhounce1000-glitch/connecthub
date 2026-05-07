@@ -43,6 +43,15 @@ function isBlockedEmail(emailValue) {
   return BLOCKED_DOMAINS.includes(domain);
 }
 
+function validateUsername(value) {
+  const v = String(value || '').trim();
+  if (!v) return 'Username is required.';
+  if (v.length < 3) return 'Username must be at least 3 characters.';
+  if (v.length > 40) return 'Username must be 40 characters or fewer.';
+  if (!/^[a-zA-Z0-9 _.-]+$/.test(v)) return 'Only letters, numbers, spaces, underscores, hyphens, and dots allowed.';
+  return null;
+}
+
 function getPasswordStrength(passwordValue) {
   const value = String(passwordValue || '');
   if (value.length < 8 || !/[0-9]/.test(value)) {
@@ -90,6 +99,7 @@ export default function Auth() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [role, setRole] = useState(USER_ROLES.CUSTOMER);
   const [referralInput, setReferralInput] = useState('');
@@ -263,6 +273,11 @@ export default function Auth() {
       nextErrors.email = 'Please use a real email address to sign up.';
     }
 
+    if (!isLogin) {
+      const usernameError = validateUsername(username);
+      if (usernameError) nextErrors.username = usernameError;
+    }
+
     if (!password) {
       nextErrors.password = 'Please provide your password.';
     } else if (password.length < 8) {
@@ -352,12 +367,24 @@ export default function Auth() {
         throw new Error('Too many signup attempts. Please wait 5 minutes.');
       }
 
+      // Check username uniqueness before creating the account
+      const trimmedUsername = username.trim();
+      const usernameLower = trimmedUsername.toLowerCase();
+      const usernameSnap = await getDocs(
+        query(collection(db, 'users'), where('usernameLower', '==', usernameLower))
+      );
+      if (!usernameSnap.empty) {
+        throw new Error('That username is already taken. Please choose a different one.');
+      }
+
       await recordSignupAttempt();
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
       // Seed a user document so profile data is immediately available (role stored here)
       await ensureUserDocument(credential.user, {
         role,
+        username: trimmedUsername,
+        usernameLower,
         onboardingDone: false,
       });
 
@@ -517,6 +544,20 @@ export default function Auth() {
         <Text style={{ fontSize: AppType.body, color: '#475569', marginBottom: AppSpace.lg }}>
           Use the same credentials across requests, payments, chat, and ratings.
         </Text>
+
+        {/* Username — shown only during sign-up */}
+        {!isLogin && (
+          <AppInput
+            label="Username / Display Name"
+            placeholder="e.g. John Mensah or Mensah Plumbing Co."
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="words"
+            editable={!isSubmitting}
+            error={fieldErrors.username}
+            inputStyle={{ backgroundColor: AppColors.slate50 }}
+          />
+        )}
 
         {/* Role picker — shown only during sign-up */}
         {!isLogin && (

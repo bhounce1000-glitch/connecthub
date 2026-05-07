@@ -423,7 +423,13 @@ export default function Home() {
   }, []);
 
   const firstName = useMemo(() => {
-    const raw = String(userProfiles[currentEmail]?.displayName || userProfiles[currentEmail]?.name || currentEmail.split('@')[0] || 'there').trim();
+    const raw = String(
+      userProfiles[currentEmail]?.username ||
+      userProfiles[currentEmail]?.displayName ||
+      userProfiles[currentEmail]?.name ||
+      currentEmail.split('@')[0] ||
+      'there'
+    ).trim();
     return raw.split(/\s+/)[0] || 'there';
   }, [currentEmail, userProfiles]);
 

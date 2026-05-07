@@ -212,7 +212,7 @@ export default function Profile() {
               </View>
             </View>
           </Pressable>
-          <Text style={{ color: '#fff', marginTop: 12, fontWeight: '900', fontSize: 22 }}>{profile?.name || currentEmail.split('@')[0]}</Text>
+          <Text style={{ color: '#fff', marginTop: 12, fontWeight: '900', fontSize: 22 }}>{profile?.username || profile?.name || currentEmail.split('@')[0]}</Text>
           <Text style={{ color: '#cbd5e1', marginTop: 4, fontSize: 13 }}>{currentEmail}</Text>
           <Text style={{ color: '#cbd5e1', marginTop: 4, fontSize: 12 }}>Joined {joinedDate}</Text>
         </View>
