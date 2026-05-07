@@ -87,10 +87,54 @@ const BLOCKED_DOMAINS_SERVER = [
 ];
 const BLOCKED_EMAIL_DOMAINS = new Set(BLOCKED_DOMAINS_SERVER);
 const BLOCKED_DOMAIN_KEYWORDS = ['mailinator', 'guerrilla', 'tempmail', 'throwaway', 'disposable', 'trashmail', 'yopmail'];
-const ENCRYPTION_KEY = String(process.env.ENCRYPTION_KEY || '').trim();
-const IV_LENGTH = 16;
-const otpStore = new Map();
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY) {
+  console.error('CRITICAL: ENCRYPTION_KEY environment variable is not set!');
+  console.error('Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\').slice(0,32))"');
+  console.error('Add it to your Render dashboard environment variables.');
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn('Using temporary key for development only');
+  }
+}
 
+const REQUIRED_ENV_VARS = [
+  'PAYSTACK_SECRET',
+  'ENCRYPTION_KEY',
+  'ADMIN_EMAIL',
+];
+
+function checkEnvVars() {
+  const missing = [];
+
+  for (const varName of REQUIRED_ENV_VARS) {
+    if (!process.env[varName]) {
+      missing.push(varName);
+    }
+  }
+
+  if (missing.length > 0) {
+    console.error('=== MISSING ENVIRONMENT VARIABLES ===');
+    console.error('These must be set in Render dashboard:');
+    missing.forEach((v) => console.error('  - ' + v));
+    console.error('=====================================');
+  } else {
+    console.log('✅ All required environment variables are set');
+  }
+
+  return missing.length === 0;
+}
+
+checkEnvVars();
+
+const IV_LENGTH = 16;
+const OTP_COLLECTION = 'otp_verifications';
+
+// NOTE FOR SCALING: The SimpleCache below is in-memory.
+// It works fine for single-instance deployment (Render free/starter tier).
+// When you scale to multiple instances (Pro tier), replace with:
+// - Redis (Upstash has a free tier: https://upstash.com)
+// - OR keep Firestore for cached data with short TTLs
+// For now the cache is safe for your current traffic level.
 class SimpleCache {
   constructor() {
     this.store = new Map();
@@ -292,16 +336,87 @@ function isBlockedEmail(email) {
   return BLOCKED_DOMAIN_KEYWORDS.some((keyword) => domain.includes(keyword));
 }
 
+async function storeOTP(email, otp, phone) {
+  const expires = Date.now() + 10 * 60 * 1000;
+  await adminDb.collection(OTP_COLLECTION).doc(email).set({
+    otp,
+    phone: phone || '',
+    expires,
+    verified: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+async function getOTP(email) {
+  const otpDoc = await adminDb.collection(OTP_COLLECTION).doc(email).get();
+  if (!otpDoc.exists) return null;
+  const data = otpDoc.data() || {};
+  if (Date.now() > Number(data.expires || 0)) {
+    await adminDb.collection(OTP_COLLECTION).doc(email).delete().catch(() => {});
+    return null;
+  }
+  return data;
+}
+
+async function markOTPVerified(email) {
+  await adminDb.collection(OTP_COLLECTION).doc(email).set({
+    verified: true,
+    verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  setTimeout(async () => {
+    try {
+      await adminDb.collection(OTP_COLLECTION).doc(email).delete();
+    } catch (_) {
+      // ignore cleanup failure
+    }
+  }, 5 * 60 * 1000);
+}
+
+async function deleteOTP(email) {
+  try {
+    await adminDb.collection(OTP_COLLECTION).doc(email).delete();
+  } catch (_) {
+    // ignore cleanup failure
+  }
+}
+
+async function cleanupExpiredOTPs() {
+  try {
+    const expired = await adminDb.collection(OTP_COLLECTION)
+      .where('expires', '<', Date.now())
+      .limit(200)
+      .get();
+
+    if (expired.empty) {
+      return;
+    }
+
+    const batch = adminDb.batch();
+    expired.docs.forEach((docSnap) => batch.delete(docSnap.ref));
+    await batch.commit();
+    logger.info({ removed: expired.size }, 'OTP_CLEANUP_COMPLETE');
+  } catch (error) {
+    logger.error({ err: error }, 'OTP_CLEANUP_ERROR');
+  }
+}
+
 function normalizeEncryptionKeyBuffer() {
-  const base = ENCRYPTION_KEY || 'connecthub-default-encryption-key-change-me';
-  return crypto.createHash('sha256').update(base).digest();
+  const devFallback = 'connecthub-dev-fallback-only-key';
+  const secret = ENCRYPTION_KEY || (process.env.NODE_ENV !== 'production' ? devFallback : '');
+  if (!secret) {
+    return null;
+  }
+  return crypto.createHash('sha256').update(secret).digest();
 }
 
 function encryptField(text) {
   if (!text) return text;
   try {
+    const keyBuffer = normalizeEncryptionKeyBuffer();
+    if (!keyBuffer) return text;
     const iv = crypto.randomBytes(IV_LENGTH);
-    const cipher = crypto.createCipheriv('aes-256-cbc', normalizeEncryptionKeyBuffer(), iv);
+    const cipher = crypto.createCipheriv('aes-256-cbc', keyBuffer, iv);
     let encrypted = cipher.update(String(text));
     encrypted = Buffer.concat([encrypted, cipher.final()]);
     return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
@@ -314,10 +429,12 @@ function encryptField(text) {
 function decryptField(text) {
   if (!text || !String(text).includes(':')) return text;
   try {
+    const keyBuffer = normalizeEncryptionKeyBuffer();
+    if (!keyBuffer) return text;
     const [ivHex, encryptedHex] = String(text).split(':');
     const iv = Buffer.from(ivHex, 'hex');
     const encrypted = Buffer.from(encryptedHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', normalizeEncryptionKeyBuffer(), iv);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, iv);
     let decrypted = decipher.update(encrypted);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     return decrypted.toString();
@@ -1556,8 +1673,7 @@ app.post('/auth/send-otp', async (req, res) => {
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expires = Date.now() + 10 * 60 * 1000;
-    otpStore.set(email, { otp, expires, phone: normalizedPhone, verified: false });
+    await storeOTP(email, otp, normalizedPhone);
 
     if (!isEmailConfigured()) {
       return sendError(res, req, 503, 'email_not_configured', 'Verification email service is not configured');
@@ -1591,22 +1707,36 @@ app.post('/auth/verify-otp', async (req, res) => {
       return sendError(res, req, 400, 'missing_verify_fields', 'Email and OTP are required');
     }
 
-    const stored = otpStore.get(email);
+    const stored = await getOTP(email);
     if (!stored) {
       return sendError(res, req, 400, 'otp_not_found', 'No verification code found. Request a new one.');
     }
 
-    if (Date.now() > Number(stored.expires || 0)) {
-      otpStore.delete(email);
-      return sendError(res, req, 400, 'otp_expired', 'Verification code expired. Request a new one.');
+    // Existing registered users should never be blocked by signup OTP gate.
+    const authUser = await admin.auth().getUserByEmail(email).catch((error) => {
+      if (error?.code === 'auth/user-not-found') return null;
+      throw error;
+    });
+    if (authUser) {
+      await adminDb.collection('users').doc(email).set({
+        phoneVerified: true,
+        verifiedPhone: String(stored.phone || ''),
+        phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      await deleteOTP(email);
+      return sendSuccess(res, req, { message: 'Account already registered; OTP verification skipped.' });
     }
 
     if (stored.otp !== otp) {
       return sendError(res, req, 400, 'otp_mismatch', 'Incorrect code. Please check and try again.');
     }
 
-    otpStore.set(email, { ...stored, verified: true });
-    setTimeout(() => otpStore.delete(email), 5 * 60 * 1000);
+    await markOTPVerified(email);
+    await adminDb.collection('users').doc(email).set({
+      phoneVerified: true,
+      verifiedPhone: String(stored.phone || ''),
+      phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
 
     return sendSuccess(res, req, { message: 'Phone verified successfully' });
   } catch (error) {
@@ -1896,6 +2026,7 @@ async function checkWithdrawalFraud(email, amount) {
       count: recentCount,
       amount,
       resolved: false,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
@@ -1920,6 +2051,7 @@ async function checkWithdrawalFraud(email, amount) {
       amount,
       balance,
       resolved: false,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   }
@@ -1941,6 +2073,7 @@ async function checkJobSpam(email) {
       email,
       count: recentCount,
       resolved: false,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return { blocked: true, message: 'Too many job posts in a short time. Please wait before posting again.' };
@@ -3593,7 +3726,7 @@ app.get('/admin/activity-logs', requireAuth, requireAdmin, async (req, res) => {
 
 app.get('/admin/fraud-alerts', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const alertsSnap = await adminDb.collection('fraudAlerts').orderBy('createdAt', 'desc').limit(50).get();
+    const alertsSnap = await adminDb.collection('fraudAlerts').orderBy('timestamp', 'desc').limit(50).get();
     const rows = alertsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
     return sendSuccess(res, req, { data: rows });
   } catch (error) {
@@ -3730,14 +3863,17 @@ function scheduleDailySubscriptionSweep() {
 
   setTimeout(() => {
     expireDueSubscriptions();
+    cleanupExpiredOTPs();
     setInterval(() => {
       expireDueSubscriptions();
+      cleanupExpiredOTPs();
     }, 24 * 60 * 60 * 1000);
   }, delayMs);
 }
 
 scheduleDailySubscriptionSweep();
 expireDueSubscriptions();
+cleanupExpiredOTPs();
 
 app.post('/admin/sync-claims', requireAdminOrBootstrapSecret, async (req, res) => {
   try {

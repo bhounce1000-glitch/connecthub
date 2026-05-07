@@ -113,6 +113,11 @@ service cloud.firestore {
       allow read, write: if isOwner(email) || isAdmin();
     }
 
+    match /otp_verifications/{email} {
+      allow read: if isOwner(email);
+      allow write: if false;
+    }
+
     match /fraudAlerts/{alertId} {
       allow read, write: if isAdmin();
     }

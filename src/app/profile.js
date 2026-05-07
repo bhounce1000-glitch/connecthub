@@ -581,6 +581,9 @@ export default function Profile() {
             <TouchableOpacity onPress={() => router.push('/help')} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
               <Text style={{ color: AppColors.ink900 }}>Help & Support  →</Text>
             </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/terms')} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
+              <Text style={{ color: AppColors.ink900 }}>Terms of Service  →</Text>
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => router.push('/privacy-policy')} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
               <Text style={{ color: AppColors.ink900 }}>Privacy Policy  →</Text>
             </TouchableOpacity>

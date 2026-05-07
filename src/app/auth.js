@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Platform, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppInput from '../components/ui/app-input';
@@ -152,6 +152,7 @@ export default function Auth() {
   const [otpCode, setOtpCode] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [otpCooldown, setOtpCooldown] = useState(0);
+  const [otpExpiry, setOtpExpiry] = useState(600);
   const passwordStrength = getPasswordStrength(password);
 
   const [request, response, promptAsync] = Google.useAuthRequest({
@@ -232,6 +233,32 @@ export default function Auth() {
     const timeout = setTimeout(() => setOtpCooldown((prev) => Math.max(0, prev - 1)), 1000);
     return () => clearTimeout(timeout);
   }, [otpCooldown]);
+
+  useEffect(() => {
+    if (!otpSent) return undefined;
+
+    setOtpExpiry(600);
+    const interval = setInterval(() => {
+      setOtpExpiry((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setOtpSent(false);
+          setSignupStep(1);
+          setNotice({ tone: 'warning', title: 'Code expired', message: 'Your verification code expired. Please request a new one.' });
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [otpSent]);
+
+  const formatExpiry = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? `0${s}` : s}`;
+  };
 
   const makeReferralCode = (emailValue) => {
     const local = String(emailValue || '').split('@')[0].replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase();
@@ -394,6 +421,7 @@ export default function Auth() {
       setOtpSent(true);
       setSignupStep(2);
       setOtpCooldown(60);
+      setOtpCode('');
       setNotice({ tone: 'success', title: 'Code sent', message: `A 6-digit verification code was sent to ${normalizedEmail}.` });
       return true;
     } catch (error) {
@@ -725,6 +753,14 @@ export default function Auth() {
           Use the same credentials across requests, payments, chat, and ratings.
         </Text>
 
+        {!isLogin ? (
+          <View style={{ marginBottom: AppSpace.sm }}>
+            <Text style={{ color: '#1e293b', fontWeight: '800', fontSize: 13 }}>
+              {signupStep === 1 ? 'Step 1 of 2: Account Details' : 'Step 2 of 2: Verify Your Phone'}
+            </Text>
+          </View>
+        ) : null}
+
         {/* Username — shown only during sign-up */}
         {!isLogin && signupStep === 1 && (
           <AppInput
@@ -810,22 +846,33 @@ export default function Auth() {
         ) : null}
 
         {!isLogin && signupStep === 1 ? (
-          <AppInput
-            label="Phone Number"
-            placeholder="0241234567"
-            value={phoneNumber}
-            onChangeText={setPhoneNumber}
-            keyboardType="phone-pad"
-            editable={!isSubmitting}
-            error={fieldErrors.phoneNumber}
-            inputStyle={{ backgroundColor: AppColors.slate50 }}
-          />
+          <>
+            <AppInput
+              label="Phone Number"
+              placeholder="0241234567"
+              value={phoneNumber}
+              onChangeText={setPhoneNumber}
+              keyboardType="phone-pad"
+              editable={!isSubmitting}
+              error={fieldErrors.phoneNumber}
+              inputStyle={{ backgroundColor: AppColors.slate50 }}
+            />
+            <Text style={{ color: '#64748b', fontSize: 12, marginTop: -6, marginBottom: 8 }}>
+              We'll send a 6-digit code to verify your phone number.
+            </Text>
+            <Text style={{ color: '#334155', fontSize: 12, marginBottom: AppSpace.sm }}>
+              We verify your phone to protect your account and prevent spam.
+            </Text>
+          </>
         ) : null}
 
         {!isLogin && signupStep === 2 ? (
           <View style={{ marginBottom: AppSpace.md }}>
-            <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 18, marginBottom: 4 }}>Verify Your Phone</Text>
-            <Text style={{ color: AppColors.ink500, marginBottom: 10 }}>Enter the 6-digit code sent to {normalizedEmail}.</Text>
+            <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 20, marginBottom: 4 }}>Step 2 of 2: Verify Your Phone</Text>
+            <Text style={{ color: AppColors.ink500, marginBottom: 4 }}>Code sent to {normalizeGhanaPhone(phoneNumber) || phoneNumber}.</Text>
+            <Text style={{ color: otpExpiry < 60 ? '#dc2626' : '#64748b', textAlign: 'center', marginBottom: 12, fontWeight: '700' }}>
+              Code expires in {formatExpiry(otpExpiry)}
+            </Text>
             <AppInput
               label="Verification Code"
               placeholder="000000"
@@ -833,7 +880,7 @@ export default function Auth() {
               onChangeText={setOtpCode}
               keyboardType="number-pad"
               editable={!isSubmitting}
-              inputStyle={{ backgroundColor: AppColors.slate50, textAlign: 'center', letterSpacing: 6 }}
+              inputStyle={{ backgroundColor: AppColors.slate50, textAlign: 'center', letterSpacing: 8, fontSize: 26, fontWeight: '700' }}
             />
             <TouchableOpacity
               style={{ alignItems: 'center', paddingVertical: 8 }}
@@ -841,7 +888,7 @@ export default function Auth() {
               onPress={handleSendOTP}
             >
               <Text style={{ color: otpCooldown > 0 ? '#94a3b8' : '#2563eb', fontWeight: '700' }}>
-                {otpCooldown > 0 ? `Resend in ${otpCooldown}s` : 'Resend verification code'}
+                {otpCooldown > 0 ? `Resend Code in ${otpCooldown}s` : 'Resend Code'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -849,7 +896,7 @@ export default function Auth() {
               onPress={() => setSignupStep(1)}
               disabled={isSubmitting}
             >
-              <Text style={{ color: '#475569', fontWeight: '600' }}>Back to sign up details</Text>
+              <Text style={{ color: '#475569', fontWeight: '600' }}>Back</Text>
             </TouchableOpacity>
           </View>
         ) : null}
@@ -879,7 +926,7 @@ export default function Auth() {
         )}
 
         <AppButton
-          label={isLogin ? 'Login' : (signupStep === 1 ? 'Send Verification Code' : 'Verify & Create Account')}
+          label={isLogin ? 'Login' : (signupStep === 1 ? 'Send Code' : 'Verify & Create Account')}
           variant="neutral"
           onPress={isLogin ? handleLogin : handleSignup}
           disabled={!normalizedEmail || !password}
@@ -889,12 +936,16 @@ export default function Auth() {
         />
 
         {!isLogin ? (
-          <Text style={{ textAlign: 'center', color: '#64748b', fontSize: 12, marginBottom: AppSpace.sm }}>
-            By signing up, you agree to our{' '}
-            <Text style={{ color: '#1d4ed8', fontWeight: '700' }} onPress={() => router.push('/terms')}>Terms</Text>
-            {' '}and{' '}
-            <Text style={{ color: '#1d4ed8', fontWeight: '700' }} onPress={() => Linking.openURL('https://connecthub-1873e.web.app/privacy-policy.html')}>Privacy Policy</Text>.
-          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 16, marginBottom: AppSpace.sm }}>
+            <Text style={{ color: '#64748b', fontSize: 12 }}>By signing up you agree to our </Text>
+            <TouchableOpacity onPress={() => router.push('/terms')}>
+              <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '600' }}>Terms of Service</Text>
+            </TouchableOpacity>
+            <Text style={{ color: '#64748b', fontSize: 12 }}> and </Text>
+            <TouchableOpacity onPress={() => router.push('/privacy-policy')}>
+              <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '600' }}>Privacy Policy</Text>
+            </TouchableOpacity>
+          </View>
         ) : null}
 
         {isLogin ? (
@@ -987,7 +1038,7 @@ export default function Auth() {
 
         <TouchableOpacity
           style={{ paddingVertical: AppSpace.xs }}
-          onPress={() => Linking.openURL('https://connecthub-1873e.web.app/privacy-policy.html')}
+          onPress={() => router.push('/privacy-policy')}
           disabled={isSubmitting}
         >
           <Text style={{ textAlign: 'center', color: '#64748b', fontSize: 12 }}>Privacy Policy</Text>

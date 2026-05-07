@@ -175,6 +175,15 @@ export default function HelpSupport() {
         variant="neutral"
         onPress={() => router.back()}
       />
+
+      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 14, marginTop: 14 }}>
+        <TouchableOpacity onPress={() => router.push('/terms')}>
+          <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>Terms of Service</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push('/privacy-policy')}>
+          <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>Privacy Policy</Text>
+        </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }

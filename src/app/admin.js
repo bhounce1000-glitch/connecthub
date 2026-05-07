@@ -1,6 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
-import { addDoc, collection, doc, getDoc, limit, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -98,7 +98,8 @@ export default function Admin() {
   const [providerProfileMap, setProviderProfileMap] = useState({});
   const [analytics, setAnalytics] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [adminLogs, setAdminLogs] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
   const [fraudAlerts, setFraudAlerts] = useState([]);
   const [expandedRequestMap, setExpandedRequestMap] = useState({});
   const currentEmail = user?.email || '';
@@ -214,19 +215,26 @@ export default function Admin() {
 
   useEffect(() => {
     if (!isAdmin) return undefined;
-    const logsQuery = query(collection(db, 'adminLogs'), orderBy('timestamp', 'desc'), limit(20));
-    return onSnapshot(logsQuery, (snapshot) => {
-      setAdminLogs(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    return onSnapshot(collection(db, 'fraudAlerts'), (snapshot) => {
+      const toMillis = (value) => {
+        if (!value) return 0;
+        if (typeof value?.toDate === 'function') return value.toDate().getTime();
+        if (typeof value?.seconds === 'number') return value.seconds * 1000;
+        const parsed = new Date(value).getTime();
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+
+      const rows = snapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => toMillis(b.timestamp || b.createdAt) - toMillis(a.timestamp || a.createdAt));
+      setFraudAlerts(rows);
     });
   }, [isAdmin]);
 
   useEffect(() => {
-    if (!isAdmin) return undefined;
-    const alertsQuery = query(collection(db, 'fraudAlerts'), orderBy('createdAt', 'desc'), limit(50));
-    return onSnapshot(alertsQuery, (snapshot) => {
-      setFraudAlerts(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
-  }, [isAdmin]);
+    if (!isAdmin || activeTab !== 'analytics') return;
+    loadActivityLogs();
+  }, [isAdmin, activeTab]);
 
   const confirmAdminAction = (actionName, onConfirm) => {
     const promptAndRun = () => {
@@ -791,6 +799,20 @@ export default function Admin() {
     }
   };
 
+  const loadActivityLogs = async () => {
+    setActivityLoading(true);
+    try {
+      const { response, data } = await apiGet(`${API_BASE_URL}/admin/activity-logs`, { requireAuth: true });
+      if (response.ok && data?.status) {
+        setActivityLogs(Array.isArray(data.data) ? data.data : []);
+      }
+    } catch {
+      setActivityLogs([]);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
   const resolveFraudAlert = async (alertId) => {
     const key = `fraud:${alertId}:resolve`;
     setPendingAction(key);
@@ -869,6 +891,7 @@ export default function Admin() {
 
   const pendingKycCount = kycSubmissions.filter((k) => k.kycStatus === KYC_STATUS.PENDING_VERIFICATION).length;
   const openDisputeCount = disputes.filter((d) => (d.status || 'open') !== 'resolved').length;
+  const pendingFraudCount = fraudAlerts.filter((a) => !a.resolved).length;
 
   return (
     <ListScreen
@@ -895,6 +918,10 @@ export default function Admin() {
             <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
               <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Withdrawals Pending</Text>
               <Text style={{ color: '#c2410c', fontWeight: '800', fontSize: 18 }}>{pendingWithdrawalCount}</Text>
+            </AppCard>
+            <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Fraud Pending</Text>
+              <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 18 }}>{pendingFraudCount}</Text>
             </AppCard>
           </View>
 
@@ -975,7 +1002,11 @@ export default function Admin() {
             </TouchableOpacity>
 
             <TouchableOpacity
-              onPress={() => { setActiveTab('analytics'); loadAnalytics(); }}
+              onPress={() => {
+                setActiveTab('analytics');
+                loadAnalytics();
+                loadActivityLogs();
+              }}
               style={{
                 flex: 1,
                 paddingVertical: 10,
@@ -1000,7 +1031,7 @@ export default function Admin() {
               }}
             >
               <Text style={{ color: activeTab === 'fraud' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
-                Fraud ({fraudAlerts.filter((a) => !a.resolved).length})
+                Fraud ({pendingFraudCount})
               </Text>
             </TouchableOpacity>
           </View>
@@ -1128,12 +1159,17 @@ export default function Admin() {
                       <Text style={{ color: '#d97706', fontWeight: '800', fontSize: 20 }}>{analytics.users?.premiumSubscribers ?? '—'}</Text>
                     </AppCard>
                   </View>
-                  <AppButton label="Refresh Analytics" variant="neutral" onPress={loadAnalytics} loading={analyticsLoading} />
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                    <AppButton label="Refresh Analytics" variant="neutral" onPress={loadAnalytics} loading={analyticsLoading} style={{ flex: 1 }} />
+                    <AppButton label="Refresh Activity" variant="neutral" onPress={loadActivityLogs} loading={activityLoading} style={{ flex: 1 }} />
+                  </View>
 
                   <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 16, marginBottom: 10, marginTop: 16 }}>Activity Log</Text>
-                  {adminLogs.length === 0 ? (
+                  {activityLoading ? (
+                    <Text style={{ color: AppColors.ink500 }}>Loading activity logs…</Text>
+                  ) : activityLogs.length === 0 ? (
                     <Text style={{ color: AppColors.ink500 }}>No recent admin actions.</Text>
-                  ) : adminLogs.map((log) => {
+                  ) : activityLogs.map((log) => {
                     const ts = formatIsoDate(log.timestamp || log.createdAt);
                     const action = String(log.action || 'unknown');
                     const adminEmail = String(log.adminEmail || 'unknown');
