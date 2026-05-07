@@ -1376,10 +1376,28 @@ const paymentLimiter = rateLimit({
   message: { error: 'too_many_payment_requests', message: 'Too many payment requests. Please wait a moment.' },
 });
 
+const usernameChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: false, error: 'rate_limited', message: 'Too many username change attempts. Please wait before trying again.' },
+});
+
+const usernameAuditLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: false, error: 'rate_limited', message: 'Too many requests. Please wait a moment.' },
+});
+
 app.use(generalLimiter);
 app.use('/auth', authLimiter);
 app.use('/subscription', paymentLimiter);
 app.use('/wallet/withdraw', paymentLimiter);
+app.use('/profile/username/change', usernameChangeLimiter);
+app.use('/profile/username/audit', usernameAuditLimiter);
 
 const payInitLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -1991,6 +2009,134 @@ app.post('/admin/withdrawals/:id/reject', requireAuth, requireAdmin, async (req,
     }
     logger.error({ err: error }, 'ADMIN_WITHDRAWAL_REJECT_ERROR');
     return sendError(res, req, 500, 'withdrawal_reject_failed', 'Could not reject withdrawal');
+  }
+});
+
+const WITHDRAWAL_SLA_HOURS = Number(process.env.WITHDRAWAL_SLA_HOURS || 24);
+const CRON_SECRET = String(process.env.CRON_SECRET || '');
+
+/**
+ * POST /admin/withdrawals/auto-refund-overdue
+ * Called by a cron job (Render cron or external scheduler).
+ * Finds all withdrawals in `pending_admin_approval` older than WITHDRAWAL_SLA_HOURS
+ * and atomically refunds each one — no admin action needed.
+ * Secured by CRON_SECRET header so it cannot be triggered by users.
+ */
+app.post('/admin/withdrawals/auto-refund-overdue', async (req, res) => {
+  try {
+    const providedSecret = String(req.headers['x-cron-secret'] || '').trim();
+    if (!CRON_SECRET || providedSecret !== CRON_SECRET) {
+      return sendError(res, req, 403, 'cron_forbidden', 'Invalid or missing cron secret');
+    }
+
+    const nowMs = Date.now();
+    const cutoffMs = nowMs - WITHDRAWAL_SLA_HOURS * 60 * 60 * 1000;
+    const cutoffIso = new Date(cutoffMs).toISOString();
+
+    const snap = await adminDb
+      .collection('withdrawals')
+      .where('status', '==', 'pending_admin_approval')
+      .orderBy('requestedAt', 'asc')
+      .limit(50)
+      .get();
+
+    const overdue = snap.docs.filter((docSnap) => {
+      const d = docSnap.data() || {};
+      const requestedMs = toMillis(d.requestedAt);
+      return requestedMs > 0 && requestedMs < cutoffMs;
+    });
+
+    if (!overdue.length) {
+      return sendSuccess(res, req, { message: 'No overdue withdrawals found', refunded: 0 });
+    }
+
+    const results = [];
+    for (const docSnap of overdue) {
+      const withdrawalId = docSnap.id;
+      const wd = docSnap.data() || {};
+      const userEmail = String(wd.email || '').trim().toLowerCase();
+      const amount = parseMoney(wd.amount || 0);
+      if (!userEmail || amount <= 0) {
+        results.push({ withdrawalId, skipped: true, reason: 'missing_email_or_amount' });
+        continue;
+      }
+
+      try {
+        const withdrawalRef = adminDb.collection('withdrawals').doc(withdrawalId);
+        await adminDb.runTransaction(async (tx) => {
+          const fresh = await tx.get(withdrawalRef);
+          const freshData = fresh.data() || {};
+          if (String(freshData.status || '') !== 'pending_admin_approval') {
+            throw Object.assign(new Error('already_processed'), { skip: true });
+          }
+          const userRef = adminDb.collection('users').doc(userEmail);
+          tx.set(userRef, {
+            walletBalance: admin.firestore.FieldValue.increment(amount),
+            updatedAt: new Date().toISOString(),
+          }, { merge: true });
+          tx.set(withdrawalRef, {
+            status: 'rejected',
+            processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            processedBy: 'system_auto_refund',
+            notes: `Auto-refunded: exceeded ${WITHDRAWAL_SLA_HOURS}h SLA window (cutoff ${cutoffIso})`,
+          }, { merge: true });
+        });
+
+        const txSnap = await adminDb.collection('transactions').where('withdrawalId', '==', withdrawalId).limit(5).get();
+        await Promise.all(txSnap.docs.map((d) => d.ref.set({ status: 'failed', updatedAt: new Date().toISOString() }, { merge: true })));
+
+        await notifyUser(
+          userEmail,
+          `Your withdrawal of GHS ${amount.toFixed(2)} exceeded our processing window and was automatically refunded to your wallet.`,
+          'Withdrawal Auto-Refunded',
+          { screen: 'wallet' }
+        );
+
+        if (isEmailConfigured()) {
+          const userDoc = await adminDb.collection('users').doc(userEmail).get();
+          const displayName = userDoc.exists ? (userDoc.data()?.displayName || userEmail) : userEmail;
+          await sendPaymentReceiptEmail(
+            userEmail,
+            displayName,
+            'Withdrawal Auto-Refunded - ConnectHub',
+            `<p>Hi ${displayName},</p>
+             <p>Your withdrawal request exceeded our processing SLA of ${WITHDRAWAL_SLA_HOURS} hours and was automatically refunded.</p>
+             <table style="width:100%;border-collapse:collapse;">
+               <tr><td style="padding:8px;"><b>Amount</b></td><td>GHS ${amount.toFixed(2)}</td></tr>
+               <tr><td style="padding:8px;"><b>Network</b></td><td>${String(wd.provider || '')}</td></tr>
+               <tr><td style="padding:8px;"><b>Reference</b></td><td>${String(wd.reference || withdrawalId)}</td></tr>
+               <tr><td style="padding:8px;"><b>Refunded at</b></td><td>${new Date().toISOString()}</td></tr>
+             </table>
+             <p>Please submit a new withdrawal request.</p>`
+          ).catch((err) => logger.warn({ err, userEmail }, 'AUTO_REFUND_EMAIL_FAILED'));
+        }
+
+        await logAdminAction('system_auto_refund', 'withdrawal_auto_refunded', {
+          withdrawalId,
+          targetEmail: userEmail,
+          amount,
+          slaHours: WITHDRAWAL_SLA_HOURS,
+        });
+
+        results.push({ withdrawalId, refunded: true, userEmail, amount });
+      } catch (itemErr) {
+        if (itemErr?.skip) {
+          results.push({ withdrawalId, skipped: true, reason: 'already_processed' });
+        } else {
+          logger.error({ err: itemErr, withdrawalId }, 'AUTO_REFUND_ITEM_ERROR');
+          results.push({ withdrawalId, error: itemErr?.message || 'unknown_error' });
+        }
+      }
+    }
+
+    const refundedCount = results.filter((r) => r.refunded).length;
+    const skippedCount = results.filter((r) => r.skipped).length;
+    const errorCount = results.filter((r) => r.error).length;
+    logger.info({ refundedCount, skippedCount, errorCount, cutoffIso }, 'AUTO_REFUND_COMPLETE');
+    return sendSuccess(res, req, { message: 'Auto-refund complete', refunded: refundedCount, skipped: skippedCount, errors: errorCount, results });
+  } catch (error) {
+    logger.error({ err: error }, 'AUTO_REFUND_OVERDUE_ERROR');
+    return sendError(res, req, 500, 'auto_refund_failed', 'Auto-refund process failed');
   }
 });
 

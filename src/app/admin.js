@@ -505,6 +505,21 @@ export default function Admin() {
       .reduce((sum, w) => sum + Number(w.amount || 0), 0),
     [withdrawals]
   );
+
+  const SLA_HOURS = 24;
+  const overdueWithdrawals = useMemo(() => {
+    const cutoffMs = Date.now() - SLA_HOURS * 60 * 60 * 1000;
+    return withdrawals.filter((w) => {
+      if (String(w.status || '') !== 'pending_admin_approval') return false;
+      const raw = w.requestedAt || w.createdAt;
+      if (!raw) return false;
+      const ms = typeof raw?.toDate === 'function' ? raw.toDate().getTime()
+        : typeof raw?.seconds === 'number' ? raw.seconds * 1000
+        : new Date(raw).getTime();
+      return Number.isFinite(ms) && ms < cutoffMs;
+    });
+  }, [withdrawals]);
+
   const filteredWithdrawals = useMemo(() => {
     if (withdrawalFilter === 'all') return withdrawals;
     if (withdrawalFilter === 'pending') return withdrawals.filter((w) => String(w.status || '') === 'pending_admin_approval');
@@ -612,6 +627,41 @@ export default function Admin() {
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Mark Paid', onPress: runBulkMarkPaid },
+      ]
+    );
+  };
+
+  const runAutoRefundOverdue = async () => {
+    Alert.alert(
+      'Auto-Refund Overdue',
+      `This will automatically refund all ${overdueWithdrawals.length} withdrawal(s) that have been pending for more than ${SLA_HOURS} hours. Are you sure?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Run Auto-Refund',
+          style: 'destructive',
+          onPress: async () => {
+            setPendingAction('withdrawal:auto-refund');
+            try {
+              const cronSecret = process.env.EXPO_PUBLIC_CRON_SECRET || '';
+              const { response, data } = await apiPost('/admin/withdrawals/auto-refund-overdue', {}, {
+                headers: { 'x-cron-secret': cronSecret },
+              });
+              if (!response.ok || !data?.status) {
+                throw new Error(data?.message || 'Auto-refund request failed');
+              }
+              setNotice({
+                tone: 'success',
+                title: 'Auto-Refund Complete',
+                message: `Refunded: ${data?.refunded ?? 0} • Skipped: ${data?.skipped ?? 0} • Errors: ${data?.errors ?? 0}`,
+              });
+            } catch (err) {
+              setNotice({ tone: 'error', title: 'Auto-Refund Failed', message: err?.message || 'Could not run auto-refund.' });
+            } finally {
+              setPendingAction(null);
+            }
+          },
+        },
       ]
     );
   };
@@ -1084,6 +1134,20 @@ export default function Admin() {
                     <Text style={{ color: '#9a3412', fontSize: 13, fontWeight: '800', marginBottom: 10 }}>
                       Total Pending: GHS {pendingWithdrawalAmount.toFixed(2)}
                     </Text>
+                    {overdueWithdrawals.length > 0 ? (
+                      <View style={{ backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fca5a5', borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                        <Text style={{ color: '#b91c1c', fontWeight: '800', marginBottom: 4 }}>
+                          ⚠ {overdueWithdrawals.length} overdue ({SLA_HOURS}h+ pending)
+                        </Text>
+                        <AppButton
+                          label={pendingAction === 'withdrawal:auto-refund' ? 'Refunding…' : `Auto-Refund ${overdueWithdrawals.length} Overdue`}
+                          onPress={runAutoRefundOverdue}
+                          loading={pendingAction === 'withdrawal:auto-refund'}
+                          disabled={Boolean(pendingAction)}
+                          style={{ backgroundColor: '#b91c1c', paddingVertical: 8 }}
+                        />
+                      </View>
+                    ) : null}
                     <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                       <AppButton
                         label="Select All Pending"
@@ -1462,6 +1526,21 @@ function WithdrawalReviewCard({ item, pendingAction, onMarkPaid, onReject, isSel
       ? { bg: '#fee2e2', text: '#b91c1c', label: 'Rejected' }
       : { bg: '#ffedd5', text: '#c2410c', label: 'Pending' };
 
+  const ageMs = useMemo(() => {
+    if (!isPending) return 0;
+    const raw = item.requestedAt || item.createdAt;
+    if (!raw) return 0;
+    const ms = typeof raw?.toDate === 'function' ? raw.toDate().getTime()
+      : typeof raw?.seconds === 'number' ? raw.seconds * 1000
+      : new Date(raw).getTime();
+    return Number.isFinite(ms) ? Date.now() - ms : 0;
+  }, [isPending, item.requestedAt, item.createdAt]);
+
+  const ageHours = Math.floor(ageMs / (60 * 60 * 1000));
+  const isOverdue = isPending && ageHours >= 24;
+  const isWarning = isPending && ageHours >= 12 && ageHours < 24;
+  const cardBorderColor = isOverdue ? '#fca5a5' : isWarning ? '#fcd34d' : '#fed7aa';
+
   const askMarkPaid = () => {
     Alert.alert(
       'Confirm manual payout',
@@ -1474,14 +1553,25 @@ function WithdrawalReviewCard({ item, pendingAction, onMarkPaid, onReject, isSel
   };
 
   return (
-    <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: '#fed7aa' }}>
+    <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: cardBorderColor }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
         <View style={{ flex: 1 }}>
           <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{item.email || 'Unknown user'}</Text>
           <Text style={{ color: '#16a34a', fontWeight: '900', marginTop: 3 }}>GHS {Number(item.amount || 0).toFixed(2)}</Text>
         </View>
-        <View style={{ backgroundColor: statusMeta.bg, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
-          <Text style={{ color: statusMeta.text, fontWeight: '800', fontSize: 11 }}>{statusMeta.label}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {isOverdue ? (
+            <View style={{ backgroundColor: '#fee2e2', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 3 }}>
+              <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 10 }}>⚠ {ageHours}h OVERDUE</Text>
+            </View>
+          ) : isWarning ? (
+            <View style={{ backgroundColor: '#fef3c7', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 3 }}>
+              <Text style={{ color: '#92400e', fontWeight: '800', fontSize: 10 }}>{ageHours}h pending</Text>
+            </View>
+          ) : null}
+          <View style={{ backgroundColor: statusMeta.bg, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4 }}>
+            <Text style={{ color: statusMeta.text, fontWeight: '800', fontSize: 11 }}>{statusMeta.label}</Text>
+          </View>
         </View>
       </View>
 

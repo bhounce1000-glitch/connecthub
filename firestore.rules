@@ -175,7 +175,27 @@ service cloud.firestore {
       allow read: if isSignedIn() && (userEmail == email() || isAdmin());
       allow create: if isSignedIn() && notBanned() && isVerifiedEmail() && isNotDisposableEmail() && userEmail == email();
       allow update: if isSignedIn() && notBanned() && isVerifiedEmail() && isNotDisposableEmail() && (
-        (userEmail == email() && !('kycStatus' in request.resource.data.diff(resource.data).changedKeys()))
+        (
+          userEmail == email()
+          // Server-only fields that must never be client-modified
+          && !request.resource.data.diff(resource.data).changedKeys().hasAny([
+            'kycStatus',
+            'walletBalance',
+            'banned',
+            'subscriptionPlan',
+            'subscriptionStatus',
+            'subscriptionExpiry',
+            'signupBonusAwarded',
+            'referralEarnings',
+            'usernameChangeCount',
+            'usernameChangeLockedUntil',
+            'usernameChangeFailedAttempts',
+            'usernameUpdatedAt',
+            'usernameLastVerification',
+            'usernameSessionsRevokedAt',
+            'usernameLastChangeBy'
+          ])
+        )
         || isAdmin()
       );
       allow delete: if false;
@@ -223,6 +243,17 @@ service cloud.firestore {
     match /disputes/{disputeId} {
       allow read: if isSignedIn() && isAdmin();
       allow create, update, delete: if false;
+    }
+
+    // Username change audit logs — server-only write; no direct client read
+    match /usernameChangeLogs/{logId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // System request audit logs — server-only
+    match /request_audit_logs/{logId} {
+      allow read, write: if false;
     }
 
     match /reviewVotes/{voteId} {
