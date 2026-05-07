@@ -2,6 +2,8 @@ require('dotenv').config();
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
 const { rateLimit } = require('express-rate-limit');
 const admin = require('firebase-admin');
 const pino = require('pino');
@@ -46,6 +48,22 @@ const SUBSCRIPTION_PLAN_CONFIG = {
   premium: { amount: 99, durationDays: 30, acceptLimit: null, badge: 'Premium' },
 };
 const MOBILE_SCHEME = process.env.MOBILE_APP_SCHEME || 'connecthub';
+const BLOCKED_EMAIL_DOMAINS = new Set([
+  'mailinator.com',
+  'guerrillamail.com',
+  'tempmail.com',
+  'throwam.com',
+  'sharklasers.com',
+  'yopmail.com',
+  'trashmail.com',
+  'fakeinbox.com',
+  'dispostable.com',
+  'maildrop.cc',
+  'spamgourmet.com',
+  '10minutemail.com',
+  'example.com',
+  'test.com',
+]);
 
 function trimTrailingSlash(url) {
   return String(url || '').replace(/\/+$/, '');
@@ -68,6 +86,20 @@ app.use(cors({
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-secret'],
 }));
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://js.paystack.co'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
+      connectSrc: ["'self'", 'https://api.paystack.co', 'https://exp.host', 'https://firestore.googleapis.com', 'https://fcm.googleapis.com'],
+      frameSrc: ['https://js.paystack.co'],
+    },
+  },
+}));
+app.use(compression());
 app.use((req, res, next) => {
   const generatedId = typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -84,6 +116,41 @@ app.use(express.json({
     req.rawBody = buffer;
   },
 }));
+
+function sanitizeInput(input) {
+  if (typeof input !== 'string') {
+    return input;
+  }
+
+  return input
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .trim()
+    .slice(0, 2000);
+}
+
+function sanitizeObject(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeObject(item));
+  }
+
+  if (!value || typeof value !== 'object') {
+    return typeof value === 'string' ? sanitizeInput(value) : value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, sanitizeObject(item)])
+  );
+}
+
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    req.body = sanitizeObject(req.body);
+  }
+  next();
+});
 
 if (!admin.apps.length) {
   admin.initializeApp({
@@ -121,6 +188,11 @@ function sendError(res, req, statusCode, code, message, details = null) {
 
 function getPaystackSecret() {
   return process.env.PAYSTACK_SECRET || '';
+}
+
+function isBlockedEmail(email) {
+  const domain = String(email || '').trim().toLowerCase().split('@')[1] || '';
+  return BLOCKED_EMAIL_DOMAINS.has(domain);
 }
 
 function isAdminEmail(email) {
@@ -161,6 +233,20 @@ async function writeNotification(userEmail, text) {
     });
   } catch (error) {
     logger.error({ err: error }, 'NOTIFICATION_WRITE_ERROR');
+  }
+}
+
+async function logAdminAction(adminEmail, action, details = {}) {
+  try {
+    await adminDb.collection('adminLogs').add({
+      adminEmail: String(adminEmail || '').trim().toLowerCase() || ADMIN_EMAIL,
+      action,
+      details,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      ip: details.ip || 'unknown',
+    });
+  } catch (error) {
+    logger.error({ err: error, adminEmail, action }, 'ADMIN_LOG_WRITE_ERROR');
   }
 }
 
@@ -244,17 +330,41 @@ async function notifyUser(userEmail, text, pushTitle = 'ConnectHub', pushData = 
 
 async function requireAuth(req, res, next) {
   try {
-    const authHeader = req.headers.authorization || '';
-    const [, token] = authHeader.split(' ');
+    const authHeader = String(req.headers.authorization || '');
 
-    if (!token) {
+    if (!authHeader.startsWith('Bearer ')) {
       return sendError(res, req, 401, 'missing_bearer_token', 'Missing bearer token');
     }
 
-    const decodedToken = await admin.auth().verifyIdToken(token);
+    const token = authHeader.slice('Bearer '.length).trim();
+
+    if (!token || token.length < 10) {
+      return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token format');
+    }
+
+    const decodedToken = await admin.auth().verifyIdToken(token, true);
+    const normalizedEmail = String(decodedToken.email || '').trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return sendError(res, req, 401, 'invalid_auth_token', 'Authenticated account is missing an email');
+    }
+
+    if (isBlockedEmail(normalizedEmail)) {
+      return sendError(res, req, 403, 'blocked_email', 'This email domain is not allowed');
+    }
+
+    const userDoc = await adminDb.collection('users').doc(normalizedEmail).get();
+    if (userDoc.exists && userDoc.data()?.banned === true) {
+      return sendError(res, req, 403, 'account_banned', 'Your account has been suspended');
+    }
+
     req.user = decodedToken;
+    req.userEmail = normalizedEmail;
     return next();
   } catch (error) {
+    if (error?.code === 'auth/id-token-revoked') {
+      return sendError(res, req, 401, 'token_revoked', 'Session expired. Please log in again.');
+    }
     return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token');
   }
 }
@@ -1184,14 +1294,45 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => {
   res.json({
-    status: true,
-    message: 'Server is working',
-    uptime: process.uptime(),
+    status: 'healthy',
     timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    version: '1.0.0',
+    service: 'ConnectHub API',
   });
 });
 
 // Rate limiters
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_requests', message: 'Too many requests. Please slow down.' },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_auth_attempts', message: 'Too many auth attempts. Please wait 15 minutes.' },
+});
+
+const paymentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_payment_requests', message: 'Too many payment requests. Please wait a moment.' },
+});
+
+app.use(generalLimiter);
+app.use('/auth', authLimiter);
+app.use('/subscription', paymentLimiter);
+app.use('/wallet/withdraw', paymentLimiter);
+
 const payInitLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -1693,6 +1834,13 @@ app.post('/admin/withdrawals/:id/complete', requireAuth, requireAdmin, async (re
       );
     }
 
+    await logAdminAction(adminActor, 'withdrawal_paid', {
+      withdrawalId,
+      targetEmail: String(withdrawalData.email || '').trim().toLowerCase(),
+      amount: Number(withdrawalData.amount || 0),
+      ip: req.ip,
+    });
+
     return sendSuccess(res, req, { message: 'Withdrawal marked as paid' });
   } catch (error) {
     if (error?.statusCode && error?.errorCode) {
@@ -1779,6 +1927,14 @@ app.post('/admin/withdrawals/:id/reject', requireAuth, requireAdmin, async (req,
         `Your GHS ${amount.toFixed(2)} has been returned to your wallet.`
       );
     }
+
+    await logAdminAction(adminActor, 'withdrawal_rejected', {
+      withdrawalId,
+      targetEmail: userEmail,
+      amount,
+      reason,
+      ip: req.ip,
+    });
 
     return sendSuccess(res, req, { message: 'Withdrawal rejected and balance restored' });
   } catch (error) {
@@ -2845,6 +3001,7 @@ app.post('/admin/users/:email/ban', requireAuth, requireAdmin, async (req, res) 
 
     await writeAuditLog({ actorEmail, eventType: 'user_banned', metadata: { targetEmail, reason } });
     await writeNotification(targetEmail, 'Your account has been suspended. Contact support for assistance.');
+    await logAdminAction(actorEmail, 'user_banned', { targetEmail, reason, ip: req.ip });
 
     return sendSuccess(res, req, { message: `${targetEmail} has been banned.` });
   } catch (error) {
@@ -2870,6 +3027,7 @@ app.post('/admin/users/:email/unban', requireAuth, requireAdmin, async (req, res
 
     await writeAuditLog({ actorEmail, eventType: 'user_unbanned', metadata: { targetEmail } });
     await writeNotification(targetEmail, 'Your account suspension has been lifted. Welcome back!');
+    await logAdminAction(actorEmail, 'user_unbanned', { targetEmail, ip: req.ip });
 
     return sendSuccess(res, req, { message: `${targetEmail} has been unbanned.` });
   } catch (error) {
@@ -2923,9 +3081,23 @@ app.get('/admin/analytics', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ✅ START SERVER
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   logger.info({ url: PUBLIC_SERVER_BASE_URL, allowedOrigins: Array.from(allowedOriginSet) }, 'SERVER_STARTED');
 });
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+server.maxConnections = 10000;
+
+function gracefulShutdown(signal) {
+  logger.info({ signal }, 'SERVER_SHUTDOWN_REQUESTED');
+  server.close(() => {
+    logger.info('SERVER_STOPPED');
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // ── Keep-alive: prevent Render free tier from sleeping ──────────────────────
 const KEEP_ALIVE_URL = (process.env.BACKEND_PUBLIC_URL || 'https://connecthub-yrox.onrender.com') + '/health';

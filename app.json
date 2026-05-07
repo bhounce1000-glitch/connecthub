@@ -50,6 +50,9 @@
         "projectId": "d4466a6c-bba0-4058-b023-3a29905f133b"
       }
     },
+    "experiments": {
+      "tsconfigPaths": true
+    },
     "plugins": [
       "expo-router",
       "expo-web-browser",

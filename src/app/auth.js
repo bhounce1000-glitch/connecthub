@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
@@ -33,6 +35,40 @@ const SOCIAL_AUTH_ENABLED = {
   google: (process.env.EXPO_PUBLIC_AUTH_GOOGLE || 'true').toLowerCase() === 'true',
   facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'false').toLowerCase() === 'true',
 };
+const BLOCKED_DOMAINS = ['mailinator.com', 'guerrillamail.com', 'tempmail.com', 'throwam.com', 'sharklasers.com', 'yopmail.com', 'trashmail.com', 'fakeinbox.com', 'dispostable.com', 'maildrop.cc', 'spamgourmet.com', '10minutemail.com', 'example.com', 'test.com'];
+const SIGNUP_ATTEMPTS_KEY = 'connecthub_signup_attempts';
+
+function isBlockedEmail(emailValue) {
+  const domain = String(emailValue || '').trim().toLowerCase().split('@')[1] || '';
+  return BLOCKED_DOMAINS.includes(domain);
+}
+
+function getPasswordStrength(passwordValue) {
+  const value = String(passwordValue || '');
+  if (value.length < 8 || !/[0-9]/.test(value)) {
+    return { label: 'Weak', color: '#dc2626', width: '33%' };
+  }
+  if (!/[A-Z]/.test(value) || !/[!@#$%^&*]/.test(value)) {
+    return { label: 'Medium', color: '#ea580c', width: '66%' };
+  }
+  return { label: 'Strong', color: '#16a34a', width: '100%' };
+}
+
+async function canAttemptSignup() {
+  const raw = await AsyncStorage.getItem(SIGNUP_ATTEMPTS_KEY);
+  const now = Date.now();
+  const attempts = raw ? JSON.parse(raw) : [];
+  const recentAttempts = attempts.filter((value) => now - Number(value || 0) < 5 * 60 * 1000);
+  await AsyncStorage.setItem(SIGNUP_ATTEMPTS_KEY, JSON.stringify(recentAttempts));
+  return recentAttempts.length < 3;
+}
+
+async function recordSignupAttempt() {
+  const raw = await AsyncStorage.getItem(SIGNUP_ATTEMPTS_KEY);
+  const attempts = raw ? JSON.parse(raw) : [];
+  attempts.push(Date.now());
+  await AsyncStorage.setItem(SIGNUP_ATTEMPTS_KEY, JSON.stringify(attempts.slice(-10)));
+}
 
 function getSocialProvider(providerKey) {
   if (providerKey === 'google') {
@@ -60,6 +96,7 @@ export default function Auth() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [notice, setNotice] = useState(null);
+  const passwordStrength = getPasswordStrength(password);
 
   const [request, response, promptAsync] = Google.useAuthRequest({
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
@@ -222,6 +259,8 @@ export default function Auth() {
       nextErrors.email = 'Please provide your email address.';
     } else if (!emailPattern.test(normalizedEmail)) {
       nextErrors.email = 'Please enter a valid email address.';
+    } else if (!isLogin && isBlockedEmail(normalizedEmail)) {
+      nextErrors.email = 'Please use a real email address to sign up.';
     }
 
     if (!password) {
@@ -256,6 +295,7 @@ export default function Auth() {
 
     setIsSubmitting(true);
     setNotice(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     try {
       const loginCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
@@ -300,8 +340,19 @@ export default function Auth() {
 
     setIsSubmitting(true);
     setNotice(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     try {
+      if (isBlockedEmail(normalizedEmail)) {
+        throw new Error('Please use a real email address to sign up.');
+      }
+
+      const allowed = await canAttemptSignup();
+      if (!allowed) {
+        throw new Error('Too many signup attempts. Please wait 5 minutes.');
+      }
+
+      await recordSignupAttempt();
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
       // Seed a user document so profile data is immediately available (role stored here)
@@ -339,7 +390,7 @@ export default function Auth() {
       setNotice({
         tone: 'error',
         title: 'Signup failed',
-        message: signupMessage,
+        message: error?.message || signupMessage,
       });
     } finally {
       setIsSubmitting(false);
@@ -532,6 +583,17 @@ export default function Auth() {
           error={fieldErrors.password}
           inputStyle={{ backgroundColor: AppColors.slate50, marginBottom: 2 }}
         />
+
+        {!isLogin ? (
+          <View style={{ marginBottom: AppSpace.md }}>
+            <View style={{ height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', overflow: 'hidden' }}>
+              <View style={{ width: password ? passwordStrength.width : '0%', height: '100%', backgroundColor: passwordStrength.color }} />
+            </View>
+            <Text style={{ marginTop: 6, color: password ? passwordStrength.color : '#94a3b8', fontSize: 12, fontWeight: '700' }}>
+              Password strength: {password ? passwordStrength.label : 'Enter a password'}
+            </Text>
+          </View>
+        ) : null}
 
         {!isLogin && (
           <AppInput

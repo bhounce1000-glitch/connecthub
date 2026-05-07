@@ -23,6 +23,16 @@ const STATUS_STYLE = {
   [REQUEST_STATUS.PAID]: { border: '#16a34a', badgeBg: '#dcfce7', badgeText: '#166534', label: 'Paid' },
   [REQUEST_STATUS.CANCELLED]: { border: '#64748b', badgeBg: '#f1f5f9', badgeText: '#475569', label: 'Cancelled' },
 };
+const AVATAR_COLORS = ['#dbeafe', '#fef3c7', '#dcfce7', '#ede9fe', '#fee2e2', '#e0f2fe'];
+
+function postedAgo(value) {
+  const ms = value?.seconds ? value.seconds * 1000 : new Date(value || 0).getTime();
+  if (!ms || Number.isNaN(ms)) return 'Posted recently';
+  const diffDays = Math.max(0, Math.floor((Date.now() - ms) / (24 * 60 * 60 * 1000)));
+  if (diffDays === 0) return 'Posted today';
+  if (diffDays === 1) return 'Posted 1 day ago';
+  return `Posted ${diffDays} days ago`;
+}
 
 function EmptyState({ emoji, title, subtitle, actionLabel, onAction }) {
   return (
@@ -179,6 +189,7 @@ export default function MyRequests() {
           const categoryIcon = CATEGORY_ICONS[item.category] || '✨';
           const locationLabel = getLocationLabel(item.location) || item.locationText || 'N/A';
           const providerEmail = item.acceptedBy || '';
+          const avatarBg = providerEmail ? AVATAR_COLORS[(providerEmail.charCodeAt(0) || 0) % AVATAR_COLORS.length] : '#dbeafe';
 
           return (
             <AppCard style={{ marginBottom: 12, borderLeftWidth: 4, borderLeftColor: style.border, ...AppShadow.card }}>
@@ -197,12 +208,13 @@ export default function MyRequests() {
 
               <Text style={{ marginTop: 8, color: '#475569', fontSize: 13 }}>📍 {locationLabel}</Text>
               <Text style={{ marginTop: 4, color: '#166534', fontWeight: '900', fontSize: 16 }}>GHS {Number(item.price || 0).toFixed(2)}</Text>
+              <Text style={{ marginTop: 4, color: '#94a3b8', fontSize: 12 }}>{postedAgo(item.createdAt)}</Text>
 
               {!providerEmail ? (
                 <Text style={{ marginTop: 8, color: '#c2410c', fontWeight: '800' }}>Seeking Provider...</Text>
               ) : (
                 <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center' }}>
-                  <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dbeafe', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                  <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
                     <Text style={{ color: '#1d4ed8', fontWeight: '800' }}>{String(providerEmail).charAt(0).toUpperCase()}</Text>
                   </View>
                   <Text style={{ color: '#475569', fontSize: 13 }}>{providerEmail}</Text>

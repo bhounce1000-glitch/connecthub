@@ -24,6 +24,15 @@ service cloud.firestore {
       return email() in ['bhounce1000@gmail.com'];
     }
 
+    function isVerifiedEmail() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isNotDisposableEmail() {
+      let userEmail = email();
+      return !(userEmail.matches('.*@(mailinator|guerrillamail|tempmail|throwam|sharklasers|yopmail|trashmail|fakeinbox|dispostable|maildrop|spamgourmet|10minutemail|example|test)\\..*'));
+    }
+
     function isBanned() {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/users/$(email())) &&
@@ -68,6 +77,8 @@ service cloud.firestore {
 
       allow create: if isSignedIn()
         && notBanned()
+        && isVerifiedEmail()
+        && isNotDisposableEmail()
         && request.resource.data.keys().hasAll(['title', 'location', 'price', 'user', 'acceptedBy', 'status', 'paid', 'createdAt'])
         && request.resource.data.keys().hasOnly(['title', 'location', 'price', 'image', 'description', 'category', 'urgency', 'preferredDate', 'user', 'acceptedBy', 'status', 'paid', 'rating', 'review', 'createdAt'])
         && request.resource.data.title is string
@@ -82,7 +93,7 @@ service cloud.firestore {
 
       allow delete: if false;
 
-      allow update: if isSignedIn() && notBanned() && (
+      allow update: if isSignedIn() && notBanned() && isVerifiedEmail() && (
         isAdmin()
 
         || (
@@ -162,8 +173,8 @@ service cloud.firestore {
 
     match /users/{userEmail} {
       allow read: if isSignedIn() && (userEmail == email() || isAdmin());
-      allow create: if isSignedIn() && notBanned() && userEmail == email();
-      allow update: if isSignedIn() && notBanned() && (
+      allow create: if isSignedIn() && notBanned() && isVerifiedEmail() && isNotDisposableEmail() && userEmail == email();
+      allow update: if isSignedIn() && notBanned() && isVerifiedEmail() && isNotDisposableEmail() && (
         (userEmail == email() && !('kycStatus' in request.resource.data.diff(resource.data).changedKeys()))
         || isAdmin()
       );
@@ -203,6 +214,10 @@ service cloud.firestore {
         && changedKeysOnly(['read'])
         && request.resource.data.read is bool;
       allow delete: if false;
+    }
+
+    match /adminLogs/{logId} {
+      allow read, write: if isSignedIn() && isAdmin();
     }
 
     match /disputes/{disputeId} {
@@ -265,7 +280,10 @@ service cloud.firestore {
         isAdmin()
       );
 
-      allow create, update, delete: if isSignedIn() && isAdmin();
+      allow create: if isSignedIn() && isVerifiedEmail() && isNotDisposableEmail() && (
+        request.resource.data.email == email() || isAdmin()
+      );
+      allow update, delete: if isSignedIn() && isAdmin();
     }
 
     match /portfolios/{providerEmail}/items/{itemId} {

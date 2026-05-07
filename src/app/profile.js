@@ -2,7 +2,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { useEffect, useMemo, useState } from 'react';
-import { Image, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, Pressable, ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
 
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
@@ -10,6 +10,7 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import AppCard from '../components/ui/app-card';
 import AppNotice from '../components/ui/app-notice';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
+import SubscriptionBadge from '../components/ui/subscription-badge';
 import { KYC_STATUS, isAdminEmail } from '../constants/access';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
 import { auth, db, storage } from '../firebase';
@@ -159,6 +160,11 @@ export default function Profile() {
 
   const initial = useMemo(() => String(currentEmail || '?').charAt(0).toUpperCase(), [currentEmail]);
   const role = isAdminEmail(currentEmail) ? 'Admin' : String(profile?.role || 'customer').toLowerCase() === 'provider' ? 'Provider' : 'Customer';
+  const joinedDate = useMemo(() => {
+    const raw = profile?.createdAt;
+    const date = raw?.seconds ? new Date(raw.seconds * 1000) : new Date(raw || 0);
+    return Number.isNaN(date.getTime()) ? 'N/A' : date.toLocaleDateString();
+  }, [profile?.createdAt]);
   const kycStatus = profile?.kycStatus;
   const kycMeta =
     kycStatus === KYC_STATUS.VERIFIED
@@ -180,6 +186,16 @@ export default function Profile() {
     );
   }
 
+  const handleShareProfile = async () => {
+    try {
+      await Share.share({
+        message: `Check out my ConnectHub profile: https://connecthub-1873e.web.app/providers?email=${encodeURIComponent(currentEmail)}`,
+      });
+    } catch {
+      // Non-blocking share failure.
+    }
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
       <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
@@ -198,6 +214,7 @@ export default function Profile() {
           </Pressable>
           <Text style={{ color: '#fff', marginTop: 12, fontWeight: '900', fontSize: 22 }}>{profile?.name || currentEmail.split('@')[0]}</Text>
           <Text style={{ color: '#cbd5e1', marginTop: 4, fontSize: 13 }}>{currentEmail}</Text>
+          <Text style={{ color: '#cbd5e1', marginTop: 4, fontSize: 12 }}>Joined {joinedDate}</Text>
         </View>
 
         <View style={{ marginHorizontal: AppSpace.lg, marginTop: -28 }}>
@@ -220,6 +237,7 @@ export default function Profile() {
             <View style={{ backgroundColor: kycMeta.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
               <Text style={{ color: kycMeta.text, fontWeight: '800', fontSize: 12 }}>{kycMeta.label}</Text>
             </View>
+            <SubscriptionBadge plan={profile?.subscriptionPlan || 'free'} />
           </View>
 
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: 12 }}>
@@ -227,6 +245,8 @@ export default function Profile() {
             <QuickAction label="📷 Portfolio" onPress={() => router.push('/provider-portfolio')} />
             <QuickAction label="💳 Subscription" onPress={() => router.push('/subscription')} />
             <QuickAction label="👥 Invite Friends" onPress={() => router.push('/referral')} />
+            <QuickAction label="🔗 Share Profile" onPress={handleShareProfile} />
+            {isAdminEmail(currentEmail) ? <QuickAction label="🛡 Admin Desk" onPress={() => router.push('/admin')} /> : null}
           </View>
 
           <AppCard>

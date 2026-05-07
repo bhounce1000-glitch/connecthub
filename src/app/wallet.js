@@ -32,6 +32,56 @@ function groupLabel(ts) {
   return 'Earlier';
 }
 
+function normalizeStatus(status) {
+  return String(status || '').trim().toLowerCase();
+}
+
+function isWithdrawalRow(row) {
+  return String(row.type || '').toLowerCase() === 'withdrawal'
+    || String(row.paymentMethod || '').toLowerCase().includes('withdraw')
+    || String(row.reference || '').toUpperCase().startsWith('WD_');
+}
+
+function humanizeTransactionStatus(row) {
+  const status = normalizeStatus(row.status);
+  if (status === 'pending_admin_approval' || status === 'manual_review' || status === 'pending') {
+    return { label: '⏳ Awaiting Processing', color: '#b45309' };
+  }
+  if (status === 'completed' || status === 'success') {
+    return isWithdrawalRow(row)
+      ? { label: '✅ Sent to MoMo', color: '#166534' }
+      : { label: '✅ Completed', color: '#166534' };
+  }
+  if (status === 'failed') {
+    return { label: '❌ Failed — Balance Restored', color: '#b91c1c' };
+  }
+  if (status === 'rejected') {
+    return { label: '❌ Rejected — Balance Restored', color: '#b91c1c' };
+  }
+  return { label: String(row.status || 'Processing'), color: '#475569' };
+}
+
+function humanizePaymentMethod(value) {
+  const method = String(value || '').trim();
+  if (!method) return 'N/A';
+  if (method.toLowerCase() === 'manual transfer queue') {
+    return 'MoMo Transfer (Manual)';
+  }
+  return method;
+}
+
+function transactionCounterparty(row, currentEmail) {
+  if (isWithdrawalRow(row)) {
+    return `To: ${String(row.accountName || row.provider || 'Your MoMo Wallet').toUpperCase()}`;
+  }
+
+  if (String(row.senderEmail || '').trim().toLowerCase() === currentEmail) {
+    return `To: ${String(row.receiverName || row.receiverEmail || row.reference || 'Unknown').toUpperCase()}`;
+  }
+
+  return `From: ${String(row.senderName || row.senderEmail || row.reference || 'Unknown').toUpperCase()}`;
+}
+
 export default function Wallet() {
   const router = useRouter();
   const { refresh } = useLocalSearchParams();
@@ -104,13 +154,19 @@ export default function Wallet() {
 
     transactions.forEach((row) => {
       const amount = Number(row.amount || 0);
-      const status = String(row.status || '').toLowerCase();
-      const method = String(row.paymentMethod || '').toLowerCase();
-      if (row.direction === 'received') {
-        if (status === 'pending') pending += amount;
-        else earned += amount;
+      const status = normalizeStatus(row.status);
+      const withdrawal = isWithdrawalRow(row);
+      const isCredit = row.direction === 'received' && !withdrawal;
+
+      if (isCredit && (status === 'completed' || status === 'success' || !status)) {
+        earned += amount;
       }
-      if (row.direction === 'sent' || method.includes('withdraw')) {
+
+      if (withdrawal && ['pending_admin_approval', 'manual_review', 'pending'].includes(status)) {
+        pending += amount;
+      }
+
+      if (withdrawal && ['completed', 'success'].includes(status)) {
         withdrawn += amount;
       }
     });
@@ -201,13 +257,18 @@ export default function Wallet() {
               {index > 0 ? <View style={{ height: 1, backgroundColor: '#e2e8f0', marginBottom: 10 }} /> : null}
               <Text style={{ fontWeight: '800', color: '#475569', marginBottom: 8 }}>{label}</Text>
               {rows.map((row) => {
-                const method = String(row.paymentMethod || '').toLowerCase();
-                const isWithdrawal = method.includes('withdraw');
+                const isWithdrawal = isWithdrawalRow(row);
                 const isReceived = row.direction === 'received' && !isWithdrawal;
                 const icon = isReceived ? '↑' : isWithdrawal ? '→' : '↓';
                 const iconBg = isReceived ? '#dcfce7' : isWithdrawal ? '#ffedd5' : '#fee2e2';
                 const iconColor = isReceived ? '#166534' : isWithdrawal ? '#c2410c' : '#b91c1c';
                 const amountColor = isReceived ? '#166534' : '#b91c1c';
+                const statusMeta = humanizeTransactionStatus(row);
+                const counterparty = transactionCounterparty(row, currentEmail);
+                const title = isWithdrawal ? 'Withdrawal' : (row.jobTitle || row.type || 'Transaction');
+                const subtitle = isWithdrawal
+                  ? `Amount sent: GHS ${Number(row.amount || 0).toFixed(2)}`
+                  : counterparty;
 
                 return (
                   <View key={row.id} style={{ backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, marginBottom: 8, ...AppShadow.card }}>
@@ -216,13 +277,18 @@ export default function Wallet() {
                         <Text style={{ color: iconColor, fontWeight: '900' }}>{icon}</Text>
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{row.jobTitle || row.type || 'Transaction'}</Text>
-                        <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={1}>{row.transactionId || row.reference || row.id}</Text>
+                        <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{title}</Text>
+                        <Text style={{ color: '#475569', fontSize: 12 }} numberOfLines={1}>{subtitle}</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }} numberOfLines={1}>{humanizePaymentMethod(row.paymentMethod)}</Text>
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
                         <Text style={{ color: amountColor, fontWeight: '800' }}>{isReceived ? '+' : '-'} GHS {Number(row.amount || 0).toFixed(2)}</Text>
                         <Text style={{ color: '#94a3b8', fontSize: 11 }}>{toDisplayDateTime(row.timestamp)}</Text>
                       </View>
+                    </View>
+                    <View style={{ marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ color: statusMeta.color, fontSize: 12, fontWeight: '800' }}>{statusMeta.label}</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 11 }}>{row.transactionId || row.reference || row.id}</Text>
                     </View>
                   </View>
                 );

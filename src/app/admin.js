@@ -499,6 +499,12 @@ export default function Admin() {
   }, [kycSubmissions, requests, usersProfileMap]);
 
   const pendingWithdrawalCount = withdrawals.filter((w) => String(w.status || '') === 'pending_admin_approval').length;
+  const pendingWithdrawalAmount = useMemo(
+    () => withdrawals
+      .filter((w) => String(w.status || '') === 'pending_admin_approval')
+      .reduce((sum, w) => sum + Number(w.amount || 0), 0),
+    [withdrawals]
+  );
   const filteredWithdrawals = useMemo(() => {
     if (withdrawalFilter === 'all') return withdrawals;
     if (withdrawalFilter === 'pending') return withdrawals.filter((w) => String(w.status || '') === 'pending_admin_approval');
@@ -520,6 +526,12 @@ export default function Admin() {
     );
     setSelectedWithdrawalIds((prev) => prev.filter((id) => pendingSet.has(id)));
   }, [withdrawals]);
+
+  useEffect(() => {
+    if (!emailTestTarget && currentEmail) {
+      setEmailTestTarget(String(currentEmail).trim().toLowerCase());
+    }
+  }, [currentEmail, emailTestTarget]);
 
   const toggleWithdrawalSelection = (withdrawalId) => {
     const id = String(withdrawalId || '');
@@ -1068,6 +1080,9 @@ export default function Admin() {
                     </Text>
                     <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 10 }}>
                       Selected: {selectedWithdrawalIds.length} • Pending in view: {pendingVisibleWithdrawals.length}
+                    </Text>
+                    <Text style={{ color: '#9a3412', fontSize: 13, fontWeight: '800', marginBottom: 10 }}>
+                      Total Pending: GHS {pendingWithdrawalAmount.toFixed(2)}
                     </Text>
                     <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                       <AppButton

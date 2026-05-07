@@ -39,6 +39,7 @@ export default function ProviderSetup() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState(null);
+  const [existingCreatedAt, setExistingCreatedAt] = useState(null);
 
   useEffect(() => {
     if (isAuthReady && !user) router.replace('/auth');
@@ -51,6 +52,7 @@ export default function ProviderSetup() {
         const snap = await getDoc(doc(db, 'providers', currentEmail));
         if (snap.exists()) {
           const data = snap.data() || {};
+          setExistingCreatedAt(data.createdAt || null);
           setName(data.name || '');
           setBio(data.bio || '');
           setCategory(data.category || '');
@@ -87,6 +89,10 @@ export default function ProviderSetup() {
       setNotice({ tone: 'error', title: 'Missing details', message: 'Please complete name, about, category, and location.' });
       return;
     }
+    if (bio.trim().length > 300) {
+      setNotice({ tone: 'error', title: 'Bio too long', message: 'Keep your bio within 300 characters.' });
+      return;
+    }
 
     setIsSaving(true);
     setNotice(null);
@@ -103,11 +109,12 @@ export default function ProviderSetup() {
         skills,
         isAvailable,
         updatedAt: new Date(),
-        createdAt: new Date(),
+        createdAt: existingCreatedAt || new Date(),
       }, { merge: true });
 
       Alert.alert('Profile saved!');
       setNotice({ tone: 'success', title: 'Saved', message: 'Your provider profile has been updated.' });
+      router.back();
     } catch {
       setNotice({ tone: 'error', title: 'Save failed', message: 'Could not save profile right now.' });
     } finally {
@@ -162,6 +169,7 @@ export default function ProviderSetup() {
           value={bio}
           onChangeText={setBio}
           placeholder="Tell clients about your experience"
+          maxLength={300}
           multiline
           style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, minHeight: 88, paddingHorizontal: 12, paddingVertical: 10, color: AppColors.ink900, textAlignVertical: 'top' }}
         />
@@ -230,6 +238,13 @@ export default function ProviderSetup() {
           </TouchableOpacity>
         </View>
       </View>
+
+      <TouchableOpacity
+        onPress={() => Alert.alert('Profile Preview', `${name || 'Your name'}\n${category || 'Category'}\n${location || 'Location'}\nFrom GHS ${startingPrice || '0'}\n\n${bio || 'Your bio will appear here.'}`)}
+        style={{ backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', marginBottom: 10, borderWidth: 1, borderColor: '#dbeafe' }}
+      >
+        <Text style={{ color: '#2563eb', fontWeight: '800' }}>Preview Profile</Text>
+      </TouchableOpacity>
 
       <TouchableOpacity onPress={handleSave} disabled={isSaving} style={{ backgroundColor: '#2563eb', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}>
         {isSaving ? (

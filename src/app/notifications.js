@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 
 import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
@@ -153,6 +154,10 @@ export default function Notifications() {
   }, [currentEmail, isAuthReady]);
 
   const grouped = useMemo(() => groupNotifications(rows), [rows]);
+  const stickyHeaderIndices = useMemo(
+    () => grouped.map((item, index) => (item.kind === 'header' ? index : -1)).filter((index) => index >= 0),
+    [grouped]
+  );
 
   const markAsRead = async (item) => {
     if (item.read) return;
@@ -200,6 +205,7 @@ export default function Notifications() {
       <FlatList
         data={grouped}
         keyExtractor={(item) => item.id}
+        stickyHeaderIndices={stickyHeaderIndices}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 56 }}>
@@ -210,7 +216,11 @@ export default function Notifications() {
         }
         renderItem={({ item }) => {
           if (item.kind === 'header') {
-            return <Text style={{ color: '#64748b', fontWeight: '800', marginTop: 6, marginBottom: 8 }}>{item.label}</Text>;
+            return (
+              <View style={{ backgroundColor: '#f8fafc', paddingTop: 6, paddingBottom: 8 }}>
+                <Text style={{ color: '#64748b', fontWeight: '800' }}>{item.label}</Text>
+              </View>
+            );
           }
 
           const n = item.payload;
@@ -219,7 +229,14 @@ export default function Notifications() {
           const route = getRoute(n);
           const isExpanded = expandedId === n.id;
 
+          const rightAction = !unread ? null : (
+            <View style={{ justifyContent: 'center', alignItems: 'center', width: 96, marginBottom: 8, borderRadius: AppRadius.md, backgroundColor: '#2563eb' }}>
+              <Text style={{ color: '#fff', fontWeight: '800' }}>Mark Read</Text>
+            </View>
+          );
+
           return (
+            <Swipeable overshootRight={false} renderRightActions={() => rightAction} onSwipeableOpen={() => markAsRead(n)}>
             <TouchableOpacity
               onPress={() => handlePress(n)}
               activeOpacity={0.85}
@@ -288,6 +305,7 @@ export default function Notifications() {
                 </View>
               ) : null}
             </TouchableOpacity>
+            </Swipeable>
           );
         }}
       />

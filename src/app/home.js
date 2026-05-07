@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -58,7 +58,7 @@ export default function Home() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
   const [requests, setRequests] = useState([]);
-  const [providers] = useState([]);
+  const [providers, setProviders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
@@ -74,6 +74,7 @@ export default function Home() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
+  const fabScale = useRef(new Animated.Value(1)).current;
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
   const isProvider = String(userProfiles[currentEmail]?.role || '').toLowerCase() === 'provider';
@@ -98,11 +99,22 @@ export default function Home() {
     }
   }, [isAuthReady, router, user]);
 
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(fabScale, { toValue: 1.06, duration: 900, useNativeDriver: true }),
+        Animated.timing(fabScale, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [fabScale]);
+
   const formatPaidAt = (value) => {
     if (!value) return 'Unavailable';
     const parsedDate = new Date(value);
     if (Number.isNaN(parsedDate.getTime())) return String(value);
-                <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>Post a job or browse available providers</Text>
+    return parsedDate.toLocaleString();
   };
 
   useEffect(() => {
@@ -114,6 +126,16 @@ export default function Home() {
     );
     return onSnapshot(q, (snap) => setUnreadCount(snap.size), () => setUnreadCount(0));
   }, [currentEmail]);
+
+  useEffect(() => {
+    const providersQuery = query(collection(db, 'providers'), where('isAvailable', '==', true));
+    return onSnapshot(providersQuery, (snapshot) => {
+      const rows = snapshot.docs
+        .map((providerDoc) => ({ id: providerDoc.id, ...providerDoc.data() }))
+        .slice(0, 8);
+      setProviders(rows);
+    }, () => setProviders([]));
+  }, []);
 
   useEffect(() => {
     if (!currentEmail) return undefined;
@@ -393,6 +415,32 @@ export default function Home() {
     });
   }, [requests, currentEmail, searchText, activeCategory, statusFilter, isProvider, selectedCity, nearMeOnly, currentCoords]);
 
+  const greetingText = useMemo(() => {
+    const hours = new Date().getHours();
+    if (hours < 12) return 'Good morning';
+    if (hours < 18) return 'Good afternoon';
+    return 'Good evening';
+  }, []);
+
+  const firstName = useMemo(() => {
+    const raw = String(userProfiles[currentEmail]?.displayName || userProfiles[currentEmail]?.name || currentEmail.split('@')[0] || 'there').trim();
+    return raw.split(/\s+/)[0] || 'there';
+  }, [currentEmail, userProfiles]);
+
+  const dashboardStats = useMemo(() => {
+    const activeJobs = requests.filter((item) => {
+      const status = getEffectiveStatus(item);
+      return [REQUEST_STATUS.OPEN, REQUEST_STATUS.ACCEPTED, REQUEST_STATUS.IN_PROGRESS, REQUEST_STATUS.PENDING_CONFIRMATION].includes(status);
+    }).length;
+    const walletValue = Number(userProfiles[currentEmail]?.walletBalance || 0);
+    const ratingValue = Number(userProfiles[currentEmail]?.avgRating || 0);
+    return {
+      activeJobs,
+      walletValue,
+      ratingValue,
+    };
+  }, [currentEmail, requests, userProfiles]);
+
   const renderListHeader = () => (
     <View>
       {/* Hero header */}
@@ -400,7 +448,7 @@ export default function Home() {
         <Text style={{ fontSize: 13, color: '#93c5fd', letterSpacing: 1, fontWeight: '700' }}>CONNECTHUB</Text>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 26, fontWeight: '800', color: '#f8fafc' }}>Dashboard</Text>
+            <Text style={{ fontSize: 24, fontWeight: '800', color: '#f8fafc' }}>{greetingText}, {firstName} 👋</Text>
             <Text style={{ color: '#94a3b8', marginTop: 2, fontSize: 13 }}>{currentEmail || 'Guest'}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -421,6 +469,12 @@ export default function Home() {
             )}
             <Avatar src={userProfiles[currentEmail]?.profilePicture} email={currentEmail} size={44} />
           </View>
+        </View>
+
+        <View style={{ marginTop: 14, borderRadius: AppRadius.md, backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
+          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Active Jobs: {dashboardStats.activeJobs}</Text>
+          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Wallet: GHS {dashboardStats.walletValue.toFixed(2)}</Text>
+          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Rating: {dashboardStats.ratingValue ? dashboardStats.ratingValue.toFixed(1) : 'N/A'}</Text>
         </View>
       </View>
 
@@ -830,6 +884,12 @@ export default function Home() {
           }}
         />
       )}
+
+      <Animated.View style={{ position: 'absolute', right: 20, bottom: 24, transform: [{ scale: fabScale }] }}>
+        <TouchableOpacity onPress={() => router.push('/request-wizard')} style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center', ...AppShadow.card }}>
+          <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700', marginTop: -2 }}>+</Text>
+        </TouchableOpacity>
+      </Animated.View>
     </View>
   );
 }

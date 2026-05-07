@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { Stack, usePathname, useRouter, type ErrorBoundaryProps } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
+import AppErrorBoundary from '../components/ErrorBoundary';
 import AppButton from '../components/ui/app-button';
 import { KYC_STATUS, isAdminEmail } from '../constants/access';
 import useAuthUser from '../hooks/use-auth-user';
@@ -81,7 +82,11 @@ export default function Layout() {
     );
   }
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <AppErrorBoundary>
+      <Stack screenOptions={{ headerShown: false }} />
+    </AppErrorBoundary>
+  );
 }
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
