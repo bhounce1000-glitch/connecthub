@@ -40,6 +40,22 @@ export default function Rate() {
     setIsSaving(true);
     setError('');
     try {
+      // Verify ownership and check already-rated before writing
+      const reqSnap = await getDoc(doc(db, 'requests', resolvedRequestId));
+      if (!reqSnap.exists()) { setError('Request not found.'); setIsSaving(false); return; }
+      const reqData = reqSnap.data() || {};
+      const myEmail = String(auth.currentUser?.email || '').trim().toLowerCase();
+
+      if (isRatingProvider) {
+        if (reqData.user !== myEmail) { setError('You can only rate requests you placed.'); setIsSaving(false); return; }
+        if (reqData.rating != null) { setError('You have already rated this job.'); setIsSaving(false); return; }
+        if (reqData.status !== 'paid') { setError('You can only rate a completed and paid job.'); setIsSaving(false); return; }
+      } else {
+        if (reqData.acceptedBy !== myEmail) { setError('You can only rate customers on jobs you completed.'); setIsSaving(false); return; }
+        if (reqData.customerRating != null) { setError('You have already rated this customer.'); setIsSaving(false); return; }
+        if (reqData.status !== 'paid') { setError('You can only rate on completed and paid jobs.'); setIsSaving(false); return; }
+      }
+
       if (isRatingProvider) {
         await updateDoc(doc(db, 'requests', resolvedRequestId), {
           rating: Number(rating),
@@ -56,9 +72,8 @@ export default function Rate() {
           }).catch(() => {});
         }
       } else {
-        // Provider rates customer
-        const reqSnap = await getDoc(doc(db, 'requests', resolvedRequestId));
-        const customerEmail = reqSnap.data()?.user;
+        // Provider rates customer — reqData already fetched above
+        const customerEmail = reqData.user;
         await updateDoc(doc(db, 'requests', resolvedRequestId), {
           customerRating: Number(rating),
           customerReview: review.trim(),

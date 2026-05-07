@@ -145,6 +145,18 @@ service cloud.firestore {
           && request.resource.data.review is string
           && changedKeysOnly(['rating', 'review', 'ratedAt'])
         )
+
+        || (
+          resource.data.acceptedBy == email()
+          && resource.data.status == 'paid'
+          && resource.data.get('customerRating', null) == null
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.customerRating is int
+          && request.resource.data.customerRating >= 1
+          && request.resource.data.customerRating <= 5
+          && request.resource.data.customerReview is string
+          && changedKeysOnly(['customerRating', 'customerReview', 'customerRatedAt'])
+        )
       );
     }
 
