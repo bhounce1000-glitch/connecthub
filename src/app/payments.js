@@ -1,3 +1,4 @@
+import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
@@ -31,6 +32,67 @@ export default function Payments() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [notice, setNotice] = useState(null);
+
+  const exportPaymentsCsv = async () => {
+    if (!filteredRequests.length) {
+      setNotice({
+        tone: 'warning',
+        title: 'Nothing to export',
+        message: 'No records match your current filter.',
+      });
+      return;
+    }
+
+    const quote = (value) => {
+      const str = String(value ?? '');
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
+    const header = [
+      'requestId',
+      'title',
+      'amount',
+      'paid',
+      'paymentStatus',
+      'paymentReference',
+      'paymentChannel',
+      'gatewayResponse',
+      'user',
+      'acceptedBy',
+      'paidAt',
+    ];
+
+    const lines = filteredRequests.map((item) => ([
+      item.id,
+      item.title,
+      Number(item.price || 0).toFixed(2),
+      item.paid ? 'yes' : 'no',
+      item.paymentStatus || 'pending',
+      item.paymentReference || '',
+      item.paymentChannel || '',
+      item.gatewayResponse || '',
+      item.user || '',
+      item.acceptedBy || '',
+      item.paidAt || '',
+    ].map(quote).join(',')));
+
+    const csv = `${header.join(',')}\n${lines.join('\n')}`;
+
+    try {
+      await Clipboard.setStringAsync(csv);
+      setNotice({
+        tone: 'success',
+        title: 'Copied',
+        message: `Copied ${filteredRequests.length} payment rows to clipboard as CSV.`,
+      });
+    } catch {
+      setNotice({
+        tone: 'error',
+        title: 'Copy failed',
+        message: 'Could not copy CSV to clipboard. Please try again.',
+      });
+    }
+  };
 
   useEffect(() => {
     const paymentsQuery = query(collection(db, 'requests'), orderBy('createdAt', 'desc'), limit(20));
@@ -158,6 +220,13 @@ export default function Payments() {
             <Text style={{ fontWeight: '600', marginBottom: 8 }}>
               Search requests
             </Text>
+
+            <AppButton
+              label="Copy Filtered CSV"
+              variant="neutral"
+              onPress={exportPaymentsCsv}
+              style={{ marginBottom: 12 }}
+            />
 
             <AppInput
               value={searchQuery}

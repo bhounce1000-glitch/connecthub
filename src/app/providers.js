@@ -23,13 +23,24 @@ function buildStars(rating) {
   return `${'★'.repeat(n)}${'☆'.repeat(5 - n)}`;
 }
 
-function EmptyState({ category }) {
+function EmptyState({ category, onBrowseAll, onBecomeProvider, onPostRequest }) {
   const title = category && category !== ALL ? `No ${category} providers found` : 'No providers available right now';
   return (
     <View style={{ alignItems: 'center', paddingVertical: 52, paddingHorizontal: 12 }}>
       <Text style={{ fontSize: 56 }}>🔍</Text>
       <Text style={{ marginTop: 10, color: AppColors.ink900, fontWeight: '800', fontSize: 18, textAlign: 'center' }}>{title}</Text>
-      <Text style={{ marginTop: 6, color: '#94a3b8', textAlign: 'center' }}>Check back later or try a different category</Text>
+      <Text style={{ marginTop: 6, color: '#94a3b8', textAlign: 'center' }}>Check back later, browse all categories, or post your request now.</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 14, gap: 8 }}>
+        <TouchableOpacity onPress={onBrowseAll} style={{ backgroundColor: '#2563eb', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 }}>
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>Browse All</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onPostRequest} style={{ backgroundColor: '#0f766e', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 }}>
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>Post a Job</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onBecomeProvider} style={{ backgroundColor: '#fff', borderRadius: 999, borderWidth: 1, borderColor: '#cbd5e1', paddingHorizontal: 12, paddingVertical: 8 }}>
+          <Text style={{ color: '#334155', fontWeight: '800', fontSize: 12 }}>Become Provider</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -167,7 +178,14 @@ export default function Providers() {
           data={filtered}
           keyExtractor={(item) => item.id}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-          ListEmptyComponent={<EmptyState category={selectedCategory} />}
+          ListEmptyComponent={(
+            <EmptyState
+              category={selectedCategory}
+              onBrowseAll={() => setSelectedCategory(ALL)}
+              onPostRequest={() => router.push('/request-wizard')}
+              onBecomeProvider={() => router.push('/provider-setup')}
+            />
+          )}
           renderItem={({ item, index }) => {
             const letter = String(item.name || item.email || '?').trim().charAt(0).toUpperCase();
             const avatarBg = AVATAR_COLORS[index % AVATAR_COLORS.length];

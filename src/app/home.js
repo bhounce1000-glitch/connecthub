@@ -519,8 +519,13 @@ export default function Home() {
         <TouchableOpacity onPress={() => router.push('/provider-setup')} style={{ flex: 1, backgroundColor: '#ecfdf5', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
           <Text style={{ color: '#059669', fontWeight: '700', fontSize: 12 }}>🛠 Offer Services</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/notifications')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+        <TouchableOpacity onPress={() => router.push('/notifications')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', position: 'relative' }}>
           <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🔔 Alerts</Text>
+          {unreadCount > 0 ? (
+            <View style={{ position: 'absolute', top: 6, right: 8, backgroundColor: '#dc2626', borderRadius: 9, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+            </View>
+          ) : null}
         </TouchableOpacity>
       </View>
 
