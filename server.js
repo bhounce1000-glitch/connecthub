@@ -195,6 +195,39 @@ function isBlockedEmail(email) {
   return BLOCKED_EMAIL_DOMAINS.has(domain);
 }
 
+const USERNAME_PATTERN = /^[a-zA-Z0-9 _.-]{3,40}$/;
+
+function normalizeLooseText(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeDob(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{8}$/.test(raw)) {
+    return raw.slice(0, 4) + '-' + raw.slice(4, 6) + '-' + raw.slice(6, 8);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+  return raw;
+}
+
+function normalizeIdNumberForMatch(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function isLikelyStorageUrl(value) {
+  const raw = String(value || '').trim();
+  return raw.startsWith('https://firebasestorage.googleapis.com/') || raw.startsWith('https://storage.googleapis.com/');
+}
+
+function maskIdentifier(value) {
+  const raw = String(value || '');
+  if (raw.length <= 4) return raw;
+  return raw.slice(0, 2) + '*'.repeat(Math.max(0, raw.length - 4)) + raw.slice(-2);
+}
+
 function isAdminEmail(email) {
   if (!email) {
     return false;
@@ -3449,6 +3482,139 @@ app.post('/kyc/notify-submitted', requireAuth, async (req, res) => {
   }
 });
 
+
+/**
+ * POST /profile/username/change
+ * First change: standard self-service.
+ * Second+ changes: requires automatic KYC re-verification (name + dob + idNumber + new ID upload URL).
+ */
+app.post('/profile/username/change', requireAuth, async (req, res) => {
+  try {
+    const email = String(req.userEmail || req.user?.email || '').trim().toLowerCase();
+    if (!email) {
+      return sendError(res, req, 401, 'missing_user_email', 'Unable to determine user email');
+    }
+
+    const newUsername = String(req.body?.newUsername || '').trim();
+    if (!USERNAME_PATTERN.test(newUsername)) {
+      return sendError(res, req, 400, 'invalid_username', 'Username must be 3-40 chars and can include letters, numbers, spaces, underscores, hyphens, and dots.');
+    }
+
+    const nextUsernameLower = newUsername.toLowerCase();
+    const userRef = adminDb.collection('users').doc(email);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+      return sendError(res, req, 404, 'user_not_found', 'User profile not found');
+    }
+
+    const userData = userSnap.data() || {};
+    const currentUsername = String(userData.username || userData.displayName || userData.name || '').trim();
+    if (currentUsername && currentUsername.toLowerCase() === nextUsernameLower) {
+      return sendError(res, req, 409, 'same_username', 'That is already your current username');
+    }
+
+    const duplicateSnap = await adminDb.collection('users').where('usernameLower', '==', nextUsernameLower).limit(1).get();
+    if (!duplicateSnap.empty && duplicateSnap.docs[0].id !== email) {
+      return sendError(res, req, 409, 'username_taken', 'That username is already taken');
+    }
+
+    const changeCount = Number(userData.usernameChangeCount || 0);
+    const requiresKycReverification = changeCount >= 1;
+    let verificationMetadata = null;
+
+    if (requiresKycReverification) {
+      const providedFullName = normalizeLooseText(req.body?.fullName);
+      const providedDob = normalizeDob(req.body?.dob);
+      const providedIdNumber = normalizeIdNumberForMatch(req.body?.idNumber);
+      const providedIdCardUrl = String(req.body?.idCardUrl || '').trim();
+
+      if (!providedFullName || !providedDob || !providedIdNumber || !providedIdCardUrl) {
+        return sendError(res, req, 400, 'missing_reverification_fields', 'For additional username changes, provide fullName, dob, idNumber, and uploaded idCardUrl.');
+      }
+
+      if (!isLikelyStorageUrl(providedIdCardUrl)) {
+        return sendError(res, req, 400, 'invalid_id_upload', 'Please upload your ID card and submit a valid storage URL.');
+      }
+
+      const kycSnap = await adminDb.collection('kyc_submissions').doc(email).get();
+      if (!kycSnap.exists) {
+        return sendError(res, req, 403, 'kyc_missing', 'No KYC record found for automated re-verification');
+      }
+
+      const kyc = kycSnap.data() || {};
+      const effectiveKycStatus = String(kyc.kycStatus || userData.kycStatus || '').trim().toLowerCase();
+      if (effectiveKycStatus !== 'verified') {
+        return sendError(res, req, 403, 'kyc_not_verified', 'Username re-verification requires a verified KYC profile');
+      }
+
+      const expectedFullName = normalizeLooseText(kyc.fullName);
+      const expectedDob = normalizeDob(kyc.dob);
+      const expectedIdNumber = normalizeIdNumberForMatch(kyc.idNumber);
+
+      const detailsMatch = expectedFullName && expectedDob && expectedIdNumber
+        && providedFullName === expectedFullName
+        && providedDob === expectedDob
+        && providedIdNumber === expectedIdNumber;
+
+      if (!detailsMatch) {
+        await adminDb.collection('usernameChangeLogs').add({
+          email,
+          outcome: 'failed',
+          reason: 'kyc_details_mismatch',
+          attemptedUsername: newUsername,
+          attemptedAt: new Date().toISOString(),
+          ip: req.ip,
+        });
+        return sendError(res, req, 403, 'kyc_details_mismatch', 'The submitted verification details do not match your existing KYC record.');
+      }
+
+      verificationMetadata = {
+        mode: 'kyc_auto_match',
+        matchedAt: new Date().toISOString(),
+        idCardUrl: providedIdCardUrl,
+        fullNameMatched: true,
+        dobMatched: true,
+        idNumberMasked: maskIdentifier(providedIdNumber),
+      };
+    }
+
+    const now = new Date().toISOString();
+    const nextChangeCount = changeCount + 1;
+
+    await userRef.set({
+      username: newUsername,
+      usernameLower: nextUsernameLower,
+      displayName: newUsername,
+      usernameUpdatedAt: now,
+      usernameChangeCount: nextChangeCount,
+      usernameLastChangeBy: email,
+      usernameLastVerification: verificationMetadata,
+      updatedAt: now,
+    }, { merge: true });
+
+    await adminDb.collection('usernameChangeLogs').add({
+      email,
+      outcome: 'success',
+      previousUsername: currentUsername || null,
+      newUsername,
+      usernameChangeCount: nextChangeCount,
+      requiresKycReverification,
+      createdAt: now,
+      ip: req.ip,
+    });
+
+    await notifyUser(email, 'Your username was changed to ' + newUsername + '. If this was not you, contact support immediately.', 'Username Updated', { screen: 'profile' });
+
+    return sendSuccess(res, req, {
+      message: 'Username updated successfully',
+      data: { username: newUsername, usernameChangeCount: nextChangeCount, requiresKycReverification },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'PROFILE_USERNAME_CHANGE_ERROR');
+    return sendError(res, req, 500, 'username_change_failed', 'Could not change username');
+  }
+});
 // ── KYC ADMIN ENDPOINTS ──────────────────────────────────────────────────────
 
 /**

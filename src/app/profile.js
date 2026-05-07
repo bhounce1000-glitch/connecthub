@@ -8,14 +8,18 @@ import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 
 import AppCard from '../components/ui/app-card';
+import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
 import SubscriptionBadge from '../components/ui/subscription-badge';
 import { KYC_STATUS, isAdminEmail } from '../constants/access';
+import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
 import { auth, db, storage } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
+import { apiPost } from '../utils/api-client';
+import { formatApiMessage } from '../utils/api-response';
 
 function Stat({ icon, value, label }) {
   return (
@@ -57,6 +61,11 @@ export default function Profile() {
   const [uploadNotice, setUploadNotice] = useState(null);
   const [profilePicture, setProfilePicture] = useState(null);
   const [stats, setStats] = useState({ jobs: 0, rating: 'N/A', earned: 0 });
+  const [usernameDraft, setUsernameDraft] = useState('');
+  const [usernameVerification, setUsernameVerification] = useState({ fullName: '', dob: '', idNumber: '', idCardUrl: '' });
+  const [isChangingUsername, setIsChangingUsername] = useState(false);
+  const [isUploadingVerificationId, setIsUploadingVerificationId] = useState(false);
+  const [usernameNotice, setUsernameNotice] = useState(null);
 
   useEffect(() => {
     if (isAuthReady && !currentEmail) router.replace('/auth');
@@ -172,6 +181,103 @@ export default function Profile() {
       : kycStatus === KYC_STATUS.PENDING_VERIFICATION
         ? { label: '⏳ Pending', bg: '#fef3c7', text: '#92400e' }
         : { label: '❌ Not Verified', bg: '#fee2e2', text: '#b91c1c' };
+  const usernameChangeCount = Number(profile?.usernameChangeCount || 0);
+  const requiresKycReverification = usernameChangeCount >= 1;
+  const currentUsername = String(profile?.username || profile?.name || currentEmail.split('@')[0] || '').trim();
+
+  useEffect(() => {
+    if (!usernameDraft) {
+      setUsernameDraft(currentUsername);
+    }
+  }, [currentUsername, usernameDraft]);
+
+  const uploadVerificationId = async () => {
+    try {
+      setIsUploadingVerificationId(true);
+      setUsernameNotice(null);
+      if (!user?.uid) throw new Error('Missing user context');
+
+      let fileOrBlob = null;
+      if (Platform.OS === 'web') {
+        const file = await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.onchange = (e) => resolve(e.target.files?.[0] || null);
+          input.click();
+        });
+        if (!file) return;
+        fileOrBlob = file;
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (permission.status !== 'granted') throw new Error('Photo library permission is required');
+        const pick = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          allowsEditing: true,
+          quality: 0.9,
+        });
+        if (pick.canceled || !pick.assets?.[0]?.uri) return;
+        const response = await fetch(pick.assets[0].uri);
+        fileOrBlob = await response.blob();
+      }
+
+      const storageRef = ref(storage, `username-change-id/${user.uid}/${Date.now()}.jpg`);
+      await uploadBytes(storageRef, fileOrBlob);
+      const downloadURL = await getDownloadURL(storageRef);
+      setUsernameVerification((prev) => ({ ...prev, idCardUrl: downloadURL }));
+      setUsernameNotice({ tone: 'success', title: 'ID uploaded', message: 'Verification ID uploaded successfully.' });
+    } catch (error) {
+      setUsernameNotice({ tone: 'error', title: 'Upload failed', message: error?.message || 'Could not upload ID card.' });
+    } finally {
+      setIsUploadingVerificationId(false);
+    }
+  };
+
+  const handleUsernameChange = async () => {
+    const nextUsername = String(usernameDraft || '').trim();
+    if (!nextUsername) {
+      setUsernameNotice({ tone: 'error', title: 'Missing username', message: 'Enter a username first.' });
+      return;
+    }
+
+    if (nextUsername.length < 3 || nextUsername.length > 40 || !/^[a-zA-Z0-9 _.-]+$/.test(nextUsername)) {
+      setUsernameNotice({
+        tone: 'error',
+        title: 'Invalid username',
+        message: 'Use 3-40 characters with letters, numbers, spaces, underscores, hyphens, or dots only.',
+      });
+      return;
+    }
+
+    if (currentUsername && nextUsername.toLowerCase() === currentUsername.toLowerCase()) {
+      setUsernameNotice({ tone: 'warning', title: 'No change', message: 'That is already your current username.' });
+      return;
+    }
+
+    const payload = { newUsername: nextUsername };
+    if (requiresKycReverification) {
+      payload.fullName = usernameVerification.fullName;
+      payload.dob = usernameVerification.dob;
+      payload.idNumber = usernameVerification.idNumber;
+      payload.idCardUrl = usernameVerification.idCardUrl;
+    }
+
+    setIsChangingUsername(true);
+    setUsernameNotice(null);
+
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/profile/username/change`, payload, { requireAuth: true });
+      if (!response.ok || !data?.status) {
+        throw new Error(formatApiMessage(data, 'Could not change username right now.'));
+      }
+      setUsernameNotice({ tone: 'success', title: 'Username updated', message: 'Your username was updated successfully.' });
+      setUsernameVerification({ fullName: '', dob: '', idNumber: '', idCardUrl: '' });
+    } catch (error) {
+      setUsernameNotice({ tone: 'error', title: 'Update failed', message: error?.message || 'Could not change username right now.' });
+    } finally {
+      setIsChangingUsername(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -218,6 +324,87 @@ export default function Profile() {
         </View>
 
         <View style={{ marginHorizontal: AppSpace.lg, marginTop: -28 }}>
+          <AppCard style={{ borderRadius: 12, ...AppShadow.card, marginBottom: 12 }}>
+            <Text style={{ color: AppColors.ink900, fontWeight: '900', marginBottom: 8 }}>Username & Account Security</Text>
+            <Text style={{ color: '#475569', fontSize: 12, marginBottom: 8 }}>
+              First username change is instant. From the second change onward, automatic KYC re-verification is required.
+            </Text>
+
+            <AppNotice tone={usernameNotice?.tone} title={usernameNotice?.title} message={usernameNotice?.message} style={{ marginBottom: 8 }} />
+
+            <AppInput
+              label="Current Username"
+              value={currentUsername}
+              editable={false}
+              inputStyle={{ backgroundColor: '#f1f5f9', color: '#64748b' }}
+            />
+
+            <AppInput
+              label="New Username"
+              placeholder="Enter new username"
+              value={usernameDraft}
+              onChangeText={setUsernameDraft}
+              autoCapitalize="none"
+            />
+
+            {requiresKycReverification ? (
+              <View style={{ marginTop: 6, marginBottom: 10 }}>
+                <Text style={{ color: '#92400e', fontWeight: '700', marginBottom: 6 }}>
+                  Additional verification required for repeated username changes
+                </Text>
+                <AppInput
+                  label="Full Name (as submitted for KYC)"
+                  placeholder="Full legal name"
+                  value={usernameVerification.fullName}
+                  onChangeText={(v) => setUsernameVerification((prev) => ({ ...prev, fullName: v }))}
+                />
+                <AppInput
+                  label="Date of Birth"
+                  placeholder="YYYY-MM-DD or YYYYMMDD"
+                  value={usernameVerification.dob}
+                  onChangeText={(v) => setUsernameVerification((prev) => ({ ...prev, dob: v }))}
+                />
+                <AppInput
+                  label="ID Number"
+                  placeholder="ID number used in KYC"
+                  value={usernameVerification.idNumber}
+                  onChangeText={(v) => setUsernameVerification((prev) => ({ ...prev, idNumber: v }))}
+                  autoCapitalize="characters"
+                />
+                <TouchableOpacity
+                  onPress={uploadVerificationId}
+                  disabled={isUploadingVerificationId}
+                  style={{
+                    backgroundColor: '#fff',
+                    borderWidth: 1,
+                    borderColor: '#cbd5e1',
+                    borderRadius: AppRadius.md,
+                    paddingVertical: 10,
+                    alignItems: 'center',
+                    marginBottom: 6,
+                  }}
+                >
+                  <Text style={{ color: '#0f172a', fontWeight: '800' }}>
+                    {isUploadingVerificationId ? 'Uploading ID...' : 'Upload ID Card for Verification'}
+                  </Text>
+                </TouchableOpacity>
+                {usernameVerification.idCardUrl ? (
+                  <Text style={{ color: '#166534', fontSize: 12 }}>ID card uploaded ✅</Text>
+                ) : (
+                  <Text style={{ color: '#9a3412', fontSize: 12 }}>ID card upload required</Text>
+                )}
+              </View>
+            ) : null}
+
+            <TouchableOpacity
+              onPress={handleUsernameChange}
+              disabled={isChangingUsername}
+              style={{ backgroundColor: '#2563eb', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800' }}>{isChangingUsername ? 'Updating...' : 'Update Username'}</Text>
+            </TouchableOpacity>
+          </AppCard>
+
           <AppCard style={{ borderRadius: 12, ...AppShadow.card, marginBottom: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Stat icon="🏆" value={stats.jobs} label="Jobs" />
