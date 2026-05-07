@@ -152,3 +152,22 @@ For local development, the callback route used after checkout is:
 ```text
 http://localhost:8081/pay-return
 ```
+
+## Auto-refund overdue withdrawals
+
+The app supports automatic refund of stale pending withdrawals via the backend endpoint `POST /admin/withdrawals/auto-refund-overdue`.
+
+Production setup on Render:
+
+1. In the **web service** (`connecthub-backend`), set:
+   - `CRON_SECRET` (required)
+   - `WITHDRAWAL_SLA_HOURS` (optional, default `24`)
+2. In the **cron service** (`connecthub-auto-refund`), set:
+   - `CRON_SECRET` (must exactly match the web service value)
+3. Keep `BACKEND_PUBLIC_URL` in cron set to your live backend URL.
+
+Manual verification after deploy:
+
+1. Trigger one cron run from Render dashboard.
+2. Confirm the cron logs show `Auto-refund completed`.
+3. Confirm backend logs show `AUTO_REFUND_COMPLETE`.
