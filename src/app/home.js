@@ -438,11 +438,17 @@ export default function Home() {
     });
   }, [requests, currentEmail, searchText, activeCategory, statusFilter, isProvider, selectedCity, nearMeOnly, currentCoords]);
 
-  const greetingText = useMemo(() => {
+  const getGreeting = () => {
     const hours = new Date().getHours();
     if (hours < 12) return 'Good morning';
     if (hours < 18) return 'Good afternoon';
     return 'Good evening';
+  };
+  const [greetingText, setGreetingText] = useState(getGreeting);
+  useEffect(() => {
+    setGreetingText(getGreeting());
+    const interval = setInterval(() => setGreetingText(getGreeting()), 60000);
+    return () => clearInterval(interval);
   }, []);
 
   const firstName = useMemo(() => {
