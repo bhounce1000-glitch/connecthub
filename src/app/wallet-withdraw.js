@@ -11,10 +11,9 @@ import { API_BASE_URL } from '../constants/api';
 import { apiPost } from '../utils/api-client';
 
 const NETWORKS = [
-  { label: 'MTN', value: 'MTN' },
-  { label: 'Telecel (Vodafone)', value: 'Telecel (Vodafone)' },
-  { label: 'AirtelTigo', value: 'AirtelTigo' },
-  { label: 'Other', value: 'Other' },
+  { label: 'MTN', value: 'MTN', code: 'mtn' },
+  { label: 'Telecel (Vodafone)', value: 'Telecel (Vodafone)', code: 'vod' },
+  { label: 'AirtelTigo', value: 'AirtelTigo', code: 'atl' },
 ];
 
 const getWithdrawErrorMessage = (errorPayload) => {
@@ -112,10 +111,10 @@ export default function WalletWithdraw() {
       const targetProvider = result?.data?.provider || network;
       const ref = result?.data?.reference || 'N/A';
 
-      setNotice({ tone: 'success', title: 'Withdrawal request submitted', message: `Reference: ${ref}` });
+      setNotice({ tone: 'success', title: '✅ Withdrawal processing!', message: `GHS ${withdrawnAmount.toFixed(2)} is being sent to your MoMo. Reference: ${ref}` });
       Alert.alert(
-        '✅ Withdrawal Request Submitted!',
-        `Your request of GHS ${withdrawnAmount.toFixed(2)} to ${targetProvider} (${targetPhone}) has been received. Our team will process it within 24 hours and you will be notified when done.\n\nReference: ${ref}`,
+        '✅ Withdrawal Initiated!',
+        `GHS ${withdrawnAmount.toFixed(2)} is being sent instantly to your ${targetProvider} account (${targetPhone}).\n\nYou will be notified once the money lands.\n\nReference: ${ref}`,
         [
           {
             text: 'OK',
@@ -138,7 +137,7 @@ export default function WalletWithdraw() {
     <ScreenShell
       eyebrow="WALLET"
       title="Withdraw Funds"
-      subtitle="Withdrawal requests are processed within 24 hours by our team. Minimum GHS 10."
+      subtitle="Funds are sent instantly to your Mobile Money. Minimum GHS 10."
       accentColor="#1e3a8a"
       accentTextColor="#dbeafe"
       backgroundColor="#f8fafc"
@@ -146,7 +145,7 @@ export default function WalletWithdraw() {
     >
       <AppCard>
         <Text style={{ color: '#64748b', marginBottom: 16, fontSize: 12 }}>
-          Minimum withdrawal: GHS 10.00. Your account must be KYC verified.
+          Funds are sent <Text style={{ fontWeight: '700', color: '#166534' }}>instantly</Text> via Paystack. Minimum GHS 10.00. KYC required.
         </Text>
 
         <AppInput
@@ -231,8 +230,11 @@ export default function WalletWithdraw() {
       </AppCard>
 
       <View style={{ marginTop: 12 }}>
-        <Text style={{ color: '#64748b', fontSize: 12 }}>
-          Withdrawal requests are reviewed by the ConnectHub team and processed within 24 hours.
+        <Text style={{ color: '#64748b', fontSize: 12, textAlign: 'center' }}>
+          Funds are sent instantly via Paystack Transfer. You'll receive a push notification and email when complete.{'\n\n'}
+          <Text style={{ color: '#2563eb', textDecorationLine: 'underline' }} onPress={() => router.push('/withdrawal-history')}>
+            View withdrawal history →
+          </Text>
         </Text>
       </View>
     </ScreenShell>

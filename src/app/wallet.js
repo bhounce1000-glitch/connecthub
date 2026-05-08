@@ -47,6 +47,9 @@ function humanizeTransactionStatus(row) {
   if (status === 'pending_admin_approval' || status === 'manual_review' || status === 'pending') {
     return { label: '⏳ Awaiting Processing', color: '#b45309' };
   }
+  if (status === 'processing') {
+    return { label: '⏳ Sending to MoMo...', color: '#b45309' };
+  }
   if (status === 'completed' || status === 'success') {
     return isWithdrawalRow(row)
       ? { label: '✅ Sent to MoMo', color: '#166534' }
@@ -265,6 +268,9 @@ export default function Wallet() {
                   <Text style={{ color: '#fff', fontWeight: '800' }}>Add Money</Text>
                 </TouchableOpacity>
               </View>
+              <TouchableOpacity onPress={() => router.push('/withdrawal-history')} style={{ marginTop: 10, alignItems: 'center' }}>
+                <Text style={{ color: '#93c5fd', fontSize: 12, fontWeight: '600' }}>View withdrawal history →</Text>
+              </TouchableOpacity>
             </View>
 
             <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>

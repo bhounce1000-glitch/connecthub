@@ -104,6 +104,9 @@ export default function Admin() {
   const [stuckPayments, setStuckPayments] = useState([]);
   const [stuckLoading, setStuckLoading] = useState(false);
   const [expandedRequestMap, setExpandedRequestMap] = useState({});
+  const [wdStats, setWdStats] = useState(null);
+  const [wdStatsLoading, setWdStatsLoading] = useState(false);
+  const [wdStatsError, setWdStatsError] = useState(null);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -242,6 +245,25 @@ export default function Admin() {
     if (!isAdmin || activeTab !== 'stuck') return;
     loadStuckPayments();
   }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'instant-wd') return;
+    loadWdStats();
+  }, [isAdmin, activeTab]);
+
+  const loadWdStats = async () => {
+    setWdStatsLoading(true);
+    setWdStatsError(null);
+    try {
+      const { response, data } = await apiGet(`${API_BASE_URL}/admin/withdrawals/stats`, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not load withdrawal stats');
+      setWdStats(data?.data || null);
+    } catch (err) {
+      setWdStatsError(String(err?.message || 'Failed to load withdrawal stats'));
+    } finally {
+      setWdStatsLoading(false);
+    }
+  };
 
   const confirmAdminAction = (actionName, onConfirm) => {
     const promptAndRun = () => {
@@ -519,6 +541,46 @@ export default function Admin() {
       });
     } catch (error) {
       setNotice({ tone: 'error', title: 'Action failed', message: error?.message || 'Could not reject withdrawal.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const retryInstantWithdrawal = async (wd) => {
+    const key = `wd-retry:${wd.id}`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/withdrawals/${wd.id}/retry`,
+        {},
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Could not retry withdrawal');
+      setNotice({ tone: 'success', title: 'Retry initiated', message: `New transfer: ${data?.data?.transferCode || '—'}` });
+      await loadWdStats();
+    } catch (err) {
+      setNotice({ tone: 'error', title: 'Retry failed', message: err?.message || 'Unknown error' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const markInstantWithdrawalPaid = async (wd) => {
+    const key = `wd-manual-paid:${wd.id}`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/withdrawals/${wd.id}/mark-manual-paid`,
+        { notes: 'Manually marked paid from admin panel' },
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Could not mark withdrawal paid');
+      setNotice({ tone: 'success', title: 'Marked as paid', message: `Withdrawal ${wd.reference || wd.id} marked COMPLETED` });
+      await loadWdStats();
+    } catch (err) {
+      setNotice({ tone: 'error', title: 'Action failed', message: err?.message || 'Unknown error' });
     } finally {
       setPendingAction(null);
     }
@@ -1051,6 +1113,21 @@ export default function Admin() {
             </TouchableOpacity>
 
             <TouchableOpacity
+              onPress={() => setActiveTab('instant-wd')}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'instant-wd' ? '#0f766e' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'instant-wd' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Instant WD
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
               onPress={() => setActiveTab('users')}
               style={{
                 flex: 1,
@@ -1130,6 +1207,8 @@ export default function Admin() {
               ? disputes.length > 0
               : activeTab === 'withdrawals'
                 ? filteredWithdrawals.length > 0
+              : activeTab === 'instant-wd'
+                ? true
               : activeTab === 'analytics'
                 ? true
               : activeTab === 'fraud'
@@ -1147,6 +1226,8 @@ export default function Admin() {
               ? 'No disputes'
               : activeTab === 'withdrawals'
                 ? 'No withdrawals found'
+              : activeTab === 'instant-wd'
+                ? 'No instant withdrawals'
               : activeTab === 'analytics'
                 ? 'Loading…'
               : activeTab === 'fraud'
@@ -1164,6 +1245,8 @@ export default function Admin() {
               ? 'Disputes opened by customers will appear here.'
               : activeTab === 'withdrawals'
                 ? 'Withdrawal requests will appear here.'
+              : activeTab === 'instant-wd'
+                ? 'Instant wallet withdrawals will appear here.'
               : activeTab === 'analytics'
                 ? 'Fetching analytics data…'
               : activeTab === 'fraud'
@@ -1398,6 +1481,87 @@ export default function Admin() {
                       onToggleSelect={toggleWithdrawalSelection}
                     />
                   ))}
+                </>
+              )
+            : activeTab === 'instant-wd'
+              ? (
+                <>
+                  <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: '#99f6e4' }}>
+                    <Text style={{ color: '#115e59', fontWeight: '800', marginBottom: 8 }}>Instant Withdrawal Dashboard</Text>
+                    {wdStatsError ? (
+                      <Text style={{ color: '#b91c1c', fontSize: 12, marginBottom: 8 }}>{wdStatsError}</Text>
+                    ) : null}
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                      <View style={{ backgroundColor: '#f0fdfa', borderRadius: 10, padding: 10, minWidth: 120 }}>
+                        <Text style={{ color: '#0f766e', fontSize: 11, fontWeight: '700' }}>Paid Today</Text>
+                        <Text style={{ color: '#134e4a', fontSize: 16, fontWeight: '900' }}>GHS {Number(wdStats?.stats?.paidToday || 0).toFixed(2)}</Text>
+                      </View>
+                      <View style={{ backgroundColor: '#ecfeff', borderRadius: 10, padding: 10, minWidth: 120 }}>
+                        <Text style={{ color: '#0e7490', fontSize: 11, fontWeight: '700' }}>Paid This Week</Text>
+                        <Text style={{ color: '#164e63', fontSize: 16, fontWeight: '900' }}>GHS {Number(wdStats?.stats?.paidWeek || 0).toFixed(2)}</Text>
+                      </View>
+                      <View style={{ backgroundColor: '#f0f9ff', borderRadius: 10, padding: 10, minWidth: 120 }}>
+                        <Text style={{ color: '#0369a1', fontSize: 11, fontWeight: '700' }}>Paid This Month</Text>
+                        <Text style={{ color: '#0c4a6e', fontSize: 16, fontWeight: '900' }}>GHS {Number(wdStats?.stats?.paidMonth || 0).toFixed(2)}</Text>
+                      </View>
+                    </View>
+                    <Text style={{ color: '#475569', fontSize: 12, marginTop: 10 }}>
+                      Pending/Processing: {Number(wdStats?.stats?.pendingCount || 0)} • Failed: {Number(wdStats?.stats?.failedCount || 0)} • Completed: {Number(wdStats?.stats?.completedCount || 0)}
+                    </Text>
+                    <AppButton
+                      label={wdStatsLoading ? 'Refreshing...' : 'Refresh'}
+                      onPress={loadWdStats}
+                      loading={wdStatsLoading}
+                      disabled={Boolean(pendingAction) || wdStatsLoading}
+                      style={{ backgroundColor: '#0f766e', paddingVertical: 8, marginTop: 10 }}
+                    />
+                  </AppCard>
+
+                  {(wdStats?.withdrawals || []).map((wd) => {
+                    const s = String(wd.status || '').toUpperCase();
+                    const isFailed = s === 'FAILED';
+                    const canManual = s === 'FAILED' || s === 'PROCESSING';
+                    const badgeBg = s === 'COMPLETED' ? '#dcfce7' : s === 'FAILED' ? '#fee2e2' : s === 'PROCESSING' ? '#fef3c7' : '#f1f5f9';
+                    const badgeText = s === 'COMPLETED' ? '#166534' : s === 'FAILED' ? '#991b1b' : s === 'PROCESSING' ? '#92400e' : '#334155';
+                    return (
+                      <AppCard key={wd.id} style={{ marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <Text style={{ color: AppColors.ink900, fontWeight: '900' }}>GHS {Number(wd.amount || 0).toFixed(2)}</Text>
+                          <View style={{ backgroundColor: badgeBg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 }}>
+                            <Text style={{ color: badgeText, fontSize: 11, fontWeight: '800' }}>{s || 'UNKNOWN'}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ color: AppColors.ink700, fontSize: 13 }}>User: {wd.userEmail || wd.email || 'N/A'}</Text>
+                        <Text style={{ color: AppColors.ink700, fontSize: 13 }}>MoMo: {wd.provider || 'N/A'} • {wd.phoneNumber || 'N/A'}</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>Ref: {wd.reference || wd.id}</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>Requested: {formatIsoDate(wd.requestedAt || wd.requestedAtIso)}</Text>
+                        {wd.completedAt ? (
+                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>Completed: {formatIsoDate(wd.completedAt)}</Text>
+                        ) : null}
+
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                          {isFailed ? (
+                            <AppButton
+                              label={pendingAction === `wd-retry:${wd.id}` ? 'Retrying...' : 'Retry'}
+                              onPress={() => confirmAdminAction(`Retry withdrawal ${wd.reference || wd.id}`, () => retryInstantWithdrawal(wd))}
+                              loading={pendingAction === `wd-retry:${wd.id}`}
+                              disabled={Boolean(pendingAction)}
+                              style={{ backgroundColor: '#0f766e', paddingVertical: 8 }}
+                            />
+                          ) : null}
+                          {canManual ? (
+                            <AppButton
+                              label={pendingAction === `wd-manual-paid:${wd.id}` ? 'Marking...' : 'Mark Paid'}
+                              onPress={() => confirmAdminAction(`Mark withdrawal ${wd.reference || wd.id} as manually paid`, () => markInstantWithdrawalPaid(wd))}
+                              loading={pendingAction === `wd-manual-paid:${wd.id}`}
+                              disabled={Boolean(pendingAction)}
+                              style={{ backgroundColor: '#1d4ed8', paddingVertical: 8 }}
+                            />
+                          ) : null}
+                        </View>
+                      </AppCard>
+                    );
+                  })}
                 </>
               )
             : activeTab === 'fraud'
