@@ -438,8 +438,24 @@ export default function Home() {
     });
   }, [requests, currentEmail, searchText, activeCategory, statusFilter, isProvider, selectedCity, nearMeOnly, currentCoords]);
 
+  const getGhanaHour = () => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        hour: '2-digit',
+        hour12: false,
+        timeZone: 'Africa/Accra',
+      }).formatToParts(new Date());
+      const hourValue = parts.find((part) => part.type === 'hour')?.value;
+      const parsedHour = Number.parseInt(hourValue || '', 10);
+      if (Number.isFinite(parsedHour)) return parsedHour;
+    } catch {
+      // Fallback for environments with limited Intl timezone support.
+    }
+    return new Date().getUTCHours();
+  };
+
   const getGreeting = () => {
-    const hours = new Date().getHours();
+    const hours = getGhanaHour();
     if (hours < 5) return 'Good night';
     if (hours < 12) return 'Good morning';
     if (hours < 17) return 'Good afternoon';
