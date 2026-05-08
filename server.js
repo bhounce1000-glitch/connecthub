@@ -2543,6 +2543,26 @@ async function queueWithdrawalManually({
        </table>
        <p>We will process this as soon as possible. Thank you for your patience.</p>`
     ).catch((err) => logger.warn({ err, actorEmail }, 'QUEUED_WITHDRAWAL_EMAIL_FAILED'));
+
+    const adminRecipients = ADMIN_EMAILS.length > 0 ? ADMIN_EMAILS : [ADMIN_EMAIL];
+    emailTransporter.sendMail({
+      from: emailFrom,
+      to: adminRecipients.join(','),
+      subject: `ConnectHub - Manual Withdrawal Required (${withdrawalRef})`,
+      html: `
+        <p>A withdrawal has been queued for manual processing because instant transfer failed.</p>
+        <table style="width:100%;border-collapse:collapse;">
+          <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>User</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${actorEmail}</td></tr>
+          <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Amount</b></td><td style="padding:8px;border:1px solid #e2e8f0;">GHS ${amount.toFixed(2)}</td></tr>
+          <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Network</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${provider}</td></tr>
+          <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>MoMo Number</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${phoneUsed}</td></tr>
+          <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Reference</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${withdrawalRef}</td></tr>
+          <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Fallback Reason</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${fallbackReason || 'paystack_unavailable'}</td></tr>
+          <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Paystack Error</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${paystackError || 'unknown'}</td></tr>
+        </table>
+        <p>Please process this payout from the admin withdrawals dashboard.</p>
+      `,
+    }).catch((err) => logger.warn({ err, withdrawalRef }, 'QUEUED_WITHDRAWAL_ADMIN_EMAIL_FAILED'));
   }
 
   logger.info({ actorEmail, amount, provider, withdrawalRef, fallbackReason, paystackError }, 'WITHDRAWAL_QUEUED_MANUAL_FALLBACK');
