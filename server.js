@@ -2529,6 +2529,7 @@ async function queueWithdrawalManually({
   }).catch(() => {});
 
   if (isEmailConfigured()) {
+    const adminWithdrawalsUrl = `${trimTrailingSlash(WEB_BASE_URL)}/admin`;
     sendPaymentReceiptEmail(
       actorEmail, userData.displayName || actorEmail,
       'Withdrawal Request Received — ConnectHub',
@@ -2561,6 +2562,12 @@ async function queueWithdrawalManually({
           <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Paystack Error</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${paystackError || 'unknown'}</td></tr>
         </table>
         <p>Please process this payout from the admin withdrawals dashboard.</p>
+        <p>
+          <a href="${adminWithdrawalsUrl}" style="display:inline-block;padding:10px 14px;background:#0f766e;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">
+            Open Admin Withdrawals
+          </a>
+        </p>
+        <p>If the button does not work, copy this link: ${adminWithdrawalsUrl}</p>
       `,
     }).catch((err) => logger.warn({ err, withdrawalRef }, 'QUEUED_WITHDRAWAL_ADMIN_EMAIL_FAILED'));
   }
