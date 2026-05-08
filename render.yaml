@@ -57,3 +57,19 @@ services:
         value: https://connecthub-yrox.onrender.com
       - key: CRON_SECRET
         sync: false
+
+  - type: cron
+    name: connecthub-auto-retry-withdrawals
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm install
+    startCommand: node scripts/auto-retry-withdrawals-cron.js
+    schedule: "*/15 * * * *"
+    envVars:
+      - key: BACKEND_PUBLIC_URL
+        value: https://connecthub-yrox.onrender.com
+      - key: CRON_SECRET
+        sync: false
+      - key: WITHDRAWAL_AUTO_RETRY_BATCH_LIMIT
+        value: 10
