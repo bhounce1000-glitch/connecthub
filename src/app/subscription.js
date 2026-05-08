@@ -83,6 +83,13 @@ export default function Subscription() {
 
     setPendingPlan(planKey);
     setNotice(null);
+
+    // Safety timeout: auto-reset pendingPlan after 60 seconds (in case state gets stuck on mobile)
+    const timeoutId = setTimeout(() => {
+      setPendingPlan('');
+      Alert.alert('Checkout timeout', 'Payment session expired. Please try again.');
+    }, 60000);
+
     try {
       const authUser = auth.currentUser;
       const displayName = String(authUser?.displayName || user?.displayName || currentEmail.split('@')[0] || '').trim();
@@ -99,14 +106,19 @@ export default function Subscription() {
 
       const authorizationUrl = data?.authorization_url || data?.data?.authorization_url || '';
       if (!response.ok || !data?.status || !authorizationUrl) {
+        clearTimeout(timeoutId);
         throw new Error(data?.message || 'Could not start subscription checkout.');
       }
 
       if (Platform.OS === 'web') {
+        clearTimeout(timeoutId);
         await Linking.openURL(authorizationUrl);
+        setPendingPlan('');
       } else {
         const redirectUri = 'connecthub://subscription';
         const sessionResult = await WebBrowser.openAuthSessionAsync(authorizationUrl, redirectUri);
+        clearTimeout(timeoutId);
+
         if (sessionResult?.type === 'success' && sessionResult.url) {
           const callbackUrl = new URL(sessionResult.url);
           const callbackStatus = callbackUrl.searchParams.get('status') || '';
@@ -120,13 +132,27 @@ export default function Subscription() {
               },
             });
           }
+        } else if (sessionResult?.type === 'dismiss' || sessionResult?.type === 'cancel') {
+          setPendingPlan('');
+          setNotice({
+            tone: 'info',
+            title: 'Checkout cancelled',
+            message: 'You cancelled the checkout. Try again when ready.',
+          });
+        } else {
+          setPendingPlan('');
+          setNotice({
+            tone: 'error',
+            title: 'Checkout session ended',
+            message: 'The payment session ended unexpectedly. Please try again.',
+          });
         }
       }
     } catch (error) {
+      clearTimeout(timeoutId);
+      setPendingPlan('');
       Alert.alert('Checkout failed', error?.message || 'Could not start checkout.');
       setNotice({ tone: 'error', title: 'Checkout failed', message: error?.message || 'Could not start checkout.' });
-    } finally {
-      setPendingPlan('');
     }
   };
 
