@@ -440,9 +440,11 @@ export default function Home() {
 
   const getGreeting = () => {
     const hours = new Date().getHours();
+    if (hours < 5) return 'Good night';
     if (hours < 12) return 'Good morning';
-    if (hours < 18) return 'Good afternoon';
-    return 'Good evening';
+    if (hours < 17) return 'Good afternoon';
+    if (hours < 21) return 'Good evening';
+    return 'Good night';
   };
   const [greetingText, setGreetingText] = useState(getGreeting);
   useEffect(() => {
