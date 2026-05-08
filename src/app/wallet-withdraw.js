@@ -28,7 +28,13 @@ const getWithdrawErrorMessage = (errorPayload) => {
     case 'invalid_amount':
       return 'Minimum withdrawal is GHS 10';
     case 'recipient_creation_failed':
-      return 'Could not verify your MoMo number. Check the number and network are correct.';
+      if (paystackMessage && hint) {
+        return `${paystackMessage} ${hint}`;
+      }
+      if (paystackMessage) {
+        return paystackMessage;
+      }
+      return 'Could not verify your MoMo wallet for payout. Check number, selected network, and wallet status.';
     case 'paystack_insufficient_balance':
       return 'Withdrawal is blocked because Paystack balance is insufficient. Top up your Paystack balance and try again.';
     case 'paystack_business_tier_restricted':

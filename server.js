@@ -2457,12 +2457,26 @@ async function checkJobSpam(email) {
 }
 
 // ── MoMo network code mapper ──────────────────────────────────────────────────
-function mapNetworkToPaystackCode(networkLabel) {
+function mapNetworkToPaystackCodes(networkLabel) {
   const n = String(networkLabel || '').toLowerCase().replace(/\s+/g, '');
-  if (n.includes('mtn')) return 'mtn';
-  if (n.includes('telecel') || n.includes('vodafone') || n.includes('vod')) return 'vod';
-  if (n.includes('airteltigo') || n.includes('airtel') || n.includes('tigo') || n.includes('atl')) return 'atl';
-  return null;
+  if (n.includes('mtn')) return ['mtn', 'MTN'];
+  if (n.includes('telecel') || n.includes('vodafone') || n.includes('vod')) return ['vod', 'VOD'];
+  if (n.includes('airteltigo') || n.includes('airtel') || n.includes('tigo') || n.includes('atl')) return ['atl', 'ATL'];
+  return [];
+}
+
+function mapNetworkToPaystackCode(networkLabel) {
+  return mapNetworkToPaystackCodes(networkLabel)[0] || null;
+}
+
+function buildGhanaPhoneVariants(normalizedPhone) {
+  const local = String(normalizedPhone || '').trim();
+  if (!local) return [];
+  const variants = [local];
+  if (/^0\d{9}$/.test(local)) {
+    variants.push(`233${local.slice(1)}`);
+  }
+  return Array.from(new Set(variants));
 }
 
 async function createPaystackRecipient({ name, accountNumber, bankCode, paystackSecret }) {
@@ -2526,8 +2540,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     if (!normalizedPhone) {
       return sendError(res, req, 400, 'invalid_phone', 'Enter a valid 10-digit Ghana MoMo number starting with 0');
     }
-    const bankCode = mapNetworkToPaystackCode(provider);
-    if (!bankCode) {
+    const bankCodes = mapNetworkToPaystackCodes(provider);
+    if (bankCodes.length === 0) {
       return sendError(res, req, 400, 'invalid_network', 'Network must be MTN, Telecel, or AirtelTigo');
     }
     if (!paystackSecret) {
@@ -2567,17 +2581,51 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     const withdrawalRef = `WD_${Date.now()}_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
     // Step A: Create transfer recipient
-    const recipientResult = await createPaystackRecipient({
-      name: accountName,
-      accountNumber: normalizedPhone,
-      bankCode,
-      paystackSecret,
-    });
+    const accountNumbers = buildGhanaPhoneVariants(normalizedPhone);
+    let recipientResult = null;
+    let recipientPhoneUsed = normalizedPhone;
+    let bankCodeUsed = bankCodes[0] || null;
+    let lastRecipientMessage = '';
 
-    if (!recipientResult.ok) {
-      const paystackMsg = String(recipientResult.data?.message || '').trim();
-      logger.warn({ recipientResult }, 'PAYSTACK_RECIPIENT_CREATION_FAILED');
-      return sendError(res, req, 502, 'recipient_creation_failed', paystackMsg || 'Could not verify your MoMo number. Check the number and network are correct.');
+    for (const accountNumber of accountNumbers) {
+      for (const bankCodeCandidate of bankCodes) {
+        const attempt = await createPaystackRecipient({
+          name: accountName,
+          accountNumber,
+          bankCode: bankCodeCandidate,
+          paystackSecret,
+        });
+        recipientResult = attempt;
+        lastRecipientMessage = String(attempt?.data?.message || '').trim();
+
+        if (attempt?.ok) {
+          recipientPhoneUsed = accountNumber;
+          bankCodeUsed = bankCodeCandidate;
+          break;
+        }
+      }
+      if (recipientResult?.ok) break;
+    }
+
+    if (!recipientResult?.ok) {
+      logger.warn({
+        provider,
+        normalizedPhone,
+        bankCodes,
+        accountNumbers,
+        paystackMessage: lastRecipientMessage,
+      }, 'PAYSTACK_RECIPIENT_CREATION_FAILED');
+      return sendError(
+        res,
+        req,
+        502,
+        'recipient_creation_failed',
+        lastRecipientMessage || 'Could not verify your MoMo number. Check the number and network are correct.',
+        {
+          paystack: { message: lastRecipientMessage || null },
+          hint: 'Ensure the MoMo wallet is active for payouts and the selected network matches the number.',
+        }
+      );
     }
 
     const recipientCode = String(recipientResult.data?.data?.recipient_code || '').trim();
@@ -2639,8 +2687,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
         displayName: userData.displayName || actorEmail,
         amount,
         provider,
-        bankCode,
-        phoneNumber: normalizedPhone,
+        bankCode: bankCodeUsed,
+        phoneNumber: recipientPhoneUsed,
         accountName,
         recipientCode,
         transferCode: transferCode || null,
@@ -2665,8 +2713,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
         displayName: userData.displayName || actorEmail,
         amount,
         provider,
-        bankCode,
-        phoneNumber: normalizedPhone,
+        bankCode: bankCodeUsed,
+        phoneNumber: recipientPhoneUsed,
         accountName,
         reference: withdrawalRef,
         walletWithdrawalId: withdrawalRef,
@@ -2689,8 +2737,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
         userId: actorEmail,
         amount,
         provider,
-        bankCode,
-        phoneNumber: normalizedPhone,
+        bankCode: bankCodeUsed,
+        phoneNumber: recipientPhoneUsed,
         accountName,
         reference: withdrawalRef,
         walletWithdrawalId: withdrawalRef,
@@ -2705,7 +2753,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     // ── FIX 5: Notifications ──────────────────────────────────────────────────
     await notifyUser(
       actorEmail,
-      `Your withdrawal of GHS ${amount.toFixed(2)} to ${provider} (${normalizedPhone}) is being processed. You'll be notified once it's complete. Reference: ${withdrawalRef}`,
+      `Your withdrawal of GHS ${amount.toFixed(2)} to ${provider} (${recipientPhoneUsed}) is being processed. You'll be notified once it's complete. Reference: ${withdrawalRef}`,
       'Withdrawal Processing',
       { screen: 'withdrawal-history', reference: withdrawalRef }
     );
@@ -2720,7 +2768,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
          <table style="width:100%;border-collapse:collapse;">
            <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Amount</b></td><td style="padding:8px;border:1px solid #e2e8f0;">GHS ${amount.toFixed(2)}</td></tr>
            <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Network</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${provider}</td></tr>
-           <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>MoMo Number</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${normalizedPhone}</td></tr>
+           <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>MoMo Number</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${recipientPhoneUsed}</td></tr>
            <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Account Name</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${accountName}</td></tr>
            <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Reference</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${withdrawalRef}</td></tr>
            <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Status</b></td><td style="padding:8px;border:1px solid #e2e8f0;">Processing — Instant transfer</td></tr>
@@ -2730,7 +2778,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       ).catch((err) => logger.warn({ err, actorEmail }, 'WITHDRAWAL_EMAIL_FAILED'));
     }
 
-    logger.info({ actorEmail, amount, provider, transferCode, withdrawalRef }, 'INSTANT_WITHDRAWAL_INITIATED');
+    logger.info({ actorEmail, amount, provider, transferCode, withdrawalRef, bankCodeUsed, recipientPhoneUsed }, 'INSTANT_WITHDRAWAL_INITIATED');
 
     return sendSuccess(res, req, {
       message: 'Withdrawal initiated. Funds are being sent instantly to your MoMo.',
@@ -2740,7 +2788,7 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
         transferCode: transferCode || null,
         amount,
         provider,
-        phoneNumber: normalizedPhone,
+        phoneNumber: recipientPhoneUsed,
         status: 'processing',
       },
     });
@@ -3161,14 +3209,26 @@ app.post('/admin/withdrawals/:id/retry', requireAuth, requireAdmin, async (req, 
     let useRecipientCode = wd.recipientCode || null;
 
     if (!useRecipientCode) {
-      const recipientResult = await createPaystackRecipient({
-        name: wd.accountName || wd.displayName || wd.userEmail,
-        accountNumber: wd.phoneNumber,
-        bankCode: wd.bankCode || mapNetworkToPaystackCode(wd.provider),
-        paystackSecret,
-      });
-      if (!recipientResult.ok) {
-        return sendError(res, req, 502, 'recipient_creation_failed', recipientResult.data?.message || 'Could not create recipient');
+      const retryPhones = buildGhanaPhoneVariants(normalizeGhanaPhone(wd.phoneNumber) || wd.phoneNumber);
+      const retryCodes = wd.bankCode ? [wd.bankCode] : mapNetworkToPaystackCodes(wd.provider);
+      let recipientResult = null;
+
+      for (const accountNumber of retryPhones) {
+        for (const bankCodeCandidate of retryCodes) {
+          const attempt = await createPaystackRecipient({
+            name: wd.accountName || wd.displayName || wd.userEmail,
+            accountNumber,
+            bankCode: bankCodeCandidate,
+            paystackSecret,
+          });
+          recipientResult = attempt;
+          if (attempt?.ok) break;
+        }
+        if (recipientResult?.ok) break;
+      }
+
+      if (!recipientResult?.ok) {
+        return sendError(res, req, 502, 'recipient_creation_failed', recipientResult?.data?.message || 'Could not create recipient');
       }
       useRecipientCode = recipientResult.data?.data?.recipient_code;
     }
