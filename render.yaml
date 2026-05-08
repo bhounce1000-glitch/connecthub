@@ -73,3 +73,20 @@ services:
         sync: false
       - key: WITHDRAWAL_AUTO_RETRY_BATCH_LIMIT
         value: 10
+
+  - type: cron
+    name: connecthub-poll-transfer-status
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm install
+    startCommand: node scripts/poll-transfer-status-cron.js
+    schedule: "*/10 * * * *"
+    envVars:
+      - key: BACKEND_PUBLIC_URL
+        value: https://connecthub-yrox.onrender.com
+      - key: CRON_SECRET
+        sync: false
+      - key: WITHDRAWAL_POLL_BATCH_LIMIT
+        value: 15
+

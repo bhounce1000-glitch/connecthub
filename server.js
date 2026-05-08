@@ -3970,6 +3970,106 @@ app.post('/subscription/cancel', requireAuth, async (req, res) => {
   }
 });
 
+async function pollPaystackTransferStatus(transferCode, paystackSecret) {
+  try {
+    const response = await fetch(`https://api.paystack.co/transfer/${transferCode}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${paystackSecret}` },
+    });
+    const data = await response.json();
+    if (response.ok && data?.status) {
+      return { ok: true, data: data.data || data };
+    }
+    return { ok: false, data };
+  } catch (error) {
+    logger.warn({ message: error?.message, transferCode }, 'POLL_PAYSTACK_TRANSFER_ERROR');
+    return { ok: false, error };
+  }
+}
+
+async function processCompletedTransferFromPolling(transferCode, paystackStatus, paystackData) {
+  try {
+    let withdrawalDocRef = adminDb.collection('wallet_withdrawals').doc(transferCode);
+    let withdrawalSnap = await withdrawalDocRef.get();
+
+    if (!withdrawalSnap.exists) {
+      const byTransferCode = await adminDb.collection('wallet_withdrawals')
+        .where('transferCode', '==', transferCode)
+        .limit(1)
+        .get();
+      if (!byTransferCode.empty) {
+        withdrawalDocRef = byTransferCode.docs[0].ref;
+        withdrawalSnap = byTransferCode.docs[0];
+      }
+    }
+
+    if (!withdrawalSnap.exists) {
+      const byRef = await adminDb.collection('withdrawals').where('reference', '==', transferCode).limit(1).get();
+      if (!byRef.empty) {
+        withdrawalDocRef = byRef.docs[0].ref;
+        withdrawalSnap = byRef.docs[0];
+      }
+    }
+
+    if (!withdrawalSnap.exists) return null;
+
+    const withdrawalData = withdrawalSnap.data() || {};
+    const currentStatus = String(withdrawalData.status || '').toUpperCase();
+    const isSuccess = paystackStatus === 'success';
+    const newStatus = isSuccess ? 'COMPLETED' : 'FAILED';
+    const nowIso = new Date().toISOString();
+    const userEmail = String(withdrawalData.userEmail || withdrawalData.email || '').trim().toLowerCase();
+    const amount = parseMoney(withdrawalData.amount);
+
+    if (currentStatus === newStatus) {
+      return { alreadyCompleted: true, withdrawalId: withdrawalSnap.id };
+    }
+
+    await withdrawalDocRef.set({
+      status: newStatus,
+      updatedAt: nowIso,
+      completedAt: isSuccess ? nowIso : null,
+      failedAt: isSuccess ? null : nowIso,
+      failureReason: isSuccess ? null : (paystackStatus || 'transfer_failed'),
+      transferStatusEvent: `transfer.${paystackStatus}`,
+      transferStatusMessage: paystackStatus,
+      pollDetectedAt: nowIso,
+    }, { merge: true });
+
+    const txById = await adminDb.collection('transactions').where('transactionId', '==', String(withdrawalData.reference || transferCode)).limit(5).get();
+    const txByRef = await adminDb.collection('transactions').where('reference', '==', String(withdrawalData.reference || transferCode)).limit(5).get();
+    const txByWid = await adminDb.collection('transactions').where('walletWithdrawalId', '==', String(withdrawalSnap.id || transferCode)).limit(5).get();
+    const txMap = new Map();
+    [...txById.docs, ...txByRef.docs, ...txByWid.docs].forEach((d) => txMap.set(d.ref.path, d));
+    await Promise.all(Array.from(txMap.values()).map((d) => d.ref.set({
+      status: isSuccess ? 'completed' : 'failed',
+      updatedAt: nowIso,
+    }, { merge: true })));
+
+    if (isSuccess) {
+      await notifyUser(
+        userEmail,
+        `GHS ${amount.toFixed(2)} has been sent to your MoMo account ${withdrawalData.phoneNumber || ''}. Reference: ${withdrawalData.reference || transferCode}.`,
+        'Withdrawal Completed ✅',
+        { screen: 'withdrawal-history' }
+      );
+      if (isEmailConfigured() && userEmail) {
+        const userDoc = await adminDb.collection('users').doc(userEmail).get();
+        const displayName = userDoc.exists ? (userDoc.data()?.displayName || userEmail) : userEmail;
+        sendPaymentReceiptEmail(
+          userEmail, displayName, 'Withdrawal Successful — ConnectHub',
+          `<p>Dear ${displayName},</p><p><b>GHS ${amount.toFixed(2)}</b> has been sent to your ${withdrawalData.provider || 'MoMo'} account <b>${withdrawalData.phoneNumber || ''}</b>.</p><p><b>Reference:</b> ${withdrawalData.reference || transferCode}</p>`
+        ).catch((err) => logger.warn({ err }, 'WITHDRAWAL_SUCCESS_EMAIL_FAILED'));
+      }
+    }
+
+    return { processed: true, withdrawalId: withdrawalSnap.id, newStatus, userEmail, amount };
+  } catch (error) {
+    logger.error({ message: error?.message, transferCode }, 'PROCESS_COMPLETED_TRANSFER_ERROR');
+    return null;
+  }
+}
+
 async function handlePaystackWebhook(req, res) {
   try {
     const paystackSecret = getPaystackSecret();
@@ -4137,6 +4237,175 @@ async function handlePaystackWebhook(req, res) {
     return sendError(res, req, 500, 'webhook_processing_failed', 'Webhook processing failed');
   }
 }
+
+app.post('/admin/withdrawals/poll-transfer-status', async (req, res) => {
+  try {
+    const providedSecret = String(req.headers['x-cron-secret'] || '').trim();
+
+    if (CRON_SECRET && providedSecret === CRON_SECRET) {
+      req.user = {
+        uid: 'cron-poll-transfers',
+        email: 'cron@local',
+        admin: true,
+        role: 'admin',
+      };
+      req.userEmail = 'cron@local';
+    } else {
+      const authHeader = String(req.headers.authorization || '');
+      if (!authHeader.startsWith('Bearer ')) {
+        return sendError(res, req, 401, 'missing_bearer_token', 'Missing bearer token');
+      }
+
+      const token = authHeader.slice('Bearer '.length).trim();
+      if (!token || token.length < 10) {
+        return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token format');
+      }
+
+      let decodedToken;
+      try {
+        decodedToken = await admin.auth().verifyIdToken(token, true);
+      } catch (authError) {
+        if (authError?.code === 'auth/id-token-revoked') {
+          return sendError(res, req, 401, 'token_revoked', 'Session expired. Please log in again.');
+        }
+        return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token');
+      }
+
+      const normalizedEmail = String(decodedToken.email || '').trim().toLowerCase();
+      if (!normalizedEmail) {
+        return sendError(res, req, 401, 'invalid_auth_token', 'Authenticated account is missing an email');
+      }
+
+      const hasAdminClaim = decodedToken.admin === true || decodedToken.role === 'admin';
+      if (!hasAdminClaim && !isAdminEmail(normalizedEmail)) {
+        return sendError(res, req, 403, 'admin_access_required', 'Admin access required');
+      }
+
+      req.user = decodedToken;
+      req.userEmail = normalizedEmail;
+    }
+
+    const paystackSecret = getPaystackSecret();
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Payment service not configured');
+    }
+
+    const maxBatch = Math.max(1, Math.min(25, Number(req.body?.limit || 15)));
+
+    const snap = await adminDb.collection('wallet_withdrawals')
+      .where('status', '==', 'PROCESSING')
+      .limit(60)
+      .get();
+
+    const candidates = snap.docs
+      .map((docSnap) => ({ id: docSnap.id, data: docSnap.data() || {}, ref: docSnap.ref }))
+      .filter((row) => {
+        if (!row.data.transferCode) return false;
+        if (row.data.refunded === true) return false;
+        if (row.data.manualQueue === true) return false;
+        return true;
+      })
+      .slice(0, maxBatch);
+
+    const results = [];
+    for (const item of candidates) {
+      try {
+        const pollResult = await pollPaystackTransferStatus(item.data.transferCode, paystackSecret);
+        if (!pollResult.ok) {
+          results.push({
+            transferCode: item.data.transferCode,
+            ok: false,
+            reason: 'paystack_poll_failed',
+          });
+          continue;
+        }
+
+        const paystackStatus = String(pollResult.data?.status || '').toLowerCase();
+        if (!['success', 'failed', 'pending', 'cancelled'].includes(paystackStatus)) {
+          results.push({
+            transferCode: item.data.transferCode,
+            ok: false,
+            reason: 'unknown_paystack_status',
+            paystackStatus,
+          });
+          continue;
+        }
+
+        if (paystackStatus === 'pending') {
+          results.push({
+            transferCode: item.data.transferCode,
+            ok: true,
+            action: 'no_change',
+            paystackStatus,
+          });
+          continue;
+        }
+
+        const processResult = await processCompletedTransferFromPolling(
+          item.data.transferCode,
+          paystackStatus,
+          pollResult.data
+        );
+
+        if (processResult?.alreadyCompleted) {
+          results.push({
+            transferCode: item.data.transferCode,
+            ok: true,
+            action: 'already_completed',
+            newStatus: item.data.status,
+          });
+        } else if (processResult?.processed) {
+          results.push({
+            transferCode: item.data.transferCode,
+            ok: true,
+            action: 'completed_from_polling',
+            newStatus: processResult.newStatus,
+            userEmail: processResult.userEmail,
+            amount: processResult.amount,
+          });
+        } else {
+          results.push({
+            transferCode: item.data.transferCode,
+            ok: false,
+            reason: 'process_failed',
+          });
+        }
+      } catch (itemError) {
+        results.push({
+          transferCode: item.data.transferCode,
+          ok: false,
+          reason: itemError?.message || 'unknown_error',
+        });
+      }
+    }
+
+    const completedCount = results.filter((r) => r.action === 'completed_from_polling').length;
+    const alreadyCount = results.filter((r) => r.action === 'already_completed').length;
+    const noChangeCount = results.filter((r) => r.action === 'no_change').length;
+    const failedCount = results.filter((r) => !r.ok).length;
+    logger.info({
+      candidateCount: candidates.length,
+      completedCount,
+      alreadyCount,
+      noChangeCount,
+      failedCount,
+      maxBatch,
+    }, 'POLL_TRANSFER_STATUS_COMPLETE');
+
+    return sendSuccess(res, req, {
+      message: 'Transfer status polling complete',
+      polled: results.length,
+      completedFromPolling: completedCount,
+      alreadyCompleted: alreadyCount,
+      stillPending: noChangeCount,
+      errors: failedCount,
+      results,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'POLL_TRANSFER_STATUS_ERROR');
+    return sendError(res, req, 500, 'polling_failed', 'Could not poll transfer statuses');
+  }
+});
 
 app.post('/paystack/webhook', handlePaystackWebhook);
 app.post('/webhook', handlePaystackWebhook);
