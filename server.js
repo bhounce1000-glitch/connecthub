@@ -2639,6 +2639,84 @@ async function initiatePaystackTransfer({ recipientCode, amount, reference, reas
   return { ok: response.ok && data?.status, data };
 }
 
+async function retryWalletWithdrawalInstant({ withdrawalRef, withdrawalId, wd, paystackSecret, actorEmail, retryMode = 'manual' }) {
+  const status = String(wd.status || '').toUpperCase();
+  if (!['PENDING', 'FAILED', 'PROCESSING'].includes(status)) {
+    const err = new Error(`Cannot retry a withdrawal with status "${wd.status}"`);
+    err.statusCode = 409;
+    err.errorCode = 'invalid_status';
+    throw err;
+  }
+
+  const retryRef = `${String(wd.reference || withdrawalId).split('_RETRY_')[0]}_RETRY_${Date.now()}`;
+  let useRecipientCode = wd.recipientCode || null;
+
+  if (!useRecipientCode) {
+    const retryPhones = buildGhanaPhoneVariants(normalizeGhanaPhone(wd.phoneNumber) || wd.phoneNumber);
+    const retryCodes = wd.bankCode ? [wd.bankCode] : mapNetworkToPaystackCodes(wd.provider);
+    let recipientResult = null;
+
+    for (const accountNumber of retryPhones) {
+      for (const bankCodeCandidate of retryCodes) {
+        const attempt = await createPaystackRecipient({
+          name: wd.accountName || wd.displayName || wd.userEmail,
+          accountNumber,
+          bankCode: bankCodeCandidate,
+          paystackSecret,
+        });
+        recipientResult = attempt;
+        if (attempt?.ok) break;
+      }
+      if (recipientResult?.ok) break;
+    }
+
+    if (!recipientResult?.ok) {
+      const err = new Error(recipientResult?.data?.message || 'Could not create recipient');
+      err.statusCode = 502;
+      err.errorCode = 'recipient_creation_failed';
+      throw err;
+    }
+    useRecipientCode = recipientResult.data?.data?.recipient_code;
+  }
+
+  const transferResult = await initiatePaystackTransfer({
+    recipientCode: useRecipientCode,
+    amount: parseMoney(wd.amount),
+    reference: retryRef,
+    reason: `ConnectHub retry withdrawal — ${wd.userEmail}`,
+    paystackSecret,
+  });
+
+  if (!transferResult.ok) {
+    const err = new Error(transferResult.data?.message || 'Transfer failed');
+    err.statusCode = 502;
+    err.errorCode = 'transfer_failed';
+    throw err;
+  }
+
+  const newTransferCode = String(transferResult.data?.data?.transfer_code || '').trim();
+  const nowIso = new Date().toISOString();
+  const updatePayload = {
+    status: 'PROCESSING',
+    reference: retryRef,
+    recipientCode: useRecipientCode || null,
+    transferCode: newTransferCode || null,
+    retryCount: admin.firestore.FieldValue.increment(1),
+    lastRetriedAt: nowIso,
+    lastRetriedBy: actorEmail,
+    failureReason: null,
+    updatedAt: nowIso,
+  };
+
+  if (retryMode === 'auto') {
+    updatePayload.autoRetryCount = admin.firestore.FieldValue.increment(1);
+    updatePayload.lastAutoRetriedAt = nowIso;
+  }
+
+  await withdrawalRef.set(updatePayload, { merge: true });
+  return { retryRef, transferCode: newTransferCode, nowIso };
+}
+
 app.post('/wallet/withdraw', requireAuth, async (req, res) => {
   try {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
@@ -3106,6 +3184,8 @@ app.post('/admin/withdrawals/:id/reject', requireAuth, requireAdmin, async (req,
 
 const WITHDRAWAL_SLA_HOURS = Number(process.env.WITHDRAWAL_SLA_HOURS || 24);
 const CRON_SECRET = String(process.env.CRON_SECRET || '');
+const WITHDRAWAL_AUTO_RETRY_LIMIT = Number(process.env.WITHDRAWAL_AUTO_RETRY_LIMIT || 3);
+const WITHDRAWAL_AUTO_RETRY_COOLDOWN_MINUTES = Number(process.env.WITHDRAWAL_AUTO_RETRY_COOLDOWN_MINUTES || 15);
 
 /**
  * POST /admin/withdrawals/auto-refund-overdue
@@ -3333,64 +3413,14 @@ app.post('/admin/withdrawals/:id/retry', requireAuth, requireAdmin, async (req, 
     if (!snap.exists) return sendError(res, req, 404, 'not_found', 'Withdrawal not found');
 
     const wd = snap.data() || {};
-    const status = String(wd.status || '').toUpperCase();
-    if (!['FAILED', 'PROCESSING'].includes(status)) {
-      return sendError(res, req, 409, 'invalid_status', `Cannot retry a withdrawal with status "${wd.status}"`);
-    }
-
-    const retryRef = `${String(wd.reference || withdrawalId).split('_RETRY_')[0]}_RETRY_${Date.now()}`;
-    let useRecipientCode = wd.recipientCode || null;
-
-    if (!useRecipientCode) {
-      const retryPhones = buildGhanaPhoneVariants(normalizeGhanaPhone(wd.phoneNumber) || wd.phoneNumber);
-      const retryCodes = wd.bankCode ? [wd.bankCode] : mapNetworkToPaystackCodes(wd.provider);
-      let recipientResult = null;
-
-      for (const accountNumber of retryPhones) {
-        for (const bankCodeCandidate of retryCodes) {
-          const attempt = await createPaystackRecipient({
-            name: wd.accountName || wd.displayName || wd.userEmail,
-            accountNumber,
-            bankCode: bankCodeCandidate,
-            paystackSecret,
-          });
-          recipientResult = attempt;
-          if (attempt?.ok) break;
-        }
-        if (recipientResult?.ok) break;
-      }
-
-      if (!recipientResult?.ok) {
-        return sendError(res, req, 502, 'recipient_creation_failed', recipientResult?.data?.message || 'Could not create recipient');
-      }
-      useRecipientCode = recipientResult.data?.data?.recipient_code;
-    }
-
-    const transferResult = await initiatePaystackTransfer({
-      recipientCode: useRecipientCode,
-      amount: parseMoney(wd.amount),
-      reference: retryRef,
-      reason: `ConnectHub retry withdrawal — ${wd.userEmail}`,
+    const { retryRef, transferCode: newTransferCode } = await retryWalletWithdrawalInstant({
+      withdrawalRef,
+      withdrawalId,
+      wd,
       paystackSecret,
+      actorEmail: adminActor,
+      retryMode: 'manual',
     });
-
-    if (!transferResult.ok) {
-      return sendError(res, req, 502, 'transfer_failed', transferResult.data?.message || 'Transfer failed');
-    }
-
-    const newTransferCode = String(transferResult.data?.data?.transfer_code || '').trim();
-    const nowIso = new Date().toISOString();
-
-    await withdrawalRef.set({
-      status: 'PROCESSING',
-      reference: retryRef,
-      transferCode: newTransferCode || null,
-      retryCount: admin.firestore.FieldValue.increment(1),
-      lastRetriedAt: nowIso,
-      lastRetriedBy: adminActor,
-      failureReason: null,
-      updatedAt: nowIso,
-    }, { merge: true });
 
     await logAdminAction(adminActor, 'withdrawal_retry', {
       withdrawalId,
@@ -3401,8 +3431,148 @@ app.post('/admin/withdrawals/:id/retry', requireAuth, requireAdmin, async (req, 
 
     return sendSuccess(res, req, { message: 'Retry initiated', transferCode: newTransferCode, reference: retryRef });
   } catch (error) {
+    if (error?.statusCode && error?.errorCode) {
+      return sendError(res, req, error.statusCode, error.errorCode, error.message || 'Could not retry withdrawal');
+    }
     logger.error({ err: error }, 'ADMIN_WITHDRAWAL_RETRY_ERROR');
     return sendError(res, req, 500, 'retry_failed', 'Could not retry withdrawal');
+  }
+});
+
+app.post('/admin/withdrawals/auto-retry-queued', async (req, res) => {
+  try {
+    const providedSecret = String(req.headers['x-cron-secret'] || '').trim();
+
+    if (CRON_SECRET && providedSecret === CRON_SECRET) {
+      req.user = {
+        uid: 'cron-auto-retry-withdrawals',
+        email: 'cron@local',
+        admin: true,
+        role: 'admin',
+      };
+      req.userEmail = 'cron@local';
+    } else {
+      const authHeader = String(req.headers.authorization || '');
+      if (!authHeader.startsWith('Bearer ')) {
+        return sendError(res, req, 401, 'missing_bearer_token', 'Missing bearer token');
+      }
+
+      const token = authHeader.slice('Bearer '.length).trim();
+      if (!token || token.length < 10) {
+        return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token format');
+      }
+
+      let decodedToken;
+      try {
+        decodedToken = await admin.auth().verifyIdToken(token, true);
+      } catch (authError) {
+        if (authError?.code === 'auth/id-token-revoked') {
+          return sendError(res, req, 401, 'token_revoked', 'Session expired. Please log in again.');
+        }
+        return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token');
+      }
+
+      const normalizedEmail = String(decodedToken.email || '').trim().toLowerCase();
+      if (!normalizedEmail) {
+        return sendError(res, req, 401, 'invalid_auth_token', 'Authenticated account is missing an email');
+      }
+
+      const hasAdminClaim = decodedToken.admin === true || decodedToken.role === 'admin';
+      if (!hasAdminClaim && !isAdminEmail(normalizedEmail)) {
+        return sendError(res, req, 403, 'admin_access_required', 'Admin access required');
+      }
+
+      req.user = decodedToken;
+      req.userEmail = normalizedEmail;
+    }
+
+    const paystackSecret = getPaystackSecret();
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Payment service not configured');
+    }
+
+    const actorEmail = String(req.userEmail || req.user?.email || 'cron@local').trim().toLowerCase();
+    const nowMs = Date.now();
+    const cooldownMs = WITHDRAWAL_AUTO_RETRY_COOLDOWN_MINUTES * 60 * 1000;
+    const maxBatch = Math.max(1, Math.min(25, Number(req.body?.limit || 10)));
+
+    const snap = await adminDb.collection('wallet_withdrawals')
+      .where('status', 'in', ['PENDING', 'FAILED'])
+      .limit(60)
+      .get();
+
+    const candidates = snap.docs
+      .map((docSnap) => ({ id: docSnap.id, data: docSnap.data() || {}, ref: docSnap.ref }))
+      .filter((row) => {
+        const d = row.data;
+        if (!d.manualQueue) return false;
+        if (d.refunded === true) return false;
+        const autoRetryCount = Number(d.autoRetryCount || 0);
+        if (autoRetryCount >= WITHDRAWAL_AUTO_RETRY_LIMIT) return false;
+        const lastAutoRetryMs = toMillis(d.lastAutoRetriedAt);
+        if (lastAutoRetryMs > 0 && nowMs - lastAutoRetryMs < cooldownMs) return false;
+        return true;
+      })
+      .sort((a, b) => toMillis(a.data.requestedAt || a.data.requestedAtIso) - toMillis(b.data.requestedAt || b.data.requestedAtIso))
+      .slice(0, maxBatch);
+
+    const results = [];
+    for (const item of candidates) {
+      try {
+        const retryResult = await retryWalletWithdrawalInstant({
+          withdrawalRef: item.ref,
+          withdrawalId: item.id,
+          wd: item.data,
+          paystackSecret,
+          actorEmail,
+          retryMode: 'auto',
+        });
+
+        results.push({
+          withdrawalId: item.id,
+          ok: true,
+          reference: retryResult.retryRef,
+          transferCode: retryResult.transferCode,
+        });
+      } catch (itemError) {
+        const nowIso = new Date().toISOString();
+        await item.ref.set({
+          lastAutoRetriedAt: nowIso,
+          lastAutoRetryError: itemError?.message || 'unknown_error',
+          updatedAt: nowIso,
+        }, { merge: true });
+
+        results.push({
+          withdrawalId: item.id,
+          ok: false,
+          errorCode: itemError?.errorCode || 'retry_failed',
+          error: itemError?.message || 'Could not retry withdrawal',
+        });
+      }
+    }
+
+    const successCount = results.filter((r) => r.ok).length;
+    const failedCount = results.length - successCount;
+    logger.info({
+      actorEmail,
+      candidateCount: candidates.length,
+      successCount,
+      failedCount,
+      maxBatch,
+      retryLimit: WITHDRAWAL_AUTO_RETRY_LIMIT,
+      cooldownMinutes: WITHDRAWAL_AUTO_RETRY_COOLDOWN_MINUTES,
+    }, 'AUTO_RETRY_QUEUED_WITHDRAWALS_COMPLETE');
+
+    return sendSuccess(res, req, {
+      message: 'Auto-retry run complete',
+      attempted: results.length,
+      successCount,
+      failedCount,
+      results,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'AUTO_RETRY_QUEUED_WITHDRAWALS_ERROR');
+    return sendError(res, req, 500, 'auto_retry_failed', 'Could not auto-retry queued withdrawals');
   }
 });
 
