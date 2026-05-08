@@ -1155,15 +1155,13 @@ function parseMoney(value) {
 function normalizeGhanaPhone(phone) {
   let cleaned = String(phone || '').replace(/[\s\-\(\)\+]/g, '').trim();
 
-  if (cleaned.startsWith('233') && cleaned.length === 12) {
-    cleaned = `0${cleaned.slice(3)}`;
-  }
+  // Strip country code prefix
+  if (cleaned.startsWith('00233')) cleaned = `0${cleaned.slice(5)}`;
+  else if (cleaned.startsWith('233') && cleaned.length >= 12) cleaned = `0${cleaned.slice(3)}`;
 
-  if (cleaned.startsWith('233') && cleaned.length > 12) {
-    cleaned = `0${cleaned.slice(3)}`;
-  }
-
-  if (!/^0[235][0-9]{8}$/.test(cleaned)) {
+  // Must be 10-digit starting with 0, second digit 2-5 covers all Ghana prefixes:
+  // MTN: 024,025,054,055,059  Telecel: 020,050  AirtelTigo: 026,027,056,057  others: 028,059
+  if (!/^0[2-9][0-9]{8}$/.test(cleaned)) {
     return null;
   }
 
@@ -2457,6 +2455,108 @@ async function checkJobSpam(email) {
 }
 
 // ── MoMo network code mapper ──────────────────────────────────────────────────
+// ── Manual-queue fallback (called when Paystack instant transfer is unavailable) ─
+async function queueWithdrawalManually({
+  res, req, userRef, userData, actorEmail, amount, provider,
+  bankCodeUsed, phoneUsed, accountName, withdrawalRef, nowIso, fraudCheck,
+  fallbackReason, paystackError, recipientCode,
+}) {
+  const withdrawalDocRef = adminDb.collection('wallet_withdrawals').doc(withdrawalRef);
+  const legacyWithdrawalDocRef = adminDb.collection('withdrawals').doc();
+  const transactionDocRef = adminDb.collection('transactions').doc();
+
+  await adminDb.runTransaction(async (tx) => {
+    const freshUserSnap = await tx.get(userRef);
+    const freshBalance = parseMoney(freshUserSnap.data()?.walletBalance || 0);
+    if (amount > freshBalance) {
+      const err = new Error(`Insufficient balance. Current balance is GHS ${freshBalance.toFixed(2)}`);
+      err.statusCode = 400; err.errorCode = 'insufficient_balance';
+      throw err;
+    }
+    tx.set(userRef, { walletBalance: admin.firestore.FieldValue.increment(-amount), updatedAt: nowIso }, { merge: true });
+    tx.set(withdrawalDocRef, {
+      reference: withdrawalRef, userEmail: actorEmail,
+      displayName: userData.displayName || actorEmail,
+      amount, provider, bankCode: bankCodeUsed, phoneNumber: phoneUsed,
+      accountName, recipientCode: recipientCode || null,
+      transferCode: null, status: 'PENDING', manualQueue: true,
+      paystackFallbackReason: fallbackReason || null,
+      paystackError: paystackError || null,
+      fraudFlagged: Boolean(fraudCheck?.flagged),
+      fraudReason: fraudCheck?.flagged ? String(fraudCheck.reason || 'risk_signal') : null,
+      refunded: false,
+      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+      requestedAtIso: nowIso, completedAt: null, failedAt: null,
+      failureReason: null, transferStatusEvent: null, updatedAt: nowIso,
+    });
+    tx.set(legacyWithdrawalDocRef, {
+      type: 'withdrawal', status: 'pending_admin_approval',
+      email: actorEmail, displayName: userData.displayName || actorEmail,
+      amount, provider, bankCode: bankCodeUsed, phoneNumber: phoneUsed,
+      accountName, reference: withdrawalRef, walletWithdrawalId: withdrawalRef,
+      transferCode: null,
+      requestedAt: admin.firestore.FieldValue.serverTimestamp(),
+      processedAt: null, processedBy: null,
+      notes: `Auto-queue fallback: ${fallbackReason || 'paystack_unavailable'}. Needs manual payout.`,
+      fraudFlagged: Boolean(fraudCheck?.flagged),
+      fraudReason: fraudCheck?.flagged ? String(fraudCheck.reason || 'risk_signal') : null,
+    });
+    tx.set(transactionDocRef, {
+      transactionId: withdrawalRef, type: 'withdrawal',
+      senderEmail: actorEmail, receiverEmail: actorEmail, userId: actorEmail,
+      amount, provider, bankCode: bankCodeUsed, phoneNumber: phoneUsed,
+      accountName, reference: withdrawalRef, walletWithdrawalId: withdrawalRef,
+      transferCode: null, status: 'pending',
+      paymentMethod: `MoMo (${provider})`,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(), createdAt: nowIso,
+    });
+  });
+
+  await notifyUser(
+    actorEmail,
+    `Your withdrawal of GHS ${amount.toFixed(2)} to ${provider} (${phoneUsed}) has been received and is queued for processing. You'll be notified once it's complete. Reference: ${withdrawalRef}`,
+    'Withdrawal Received',
+    { screen: 'withdrawal-history', reference: withdrawalRef }
+  );
+
+  // Alert admin
+  await adminDb.collection('notifications').add({
+    userId: ADMIN_EMAIL,
+    title: 'Manual Withdrawal Required',
+    body: `${actorEmail} needs GHS ${amount.toFixed(2)} to ${provider} ${phoneUsed}. Instant Paystack failed: ${paystackError || 'unknown'}. Ref: ${withdrawalRef}`,
+    type: 'withdrawal_manual', read: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }).catch(() => {});
+
+  if (isEmailConfigured()) {
+    sendPaymentReceiptEmail(
+      actorEmail, userData.displayName || actorEmail,
+      'Withdrawal Request Received — ConnectHub',
+      `<p>Dear ${userData.displayName || actorEmail},</p>
+       <p>Your withdrawal request has been received and is being reviewed by our team.</p>
+       <table style="width:100%;border-collapse:collapse;">
+         <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Amount</b></td><td style="padding:8px;border:1px solid #e2e8f0;">GHS ${amount.toFixed(2)}</td></tr>
+         <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Network</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${provider}</td></tr>
+         <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>MoMo Number</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${phoneUsed}</td></tr>
+         <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Reference</b></td><td style="padding:8px;border:1px solid #e2e8f0;">${withdrawalRef}</td></tr>
+         <tr><td style="padding:8px;border:1px solid #e2e8f0;"><b>Status</b></td><td style="padding:8px;border:1px solid #e2e8f0;">Queued — under review</td></tr>
+       </table>
+       <p>We will process this as soon as possible. Thank you for your patience.</p>`
+    ).catch((err) => logger.warn({ err, actorEmail }, 'QUEUED_WITHDRAWAL_EMAIL_FAILED'));
+  }
+
+  logger.info({ actorEmail, amount, provider, withdrawalRef, fallbackReason, paystackError }, 'WITHDRAWAL_QUEUED_MANUAL_FALLBACK');
+
+  return sendSuccess(res, req, {
+    message: 'Your withdrawal request has been received and is being processed.',
+    data: {
+      reference: withdrawalRef, withdrawalId: withdrawalRef,
+      transferCode: null, amount, provider,
+      phoneNumber: phoneUsed, status: 'queued',
+    },
+  });
+}
+
 function mapNetworkToPaystackCodes(networkLabel) {
   const n = String(networkLabel || '').toLowerCase().replace(/\s+/g, '');
   if (n.includes('mtn')) return ['mtn', 'MTN'];
@@ -2607,30 +2707,35 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       if (recipientResult?.ok) break;
     }
 
+    // ── Paystack recipient creation failed → queue for manual processing ──────
     if (!recipientResult?.ok) {
       logger.warn({
-        provider,
-        normalizedPhone,
-        bankCodes,
-        accountNumbers,
+        provider, normalizedPhone, bankCodes, accountNumbers,
         paystackMessage: lastRecipientMessage,
-      }, 'PAYSTACK_RECIPIENT_CREATION_FAILED');
-      return sendError(
-        res,
-        req,
-        502,
-        'recipient_creation_failed',
-        lastRecipientMessage || 'Could not verify your MoMo number. Check the number and network are correct.',
-        {
-          paystack: { message: lastRecipientMessage || null },
-          hint: 'Ensure the MoMo wallet is active for payouts and the selected network matches the number.',
-        }
-      );
+      }, 'PAYSTACK_RECIPIENT_CREATION_FAILED_QUEUING');
+      return await queueWithdrawalManually({
+        res, req, userRef, userData, actorEmail, amount, provider,
+        bankCodeUsed: bankCodeUsed || bankCodes[0] || '',
+        phoneUsed: normalizedPhone,
+        accountName, withdrawalRef, nowIso, fraudCheck,
+        fallbackReason: `recipient_creation_failed: ${lastRecipientMessage || 'Paystack did not accept recipient'}`,
+        paystackError: lastRecipientMessage,
+        recipientCode: null,
+      });
     }
 
     const recipientCode = String(recipientResult.data?.data?.recipient_code || '').trim();
     if (!recipientCode) {
-      return sendError(res, req, 502, 'recipient_creation_failed', 'Paystack did not return a recipient code. Please try again.');
+      logger.warn({ normalizedPhone, provider }, 'PAYSTACK_MISSING_RECIPIENT_CODE_QUEUING');
+      return await queueWithdrawalManually({
+        res, req, userRef, userData, actorEmail, amount, provider,
+        bankCodeUsed: bankCodeUsed || bankCodes[0] || '',
+        phoneUsed: normalizedPhone,
+        accountName, withdrawalRef, nowIso, fraudCheck,
+        fallbackReason: 'recipient_code_missing',
+        paystackError: 'Paystack did not return a recipient code',
+        recipientCode: null,
+      });
     }
 
     // Step B: Initiate transfer
@@ -2643,16 +2748,17 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     });
 
     if (!transferResult.ok) {
-      const paystackMsg = String(transferResult.data?.message || '').trim().toLowerCase();
-      logger.warn({ transferResult }, 'PAYSTACK_TRANSFER_INITIATION_FAILED');
-
-      if (paystackMsg.includes('insufficient')) {
-        return sendError(res, req, 502, 'paystack_insufficient_balance', 'Withdrawal system balance is temporarily insufficient. Please try again in a few minutes.', { paystack: { message: transferResult.data?.message } });
-      }
-      if (paystackMsg.includes('otp') || paystackMsg.includes('finalize')) {
-        return sendError(res, req, 502, 'transfer_otp_required', transferResult.data?.message || 'Transfer requires OTP finalization.');
-      }
-      return sendError(res, req, 502, 'transfer_failed', transferResult.data?.message || 'Transfer could not be initiated. Please try again.', { paystack: { message: transferResult.data?.message } });
+      const paystackMsg = String(transferResult.data?.message || '').trim();
+      logger.warn({ transferResult, paystackMsg }, 'PAYSTACK_TRANSFER_INITIATION_FAILED_QUEUING');
+      return await queueWithdrawalManually({
+        res, req, userRef, userData, actorEmail, amount, provider,
+        bankCodeUsed,
+        phoneUsed: recipientPhoneUsed,
+        accountName, withdrawalRef, nowIso, fraudCheck,
+        fallbackReason: `transfer_initiation_failed: ${paystackMsg || 'unknown'}`,
+        paystackError: paystackMsg,
+        recipientCode,
+      });
     }
 
     const transferCode = String(transferResult.data?.data?.transfer_code || '').trim();

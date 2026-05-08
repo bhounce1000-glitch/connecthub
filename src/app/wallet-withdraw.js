@@ -116,18 +116,20 @@ export default function WalletWithdraw() {
       const targetPhone = result?.data?.phoneNumber || phoneNumber.trim();
       const targetProvider = result?.data?.provider || network;
       const ref = result?.data?.reference || 'N/A';
+      const isQueued = result?.data?.status === 'queued';
 
-      setNotice({ tone: 'success', title: '✅ Withdrawal processing!', message: `GHS ${withdrawnAmount.toFixed(2)} is being sent to your MoMo. Reference: ${ref}` });
-      Alert.alert(
-        '✅ Withdrawal Initiated!',
-        `GHS ${withdrawnAmount.toFixed(2)} is being sent instantly to your ${targetProvider} account (${targetPhone}).\n\nYou will be notified once the money lands.\n\nReference: ${ref}`,
-        [
-          {
-            text: 'OK',
-            onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
-          },
-        ]
-      );
+      const alertTitle = isQueued ? '✅ Withdrawal Received!' : '✅ Withdrawal Initiated!';
+      const alertBody = isQueued
+        ? `GHS ${withdrawnAmount.toFixed(2)} has been deducted and your withdrawal to ${targetProvider} (${targetPhone}) is queued for processing.\n\nYou will be notified once the money is sent.\n\nReference: ${ref}`
+        : `GHS ${withdrawnAmount.toFixed(2)} is being sent instantly to your ${targetProvider} account (${targetPhone}).\n\nYou will be notified once the money lands.\n\nReference: ${ref}`;
+
+      setNotice({ tone: 'success', title: alertTitle, message: `Reference: ${ref}` });
+      Alert.alert(alertTitle, alertBody, [
+        {
+          text: 'OK',
+          onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
+        },
+      ]);
     } catch (error) {
       setNotice({
         tone: 'error',
