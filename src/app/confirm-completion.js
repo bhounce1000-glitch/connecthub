@@ -125,16 +125,11 @@ export default function ConfirmCompletion() {
   };
 
   const confirmAndRelease = async () => {
-    if (rating < 1 || rating > 5) {
-      setNotice({ tone: 'warning', title: 'Rating required', message: 'Please add a 1-5 star rating before confirming completion.' });
-      return;
-    }
-
     setSaving(true);
     setNotice(null);
     try {
       const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${resolvedRequestId}/confirm-completion`, {
-        rating,
+        rating: rating >= 1 && rating <= 5 ? rating : null,
         comment: comment.trim(),
       }, { requireAuth: true });
       assertApiSuccess(response, data, 'Could not confirm completion');
@@ -257,7 +252,7 @@ export default function ConfirmCompletion() {
       ) : null}
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 10 }}>Required rating before confirmation</Text>
+        <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 10 }}>Rate this job (optional)</Text>
         <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8 }}>
           {[1, 2, 3, 4, 5].map((val) => (
             <TouchableOpacity key={val} onPress={() => setRating(val)} style={{ padding: 4 }}>
@@ -265,11 +260,9 @@ export default function ConfirmCompletion() {
             </TouchableOpacity>
           ))}
         </View>
-        {rating < 1 ? (
-          <Text style={{ color: '#b45309', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
-            Select a rating (1-5 stars) to enable confirmation.
-          </Text>
-        ) : null}
+        <Text style={{ color: '#64748b', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+          You can confirm now and still rate later.
+        </Text>
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
@@ -287,14 +280,14 @@ export default function ConfirmCompletion() {
 
       <TouchableOpacity
         onPress={confirmAndRelease}
-        disabled={saving || rating < 1 || (item.status || REQUEST_STATUS.OPEN) !== REQUEST_STATUS.PENDING_CONFIRMATION}
+        disabled={saving || (item.status || REQUEST_STATUS.OPEN) !== REQUEST_STATUS.PENDING_CONFIRMATION}
         style={{
           backgroundColor: '#16a34a',
           borderRadius: AppRadius.md,
           paddingVertical: 16,
           alignItems: 'center',
           marginBottom: 10,
-          opacity: saving || rating < 1 ? 0.7 : 1,
+          opacity: saving ? 0.7 : 1,
         }}
       >
         <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>YES - Confirm & Release Payment</Text>

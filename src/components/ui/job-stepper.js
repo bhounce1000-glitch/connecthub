@@ -12,19 +12,40 @@ const STEPS = [
   { key: REQUEST_STATUS.PAID,        short: 'Paid',     color: '#166534' },
 ];
 
-export default function JobStepper({ status }) {
-  const isDisputed = status === REQUEST_STATUS.DISPUTED;
-  const currentIndex = STEPS.findIndex((s) => s.key === status);
-  const safeIndex = currentIndex < 0 ? 0 : currentIndex;
+function toBoolean(value) {
+  return value === true;
+}
+
+function computeStepCompletion(request) {
+  const paymentReference = String(request?.paymentReference || '').trim();
+  const paymentStatus = String(request?.paymentStatus || '').trim().toLowerCase();
+
+  const openDone = true;
+  const acceptedDone = Boolean(String(request?.acceptedBy || '').trim()) && Boolean(request?.acceptedAt);
+  const paymentReceived = toBoolean(request?.payment_received) && toBoolean(request?.escrowFunded) && Boolean(paymentReference) && paymentStatus === 'success';
+  const workingDone = paymentReceived && toBoolean(request?.work_started);
+  const confirmDone = toBoolean(request?.work_completed) && Boolean(request?.completedAt);
+  const doneDone = toBoolean(request?.customer_confirmed) && Boolean(request?.completionConfirmedAt);
+  const paidDone = toBoolean(request?.payment_released) && toBoolean(request?.payoutCredited) && toBoolean(request?.paid) && Boolean(request?.paidAt);
+
+  return [openDone, acceptedDone, workingDone, confirmDone, doneDone, paidDone];
+}
+
+export default function JobStepper({ request, status }) {
+  const effectiveStatus = status || request?.status;
+  const isDisputed = effectiveStatus === REQUEST_STATUS.DISPUTED;
+  const doneMap = computeStepCompletion(request || {});
+  const firstPendingIndex = doneMap.findIndex((isDone) => !isDone);
+  const currentIndex = firstPendingIndex < 0 ? STEPS.length - 1 : firstPendingIndex;
 
   return (
     <View style={{ marginTop: 12 }}>
       {/* Dots + connecting lines */}
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         {STEPS.map((step, index) => {
-          const past = index < safeIndex;
-          const active = index === safeIndex;
-          const dotColor = (past || active) ? step.color : '#d1d5db';
+          const done = doneMap[index] === true;
+          const active = !done && index === currentIndex;
+          const dotColor = (done || active) ? step.color : '#d1d5db';
 
           return (
             <Fragment key={step.key}>
@@ -33,7 +54,7 @@ export default function JobStepper({ status }) {
                   style={{
                     flex: 1,
                     height: 2,
-                    backgroundColor: index <= safeIndex ? step.color : '#e5e7eb',
+                    backgroundColor: doneMap[index - 1] && doneMap[index] ? step.color : '#e5e7eb',
                   }}
                 />
               )}
@@ -50,7 +71,7 @@ export default function JobStepper({ status }) {
                   alignItems: 'center',
                 }}
               >
-                {past && (
+                {done && (
                   <Text style={{ fontSize: 9, color: '#fff', fontWeight: '800' }}>✓</Text>
                 )}
                 {active && (
@@ -65,9 +86,9 @@ export default function JobStepper({ status }) {
       {/* Labels */}
       <View style={{ flexDirection: 'row', marginTop: 5 }}>
         {STEPS.map((step, index) => {
-          const past = index < safeIndex;
-          const active = index === safeIndex;
-          const textColor = (past || active) ? step.color : '#94a3b8';
+          const done = doneMap[index] === true;
+          const active = !done && index === currentIndex;
+          const textColor = (done || active) ? step.color : '#94a3b8';
           const align = index === 0 ? 'flex-start' : index === STEPS.length - 1 ? 'flex-end' : 'center';
 
           return (

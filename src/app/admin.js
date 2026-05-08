@@ -101,6 +101,8 @@ export default function Admin() {
   const [activityLogs, setActivityLogs] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [fraudAlerts, setFraudAlerts] = useState([]);
+  const [stuckPayments, setStuckPayments] = useState([]);
+  const [stuckLoading, setStuckLoading] = useState(false);
   const [expandedRequestMap, setExpandedRequestMap] = useState({});
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
@@ -234,6 +236,11 @@ export default function Admin() {
   useEffect(() => {
     if (!isAdmin || activeTab !== 'analytics') return;
     loadActivityLogs();
+  }, [isAdmin, activeTab]);
+
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'stuck') return;
+    loadStuckPayments();
   }, [isAdmin, activeTab]);
 
   const confirmAdminAction = (actionName, onConfirm) => {
@@ -813,6 +820,58 @@ export default function Admin() {
     }
   };
 
+  const loadStuckPayments = async () => {
+    setStuckLoading(true);
+    try {
+      const { response, data } = await apiGet(`${API_BASE_URL}/admin/jobs/stuck-payments`, { requireAuth: true });
+      if (response.ok && data?.status) {
+        setStuckPayments(Array.isArray(data.data) ? data.data : []);
+      } else {
+        setStuckPayments([]);
+      }
+    } catch {
+      setStuckPayments([]);
+    } finally {
+      setStuckLoading(false);
+    }
+  };
+
+  const runReconcileStuckPayments = async () => {
+    setPendingAction('stuck:reconcile');
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/jobs/reconcile-stuck-payments`, { maxJobs: 200 }, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not reconcile stuck payments');
+      const summary = data?.data || {};
+      setNotice({
+        tone: 'success',
+        title: 'Reconciliation complete',
+        message: `Scanned: ${summary.scanned || 0}, Fixed: ${summary.fixed || 0}, Skipped: ${summary.skipped || 0}.`,
+      });
+      await loadStuckPayments();
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Reconciliation failed', message: error?.message || 'Could not reconcile stuck payments.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const manualReleaseStuckPayment = async (requestId) => {
+    const key = `stuck:${requestId}:release`;
+    setPendingAction(key);
+    setNotice(null);
+    try {
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/jobs/${encodeURIComponent(requestId)}/manual-release`, {}, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not release payment manually');
+      setNotice({ tone: 'success', title: 'Manual release complete', message: `Payment released for ${requestId}.` });
+      await loadStuckPayments();
+    } catch (error) {
+      setNotice({ tone: 'error', title: 'Manual release failed', message: error?.message || 'Could not release payment manually.' });
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   const resolveFraudAlert = async (alertId) => {
     const key = `fraud:${alertId}:resolve`;
     setPendingAction(key);
@@ -892,6 +951,7 @@ export default function Admin() {
   const pendingKycCount = kycSubmissions.filter((k) => k.kycStatus === KYC_STATUS.PENDING_VERIFICATION).length;
   const openDisputeCount = disputes.filter((d) => (d.status || 'open') !== 'resolved').length;
   const pendingFraudCount = fraudAlerts.filter((a) => !a.resolved).length;
+  const stuckPaymentCount = stuckPayments.length;
 
   return (
     <ListScreen
@@ -922,6 +982,10 @@ export default function Admin() {
             <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
               <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Fraud Pending</Text>
               <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 18 }}>{pendingFraudCount}</Text>
+            </AppCard>
+            <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Stuck Payments</Text>
+              <Text style={{ color: '#92400e', fontWeight: '800', fontSize: 18 }}>{stuckPaymentCount}</Text>
             </AppCard>
           </View>
 
@@ -1034,6 +1098,24 @@ export default function Admin() {
                 Fraud ({pendingFraudCount})
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setActiveTab('stuck');
+                loadStuckPayments();
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'stuck' ? '#92400e' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'stuck' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Stuck ({stuckPaymentCount})
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
@@ -1052,6 +1134,8 @@ export default function Admin() {
                 ? true
               : activeTab === 'fraud'
                 ? fraudAlerts.length > 0
+              : activeTab === 'stuck'
+                ? true
                 : users.length > 0
       }
       emptyTitle={
@@ -1067,6 +1151,8 @@ export default function Admin() {
                 ? 'Loading…'
               : activeTab === 'fraud'
                 ? 'No fraud alerts'
+              : activeTab === 'stuck'
+                ? 'No stuck payments'
                 : 'No users found'
       }
       emptyDescription={
@@ -1082,6 +1168,8 @@ export default function Admin() {
                 ? 'Fetching analytics data…'
               : activeTab === 'fraud'
                 ? 'Fraud alerts will appear here when risk checks are triggered.'
+              : activeTab === 'stuck'
+                ? 'Jobs with paid/completed states but no wallet credit will appear here.'
                 : 'Users will appear here once activity is detected.'
       }
     >
@@ -1337,6 +1425,56 @@ export default function Admin() {
                   </AppCard>
                 );
               })
+            : activeTab === 'stuck'
+              ? (
+                <>
+                  <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: '#fcd34d' }}>
+                    <Text style={{ color: '#92400e', fontWeight: '800', marginBottom: 6 }}>Stuck Payment Recovery</Text>
+                    <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 10 }}>
+                      These jobs are in paid/completed states but have no payout credit marker.
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                      <AppButton
+                        label={stuckLoading ? 'Refreshing…' : 'Refresh'}
+                        variant="neutral"
+                        onPress={loadStuckPayments}
+                        loading={stuckLoading}
+                        disabled={Boolean(pendingAction)}
+                      />
+                      <AppButton
+                        label={pendingAction === 'stuck:reconcile' ? 'Reconciling…' : 'Reconcile All'}
+                        onPress={() => confirmAdminAction('Reconcile all stuck payments', runReconcileStuckPayments)}
+                        loading={pendingAction === 'stuck:reconcile'}
+                        disabled={Boolean(pendingAction)}
+                        style={{ backgroundColor: '#92400e' }}
+                      />
+                    </View>
+                  </AppCard>
+
+                  {stuckLoading ? (
+                    <Text style={{ color: AppColors.ink500 }}>Loading stuck jobs…</Text>
+                  ) : stuckPayments.length === 0 ? (
+                    <Text style={{ color: AppColors.ink500 }}>No stuck payments detected.</Text>
+                  ) : stuckPayments.map((job) => (
+                    <AppCard key={job.id} style={{ marginBottom: 10, borderWidth: 1, borderColor: '#fed7aa' }}>
+                      <Text style={{ color: AppColors.ink900, fontWeight: '800', marginBottom: 4 }}>{job.title || job.id}</Text>
+                      <Text style={{ color: AppColors.ink700, fontSize: 12 }}>Status: {job.status || 'unknown'}</Text>
+                      <Text style={{ color: AppColors.ink700, fontSize: 12 }}>Customer: {job.user || 'N/A'}</Text>
+                      <Text style={{ color: AppColors.ink700, fontSize: 12 }}>Provider: {job.acceptedBy || 'N/A'}</Text>
+                      <Text style={{ color: '#166534', fontSize: 12, fontWeight: '800', marginBottom: 8 }}>
+                        Amount: GHS {Number(job.price || 0).toFixed(2)}
+                      </Text>
+                      <AppButton
+                        label={pendingAction === `stuck:${job.id}:release` ? 'Releasing…' : 'Manual Release'}
+                        onPress={() => confirmAdminAction(`Manual release for ${job.id}`, () => manualReleaseStuckPayment(job.id))}
+                        loading={pendingAction === `stuck:${job.id}:release`}
+                        disabled={Boolean(pendingAction)}
+                        style={{ backgroundColor: '#0f766e', paddingVertical: 8 }}
+                      />
+                    </AppCard>
+                  ))}
+                </>
+              )
             : activeTab === 'users'
               ? (
                 <>

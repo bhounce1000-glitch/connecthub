@@ -128,6 +128,105 @@ checkEnvVars();
 
 const IV_LENGTH = 16;
 const OTP_COLLECTION = 'otp_verifications';
+const REQUEST_PAYOUT_COLLECTION = 'request_payouts';
+const REQUEST_STATUS_SEQUENCE = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid'];
+const ACCEPTED_PAYMENT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+function normalizeRequestStatus(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'working') return 'in_progress';
+  if (raw === 'done' || raw === 'confirmed') return 'pending_confirmation';
+  return raw || 'open';
+}
+
+function statusIndex(status) {
+  return REQUEST_STATUS_SEQUENCE.indexOf(normalizeRequestStatus(status));
+}
+
+function canAdvanceStatus(oldStatus, nextStatus) {
+  const oldIndex = statusIndex(oldStatus);
+  const nextIndex = statusIndex(nextStatus);
+  if (oldIndex < 0 || nextIndex < 0) return false;
+  return nextIndex >= oldIndex;
+}
+
+function statusTimestampField(status) {
+  const normalized = normalizeRequestStatus(status);
+  if (normalized === 'open') return 'openedAt';
+  if (normalized === 'accepted') return 'acceptedAt';
+  if (normalized === 'in_progress') return 'startedAt';
+  if (normalized === 'pending_confirmation') return 'completedAt';
+  if (normalized === 'completed') return 'completionConfirmedAt';
+  if (normalized === 'paid') return 'paidAt';
+  return null;
+}
+
+function hasEscrowPaymentProof(requestData = {}) {
+  const paymentStatus = String(requestData?.paymentStatus || '').trim().toLowerCase();
+  const paymentReference = String(requestData?.paymentReference || '').trim();
+  const escrowFunded = requestData?.escrowFunded === true;
+  const paymentReceived = requestData?.payment_received === true || requestData?.paymentReceived === true;
+  return Boolean(paymentReference) && paymentStatus === 'success' && escrowFunded && paymentReceived;
+}
+
+function lifecycleChecks(requestData = {}) {
+  const status = normalizeRequestStatus(requestData?.status || (requestData?.paid ? 'paid' : 'open'));
+  const accepted = Boolean(String(requestData?.acceptedBy || '').trim()) && Boolean(requestData?.acceptedAt);
+  const paymentReceived = hasEscrowPaymentProof(requestData);
+  const workStarted = requestData?.work_started === true || (paymentReceived && statusIndex(status) >= statusIndex('in_progress'));
+  const workCompleted = requestData?.work_completed === true || Boolean(requestData?.completedAt);
+  const customerConfirmed = requestData?.customer_confirmed === true || Boolean(requestData?.completionConfirmedAt);
+  const paymentReleased = requestData?.payment_released === true || requestData?.payoutCredited === true || requestData?.paid === true;
+
+  return {
+    accepted,
+    paymentReceived,
+    workStarted,
+    workCompleted,
+    customerConfirmed,
+    paymentReleased,
+  };
+}
+
+function validateStatusTransitionGate({ fromStatus, toStatus, requestData = {}, allowAutoConfirm = false }) {
+  const from = normalizeRequestStatus(fromStatus);
+  const to = normalizeRequestStatus(toStatus);
+  const checks = lifecycleChecks(requestData);
+
+  if (from === to) {
+    return { ok: true, reason: 'no_state_change' };
+  }
+
+  if (from === 'open' && to === 'accepted') {
+    return { ok: true, reason: 'provider_accept_required' };
+  }
+
+  if (from === 'accepted' && to === 'in_progress') {
+    return checks.paymentReceived
+      ? { ok: true, reason: 'payment_verified' }
+      : { ok: false, reason: 'payment_not_verified_or_escrow_missing' };
+  }
+
+  if (from === 'in_progress' && to === 'pending_confirmation') {
+    return checks.workStarted
+      ? { ok: true, reason: 'provider_marked_done' }
+      : { ok: false, reason: 'work_not_started' };
+  }
+
+  if (from === 'pending_confirmation' && to === 'completed') {
+    if (checks.workCompleted) return { ok: true, reason: 'customer_or_auto_confirmation' };
+    if (allowAutoConfirm) return { ok: true, reason: 'auto_confirmation_timeout' };
+    return { ok: false, reason: 'work_not_marked_completed' };
+  }
+
+  if (from === 'completed' && to === 'paid') {
+    return checks.paymentReceived
+      ? { ok: true, reason: 'escrow_release' }
+      : { ok: false, reason: 'cannot_release_without_verified_payment' };
+  }
+
+  return { ok: false, reason: `transition_not_allowed:${from}->${to}` };
+}
 
 // NOTE FOR SCALING: The SimpleCache below is in-memory.
 // It works fine for single-instance deployment (Render free/starter tier).
@@ -511,6 +610,58 @@ async function writeAuditLog({ actorEmail = null, actorUid = null, eventType, re
   }
 }
 
+async function logStatusTransition({
+  userId = null,
+  jobId,
+  oldStatus,
+  newStatus,
+  triggeredBy = 'manual',
+  actorEmail = null,
+  reason = null,
+}) {
+  try {
+    if (!jobId) return;
+    await adminDb.collection('request_status_logs').add({
+      user_id: userId || null,
+      job_id: String(jobId),
+      old_status: normalizeRequestStatus(oldStatus),
+      new_status: normalizeRequestStatus(newStatus),
+      timestamp: new Date().toISOString(),
+      triggered_by: triggeredBy,
+      actor_email: actorEmail || null,
+      reason: reason || null,
+    });
+  } catch (error) {
+    logger.error({ err: error, jobId, oldStatus, newStatus }, 'STATUS_TRANSITION_LOG_ERROR');
+  }
+}
+
+async function logStatusAttempt({
+  jobId,
+  attemptedBy = null,
+  fromStatus,
+  toStatus,
+  success,
+  reason = null,
+  source = 'api',
+}) {
+  try {
+    if (!jobId) return;
+    await adminDb.collection('request_status_attempts').add({
+      job_id: String(jobId),
+      attempted_by: attemptedBy || null,
+      from_status: normalizeRequestStatus(fromStatus),
+      to_status: normalizeRequestStatus(toStatus),
+      timestamp: new Date().toISOString(),
+      success: Boolean(success),
+      reason: reason || null,
+      source,
+    });
+  } catch (error) {
+    logger.error({ err: error, jobId, fromStatus, toStatus }, 'STATUS_ATTEMPT_LOG_ERROR');
+  }
+}
+
 async function writeNotification(userEmail, text) {
   if (!userEmail || !text) return;
   const normalizedEmail = String(userEmail).trim().toLowerCase();
@@ -698,80 +849,175 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
   }
 
   const requestRef = adminDb.collection('requests').doc(requestId);
-  const existingSnapshot = await requestRef.get();
+  const payoutRef = adminDb.collection(REQUEST_PAYOUT_COLLECTION).doc(String(requestId));
+  let beforeData = null;
+  let oldStatus = 'open';
+  let payoutAmount = 0;
+  let payoutCommission = 0;
+  let payoutProvider = '';
+  let payoutApplied = false;
+  let currentStatus = 'open';
 
-  if (!existingSnapshot.exists) {
+  await adminDb.runTransaction(async (tx) => {
+    const [existingSnapshot, payoutSnapshot] = await Promise.all([
+      tx.get(requestRef),
+      tx.get(payoutRef),
+    ]);
+
+    if (!existingSnapshot.exists) {
+      currentStatus = 'unknown';
+      return;
+    }
+
+    beforeData = existingSnapshot.data() || {};
+    currentStatus = normalizeRequestStatus(beforeData?.status || (beforeData?.paid ? 'paid' : 'open'));
+    oldStatus = currentStatus;
+
+    if (payoutSnapshot.exists && payoutSnapshot.data()?.credited === true) {
+      currentStatus = 'paid';
+      return;
+    }
+
+    if (!beforeData?.acceptedBy) {
+      currentStatus = 'missing_provider';
+      return;
+    }
+
+    if (beforeData?.paymentHold) {
+      currentStatus = 'payment_hold';
+      return;
+    }
+
+    if (!hasEscrowPaymentProof(beforeData) && !extraFields?.forceReconcile) {
+      currentStatus = 'escrow_not_held';
+      return;
+    }
+
+    if (!['completed', 'paid'].includes(currentStatus) && !extraFields?.forceReconcile) {
+      currentStatus = 'invalid_status_transition';
+      return;
+    }
+
+    const payoutGate = validateStatusTransitionGate({
+      fromStatus: currentStatus,
+      toStatus: 'paid',
+      requestData: beforeData,
+    });
+    if (!payoutGate.ok && !extraFields?.forceReconcile) {
+      currentStatus = payoutGate.reason || 'invalid_status_transition';
+      return;
+    }
+
+    const requestPrice = parseMoney(beforeData?.price);
+    payoutCommission = parseMoney(beforeData?.commission || (requestPrice * COMMISSION_RATE));
+    payoutAmount = parseMoney(beforeData?.providerNet || beforeData?.providerPayout || (requestPrice - payoutCommission));
+    payoutProvider = String(beforeData.acceptedBy || '').trim().toLowerCase();
+
+    if (!payoutProvider || payoutAmount <= 0) {
+      currentStatus = 'invalid_payout_amount';
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const userRef = adminDb.collection('users').doc(payoutProvider);
+
+    tx.set(userRef, {
+      walletBalance: admin.firestore.FieldValue.increment(payoutAmount),
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    const payload = {
+      paid: true,
+      status: 'paid',
+      paymentReference,
+      paymentStatus: 'success',
+      paidAt: nowIso,
+      escrowStatus: 'released',
+      escrowReleasedAt: nowIso,
+      escrowReleasedBy: extraFields?.source || 'customer_confirmation',
+      providerPayout: payoutAmount,
+      commission: payoutCommission,
+      providerNet: payoutAmount,
+      commissionRate: COMMISSION_RATE,
+      payoutCredited: true,
+      payoutCreditedAt: nowIso,
+      payoutCreditReason: extraFields?.source || 'customer_confirmation',
+      payment_released: true,
+      ...extraFields,
+    };
+
+    tx.set(requestRef, payload, { merge: true });
+    tx.set(payoutRef, {
+      requestId,
+      providerEmail: payoutProvider,
+      amount: payoutAmount,
+      commission: payoutCommission,
+      paymentReference,
+      credited: true,
+      creditedAt: nowIso,
+      source: extraFields?.source || 'customer_confirmation',
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    payoutApplied = true;
+    currentStatus = 'paid';
+  });
+
+  if (!beforeData) {
     return {
       updated: false,
       reason: 'request_not_found',
     };
   }
 
-  const beforeData = existingSnapshot.exists ? existingSnapshot.data() : null;
-  const currentStatus = beforeData?.status || (beforeData?.paid ? 'paid' : 'open');
-
-  if (currentStatus === 'paid') {
-    return {
-      updated: false,
-      reason: 'already_paid',
-    };
-  }
-
-  if (currentStatus !== 'completed') {
+  if (!payoutApplied) {
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: extraFields?.source || 'system',
+      fromStatus: oldStatus,
+      toStatus: 'paid',
+      success: false,
+      reason: currentStatus,
+      source: 'markRequestPaid',
+    });
+    if (currentStatus === 'paid') {
+      return {
+        updated: false,
+        reason: 'already_paid',
+      };
+    }
+    if (currentStatus === 'missing_provider') {
+      return {
+        updated: false,
+        reason: 'missing_assigned_provider',
+      };
+    }
+    if (currentStatus === 'payment_hold') {
+      return {
+        updated: false,
+        reason: 'payment_on_hold',
+      };
+    }
+    if (currentStatus === 'escrow_not_held') {
+      return {
+        updated: false,
+        reason: 'escrow_not_held',
+      };
+    }
+    if (currentStatus === 'invalid_payout_amount') {
+      return {
+        updated: false,
+        reason: 'invalid_payout_amount',
+      };
+    }
     return {
       updated: false,
       reason: 'invalid_status_transition',
-      currentStatus,
+      currentStatus: oldStatus,
     };
   }
 
-  if (!beforeData?.escrowFunded || beforeData?.escrowStatus !== 'held') {
-    return {
-      updated: false,
-      reason: 'escrow_not_held',
-      currentStatus,
-    };
-  }
-
-  if (beforeData?.paymentHold) {
-    return {
-      updated: false,
-      reason: 'payment_on_hold',
-      currentStatus,
-    };
-  }
-
-  if (!beforeData?.acceptedBy) {
-    return {
-      updated: false,
-      reason: 'missing_assigned_provider',
-      currentStatus,
-    };
-  }
-
-  const requestPrice = Number(beforeData?.price || 0);
-  const commission = parseFloat((requestPrice * COMMISSION_RATE).toFixed(2));
-  const providerNet = parseFloat((requestPrice * (1 - COMMISSION_RATE)).toFixed(2));
-
-  const payload = {
-    paid: true,
-    status: 'paid',
-    paymentReference,
-    paymentStatus: 'success',
-    paidAt: new Date().toISOString(),
-    escrowStatus: 'released',
-    escrowReleasedAt: new Date().toISOString(),
-    escrowReleasedBy: extraFields?.source || 'customer_confirmation',
-    providerPayout: providerNet,
-    commission,
-    providerNet,
-    commissionRate: COMMISSION_RATE,
-    ...extraFields,
-  };
-
-  await requestRef.set(payload, { merge: true });
-
-  await creditWalletBalance(beforeData.acceptedBy, providerNet);
+  const requestPrice = parseMoney(beforeData?.price);
 
   // Referral bonus: provider side + customer side (first paid job only).
   try {
@@ -792,14 +1038,37 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
 
   await createTransactionRecordOnServer({
     requestId,
-    requestData: { ...beforeData, ...payload },
+    requestData: {
+      ...beforeData,
+      status: 'paid',
+      paid: true,
+      providerNet: payoutAmount,
+      providerPayout: payoutAmount,
+      commission: payoutCommission,
+      paymentReference,
+    },
     transactionId: paymentReference,
     amount: requestPrice,
-    commission,
-    netAmount: providerNet,
+    commission: payoutCommission,
+    netAmount: payoutAmount,
     status: 'SUCCESS',
     paymentMethod: extraFields?.paymentChannel || 'Escrow Release',
   });
+
+  const paidStatePatch = {
+    status: 'paid',
+    paid: true,
+    paymentReference,
+    paymentStatus: 'success',
+    paidAt: beforeData?.paidAt || new Date().toISOString(),
+    escrowStatus: 'released',
+    providerPayout: payoutAmount,
+    commission: payoutCommission,
+    providerNet: payoutAmount,
+    commissionRate: COMMISSION_RATE,
+    payoutCredited: true,
+    payment_released: true,
+  };
 
   await writeAuditLog({
     actorEmail: 'paystack@system',
@@ -807,11 +1076,30 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
     eventType: 'payment_marked_paid',
     requestId,
     before: beforeData,
-    after: { ...(beforeData || {}), ...payload },
+    after: { ...(beforeData || {}), ...paidStatePatch, ...extraFields },
     metadata: {
       paymentReference,
       source: extraFields?.source || 'paystack',
     },
+  });
+
+  await logStatusTransition({
+    userId: beforeData?.user || null,
+    jobId: requestId,
+    oldStatus,
+    newStatus: 'paid',
+    triggeredBy: extraFields?.source === 'auto_confirmation' ? 'auto' : 'manual',
+    actorEmail: extraFields?.source || 'system',
+    reason: extraFields?.gatewayResponse || 'escrow_released',
+  });
+  await logStatusAttempt({
+    jobId: requestId,
+    attemptedBy: extraFields?.source || 'system',
+    fromStatus: oldStatus,
+    toStatus: 'paid',
+    success: true,
+    reason: 'payout_applied',
+    source: 'markRequestPaid',
   });
 
   const title = beforeData?.title || `Request ${requestId}`;
@@ -819,8 +1107,27 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
   if (beforeData?.acceptedBy) {
     await writeNotification(
       beforeData.acceptedBy,
-      `Payment received for "${title}". Reference: ${paymentReference}.`
+      `GHS ${payoutAmount.toFixed(2)} has been added to your wallet for "${title}". Reference: ${paymentReference}.`
     );
+    await notifyUser(
+      beforeData.acceptedBy,
+      `GHS ${payoutAmount.toFixed(2)} has been added to your wallet for "${title}".`,
+      'Wallet Credited',
+      { screen: 'wallet', requestId, jobId: requestId }
+    );
+
+    if (isEmailConfigured()) {
+      await emailTransporter.sendMail({
+        from: emailFrom,
+        to: beforeData.acceptedBy,
+        subject: 'ConnectHub - Wallet Credited',
+        html: `
+          <p>Your payout has been released for <b>${title}</b>.</p>
+          <p><b>Amount credited:</b> GHS ${payoutAmount.toFixed(2)}</p>
+          <p><b>Reference:</b> ${paymentReference}</p>
+        `,
+      }).catch((error) => logger.warn({ err: error, email: beforeData.acceptedBy }, 'PAYMENT_CREDIT_EMAIL_FAILED'));
+    }
   }
   // Notify owner that payment was processed
   if (beforeData?.user) {
@@ -833,7 +1140,7 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
   return {
     updated: true,
     reason: 'marked_paid',
-    currentStatus,
+    currentStatus: oldStatus,
   };
 }
 
@@ -1298,17 +1605,22 @@ async function maybeAwardReferralBonus(requestId, requestData) {
 async function expireDueSubscriptions() {
   try {
     const nowIso = new Date().toISOString();
-    const snapshot = await adminDb
+    const activeSnapshot = await adminDb
       .collection('users')
       .where('subscriptionStatus', '==', 'active')
-      .where('subscriptionExpiry', '<=', nowIso)
       .get();
 
-    if (snapshot.empty) {
+    const snapshotDocs = activeSnapshot.docs.filter((docItem) => {
+      const userData = docItem.data() || {};
+      const expiryIso = String(userData.subscriptionExpiry || '');
+      return Boolean(expiryIso) && expiryIso <= nowIso;
+    });
+
+    if (snapshotDocs.length === 0) {
       return;
     }
 
-    await Promise.all(snapshot.docs.map(async (docItem) => {
+    await Promise.all(snapshotDocs.map(async (docItem) => {
       const targetEmail = String(docItem.id || '').trim().toLowerCase();
       const userData = docItem.data() || {};
       const userPlan = normalizePlan(userData.subscriptionPlan || 'free');
@@ -1502,6 +1814,30 @@ async function markRequestEscrowFunded(requestId, paymentReference, extraFields 
     return { updated: false, reason: 'missing_assigned_provider', currentStatus };
   }
 
+  const fundingGate = validateStatusTransitionGate({
+    fromStatus: currentStatus,
+    toStatus: 'in_progress',
+    requestData: {
+      ...beforeData,
+      paymentStatus: 'success',
+      paymentReference,
+      escrowFunded: true,
+      payment_received: true,
+    },
+  });
+  if (!fundingGate.ok) {
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: extraFields?.source || 'paystack',
+      fromStatus: currentStatus,
+      toStatus: 'in_progress',
+      success: false,
+      reason: fundingGate.reason,
+      source: 'markRequestEscrowFunded',
+    });
+    return { updated: false, reason: fundingGate.reason, currentStatus };
+  }
+
   const requestPrice = parseMoney(beforeData?.price);
   const commission = parseMoney(requestPrice * COMMISSION_RATE);
   const providerNet = parseMoney(requestPrice - commission);
@@ -1518,6 +1854,13 @@ async function markRequestEscrowFunded(requestId, paymentReference, extraFields 
     paymentStatus: 'success',
     paymentChannel: extraFields?.paymentChannel || null,
     gatewayResponse: extraFields?.gatewayResponse || null,
+    payment_received: true,
+    paymentReceivedAt: now,
+    work_started: true,
+    workStartedAt: beforeData?.workStartedAt || now,
+    work_completed: false,
+    customer_confirmed: false,
+    payment_released: false,
     commission,
     providerNet,
     commissionRate: COMMISSION_RATE,
@@ -1526,6 +1869,25 @@ async function markRequestEscrowFunded(requestId, paymentReference, extraFields 
   };
 
   await requestRef.set(payload, { merge: true });
+
+  await logStatusTransition({
+    userId: beforeData?.user || null,
+    jobId: requestId,
+    oldStatus: currentStatus,
+    newStatus: 'in_progress',
+    triggeredBy: 'auto',
+    actorEmail: extraFields?.source || 'paystack-system',
+    reason: `escrow_funded:${paymentReference}`,
+  });
+  await logStatusAttempt({
+    jobId: requestId,
+    attemptedBy: extraFields?.source || 'paystack',
+    fromStatus: currentStatus,
+    toStatus: 'in_progress',
+    success: true,
+    reason: 'escrow_payment_verified',
+    source: 'markRequestEscrowFunded',
+  });
 
   const title = beforeData?.title || `Request ${requestId}`;
   if (beforeData?.acceptedBy) {
@@ -1892,9 +2254,21 @@ app.post('/pay/verify', payVerifyLimiter, requireAuth, async (req, res) => {
       const requestData = requestSnapshot.data() || {};
       const actorEmail = String(req.user?.email || '').trim().toLowerCase();
       const ownerEmail = String(requestData.user || '').trim().toLowerCase();
+      const referenceRequestId = String(requestId || '').trim();
+      const eventReference = String(data?.data?.reference || '').trim();
+      const chargedAmount = parseMoney(Number(data?.data?.amount || 0) / 100);
+      const requestPrice = parseMoney(requestData?.price);
+
+      if (!referenceRequestId || !eventReference) {
+        return sendError(res, req, 409, 'invalid_payment_reference', 'Payment verification payload is missing request metadata');
+      }
 
       if (!ownerEmail || ownerEmail !== actorEmail) {
         return sendError(res, req, 403, 'owner_access_required', 'Only the customer can verify and apply this payment');
+      }
+
+      if (Math.abs(chargedAmount - requestPrice) > 0.01) {
+        return sendError(res, req, 409, 'amount_mismatch', 'Verified payment amount does not match request amount');
       }
 
       paymentUpdate = await markRequestEscrowFunded(requestId, data?.data?.reference, {
@@ -3127,7 +3501,7 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
       return sendError(res, req, 409, 'request_already_accepted', 'This request is already accepted by another provider');
     }
 
-    const currentStatus = beforeData.status || 'open';
+    const currentStatus = normalizeRequestStatus(beforeData.status || 'open');
     if (!['open', 'accepted'].includes(currentStatus)) {
       return sendError(res, req, 409, 'invalid_status_transition', 'Only open requests can be accepted');
     }
@@ -3136,13 +3510,38 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
       acceptedBy: actorEmail,
       status: 'accepted',
       acceptedAt: new Date().toISOString(),
+      paymentDueAt: new Date(Date.now() + ACCEPTED_PAYMENT_TIMEOUT_MS).toISOString(),
       escrowFunded: false,
       escrowStatus: 'awaiting_payment',
+      payment_received: false,
+      work_started: false,
+      work_completed: false,
+      customer_confirmed: false,
+      payment_released: false,
       paymentHold: false,
       paid: false,
     };
 
     await requestRef.set(patch, { merge: true });
+
+    await logStatusTransition({
+      userId: actorEmail,
+      jobId: requestId,
+      oldStatus: beforeData.status || 'open',
+      newStatus: 'accepted',
+      triggeredBy: 'manual',
+      actorEmail,
+      reason: 'provider_accepted',
+    });
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: actorEmail,
+      fromStatus: beforeData.status || 'open',
+      toStatus: 'accepted',
+      success: true,
+      reason: 'provider_accepted',
+      source: 'api_accept',
+    });
 
     if (beforeData.user) {
       const providerSnap = await adminDb.collection('users').doc(actorEmail).get().catch(() => null);
@@ -3151,7 +3550,7 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
         : actorEmail;
       await notifyUser(
         beforeData.user,
-        `${providerName} has accepted your job: ${beforeData.title || requestId}`,
+        `${providerName} has accepted your job: ${beforeData.title || requestId}. Please fund escrow within 24 hours to start work.`,
         'Job Accepted!',
         { screen: 'job-details', requestId, jobId: requestId }
       );
@@ -3198,16 +3597,58 @@ app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
       return sendError(res, req, 403, 'provider_access_required', 'Only the assigned provider can mark this job complete');
     }
 
-    if (beforeData.status !== 'in_progress') {
+    if (normalizeRequestStatus(beforeData.status) !== 'in_progress') {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: actorEmail,
+        fromStatus: beforeData.status,
+        toStatus: 'pending_confirmation',
+        success: false,
+        reason: 'invalid_status_transition',
+        source: 'api_mark_complete',
+      });
       return sendError(res, req, 409, 'invalid_status_transition', 'Job must be in progress to mark complete');
+    }
+
+    if (!hasEscrowPaymentProof(beforeData) || beforeData?.work_started !== true) {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: actorEmail,
+        fromStatus: beforeData.status,
+        toStatus: 'pending_confirmation',
+        success: false,
+        reason: 'payment_or_work_start_not_verified',
+        source: 'api_mark_complete',
+      });
+      return sendError(res, req, 409, 'invalid_status_transition', 'Cannot mark complete before verified payment and work start');
     }
 
     const patch = {
       status: 'pending_confirmation',
       completedAt: new Date().toISOString(),
+      work_completed: true,
+      workCompletedAt: new Date().toISOString(),
     };
 
     await requestRef.set(patch, { merge: true });
+    await logStatusTransition({
+      userId: actorEmail,
+      jobId: requestId,
+      oldStatus: beforeData.status,
+      newStatus: 'pending_confirmation',
+      triggeredBy: 'manual',
+      actorEmail,
+      reason: 'provider_marked_done',
+    });
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: actorEmail,
+      fromStatus: beforeData.status,
+      toStatus: 'pending_confirmation',
+      success: true,
+      reason: 'provider_marked_done',
+      source: 'api_mark_complete',
+    });
 
     if (beforeData.user) {
       await notifyUser(
@@ -3298,19 +3739,97 @@ app.post('/jobs/:id/remind-customer', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/jobs/:id/cancel', requireAuth, async (req, res) => {
+  try {
+    const requestId = String(req.params.id || '').trim();
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const snap = await requestRef.get();
+    if (!snap.exists) {
+      return sendError(res, req, 404, 'request_not_found', 'Request not found');
+    }
+
+    const beforeData = snap.data() || {};
+    const ownerEmail = String(beforeData.user || '').toLowerCase();
+    if (!ownerEmail || ownerEmail !== actorEmail) {
+      return sendError(res, req, 403, 'owner_access_required', 'Only the customer can cancel this request');
+    }
+
+    const normalizedStatus = normalizeRequestStatus(beforeData.status || (beforeData.paid ? 'paid' : 'open'));
+    if (normalizedStatus !== 'open') {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: actorEmail,
+        fromStatus: beforeData.status,
+        toStatus: 'cancelled',
+        success: false,
+        reason: 'only_open_requests_can_be_cancelled',
+        source: 'api_cancel_job',
+      });
+      return sendError(res, req, 409, 'invalid_status_transition', 'Only open requests can be cancelled');
+    }
+
+    const patch = {
+      status: 'cancelled',
+      cancelledAt: new Date().toISOString(),
+      cancelledBy: actorEmail,
+      cancellationReason: 'customer_cancelled_before_acceptance',
+    };
+
+    await requestRef.set(patch, { merge: true });
+    await logStatusTransition({
+      userId: ownerEmail,
+      jobId: requestId,
+      oldStatus: beforeData.status || 'open',
+      newStatus: 'cancelled',
+      triggeredBy: 'manual',
+      actorEmail,
+      reason: 'customer_cancelled_before_acceptance',
+    });
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: actorEmail,
+      fromStatus: beforeData.status || 'open',
+      toStatus: 'cancelled',
+      success: true,
+      reason: 'customer_cancelled_before_acceptance',
+      source: 'api_cancel_job',
+    });
+
+    await writeAuditLog({
+      actorEmail,
+      actorUid: req.user?.uid || null,
+      eventType: 'customer_cancelled_request',
+      requestId,
+      before: beforeData,
+      after: { ...beforeData, ...patch },
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Request cancelled successfully',
+      data: { id: requestId, ...patch },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'JOB_CANCEL_ERROR');
+    return sendError(res, req, 500, 'job_cancel_failed', 'Could not cancel request');
+  }
+});
+
 app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
   try {
     const requestId = req.params.id;
     const actorEmail = String(req.user?.email || '').toLowerCase();
     const numericRating = Number(req.body?.rating);
     const comment = String(req.body?.comment || '').trim();
+    const hasRating = Number.isInteger(numericRating) && numericRating >= 1 && numericRating <= 5;
 
     if (!requestId) {
       return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
-    }
-
-    if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
-      return sendError(res, req, 400, 'invalid_rating', 'Rating must be an integer between 1 and 5');
     }
 
     const requestRef = adminDb.collection('requests').doc(requestId);
@@ -3328,19 +3847,64 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
     }
 
     if (beforeData.status !== 'pending_confirmation') {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: actorEmail,
+        fromStatus: beforeData.status,
+        toStatus: 'completed',
+        success: false,
+        reason: 'invalid_status_transition',
+        source: 'api_confirm_completion',
+      });
       return sendError(res, req, 409, 'invalid_status_transition', 'Job is not pending customer confirmation');
     }
 
+    if (!beforeData?.work_completed) {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: actorEmail,
+        fromStatus: beforeData.status,
+        toStatus: 'completed',
+        success: false,
+        reason: 'work_not_marked_completed',
+        source: 'api_confirm_completion',
+      });
+      return sendError(res, req, 409, 'invalid_status_transition', 'Provider must mark work complete before customer confirmation');
+    }
+
+    const nowIso = new Date().toISOString();
+    const ratingWindowDeadline = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
     const completionPatch = {
       status: 'completed',
-      completionConfirmedAt: new Date().toISOString(),
+      completionConfirmedAt: nowIso,
       completionConfirmedBy: actorEmail,
-      rating: numericRating,
-      review: comment,
-      ratedAt: new Date().toISOString(),
+      customer_confirmed: true,
+      customerConfirmedAt: nowIso,
+      rating: hasRating ? numericRating : (beforeData.rating || null),
+      review: hasRating ? comment : (beforeData.review || ''),
+      ratedAt: hasRating ? nowIso : (beforeData.ratedAt || null),
+      ratingRequiredBy: hasRating ? null : ratingWindowDeadline,
     };
 
     await requestRef.set(completionPatch, { merge: true });
+    await logStatusTransition({
+      userId: actorEmail,
+      jobId: requestId,
+      oldStatus: beforeData.status,
+      newStatus: 'completed',
+      triggeredBy: 'manual',
+      actorEmail,
+      reason: hasRating ? 'customer_confirmed_with_rating' : 'customer_confirmed_without_rating',
+    });
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: actorEmail,
+      fromStatus: beforeData.status,
+      toStatus: 'completed',
+      success: true,
+      reason: hasRating ? 'customer_confirmed_with_rating' : 'customer_confirmed_without_rating',
+      source: 'api_confirm_completion',
+    });
 
     const escrowReference = beforeData.paymentReference || `escrow_release_${requestId}_${Date.now()}`;
     const paymentUpdate = await markRequestPaid(requestId, escrowReference, {
@@ -3382,7 +3946,7 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
       before: beforeData,
       after: { ...beforeData, ...completionPatch, status: 'paid' },
       metadata: {
-        rating: numericRating,
+        rating: hasRating ? numericRating : null,
         paymentReference: escrowReference,
       },
     });
@@ -3393,6 +3957,7 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
         id: requestId,
         status: 'paid',
         paymentReference: escrowReference,
+        ratingPendingUntil: hasRating ? null : ratingWindowDeadline,
       },
     });
   } catch (error) {
@@ -3509,6 +4074,334 @@ app.post('/jobs/:id/dispute', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'OPEN_DISPUTE_ERROR');
     return sendError(res, req, 500, 'open_dispute_failed', 'Could not open dispute');
+  }
+});
+
+async function releaseEscrowForRequest({ requestId, actorEmail = 'system@connecthub', source = 'manual', forceReconcile = false }) {
+  const requestRef = adminDb.collection('requests').doc(String(requestId));
+  const requestSnap = await requestRef.get();
+  if (!requestSnap.exists) {
+    return { updated: false, reason: 'request_not_found' };
+  }
+
+  const requestData = requestSnap.data() || {};
+  const currentStatus = normalizeRequestStatus(requestData.status || (requestData.paid ? 'paid' : 'open'));
+
+  if (!hasEscrowPaymentProof(requestData)) {
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: actorEmail,
+      fromStatus: currentStatus,
+      toStatus: 'paid',
+      success: false,
+      reason: 'missing_verified_payment_proof',
+      source,
+    });
+    return { updated: false, reason: 'missing_verified_payment_proof' };
+  }
+
+  if (currentStatus === 'pending_confirmation') {
+    const confirmGate = validateStatusTransitionGate({
+      fromStatus: 'pending_confirmation',
+      toStatus: 'completed',
+      requestData,
+      allowAutoConfirm: source === 'auto_confirmation',
+    });
+    if (!confirmGate.ok) {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: actorEmail,
+        fromStatus: currentStatus,
+        toStatus: 'completed',
+        success: false,
+        reason: confirmGate.reason,
+        source,
+      });
+      return { updated: false, reason: confirmGate.reason };
+    }
+
+    const completionPatch = {
+      status: 'completed',
+      completionConfirmedAt: new Date().toISOString(),
+      completionConfirmedBy: actorEmail,
+      autoConfirmedAt: source === 'auto_confirmation' ? new Date().toISOString() : null,
+      autoConfirmed: source === 'auto_confirmation',
+      customer_confirmed: true,
+      customerConfirmedAt: new Date().toISOString(),
+    };
+    await requestRef.set(completionPatch, { merge: true });
+    await logStatusTransition({
+      userId: requestData.user || null,
+      jobId: requestId,
+      oldStatus: currentStatus,
+      newStatus: 'completed',
+      triggeredBy: source === 'auto_confirmation' ? 'auto' : 'manual',
+      actorEmail,
+      reason: source,
+    });
+  }
+
+  const escrowReference = requestData.paymentReference || `escrow_release_${requestId}_${Date.now()}`;
+  const release = await markRequestPaid(String(requestId), escrowReference, {
+    paymentChannel: 'escrow_release',
+    gatewayResponse: source === 'auto_confirmation'
+      ? 'Escrow released after 48h auto-confirmation timeout'
+      : 'Escrow released by admin reconciliation',
+    source,
+    forceReconcile,
+  });
+
+  if (release.updated) {
+    await requestRef.set({
+      completionMode: source === 'auto_confirmation' ? 'auto_confirmed' : 'manual_admin_release',
+      completionResolutionReason: source,
+      completionResolvedAt: new Date().toISOString(),
+    }, { merge: true });
+
+    if (requestData.user) {
+      await notifyUser(
+        requestData.user,
+        source === 'auto_confirmation'
+          ? `Your job "${requestData.title || requestId}" was auto-confirmed after 48 hours.`
+          : `Admin has resolved payment for your job "${requestData.title || requestId}".`,
+        'Job Resolution Update',
+        { screen: 'job-details', requestId, jobId: requestId }
+      );
+    }
+  }
+
+  return release;
+}
+
+async function collectStuckPaymentJobs(limitCount = 200) {
+  const statuses = ['done', 'confirmed', 'completed', 'paid', 'pending_confirmation'];
+  const snapshot = await adminDb.collection('requests')
+    .where('status', 'in', statuses)
+    .limit(Math.max(1, Math.min(limitCount, 500)))
+    .get();
+
+  const rows = snapshot.docs
+    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+    .filter((row) => {
+      const provider = String(row.acceptedBy || '').trim().toLowerCase();
+      if (!provider) return false;
+      if (row.payoutCredited === true) return false;
+      if (!hasEscrowPaymentProof(row)) return false;
+      return true;
+    });
+
+  return rows;
+}
+
+async function reconcileStuckPayments({ reason = 'manual_admin_release', maxJobs = 200 } = {}) {
+  const stuckJobs = await collectStuckPaymentJobs(maxJobs);
+  const results = [];
+
+  for (const row of stuckJobs) {
+    const release = await releaseEscrowForRequest({
+      requestId: row.id,
+      actorEmail: 'admin@connecthub',
+      source: reason,
+      forceReconcile: false,
+    });
+    results.push({ id: row.id, status: row.status || 'unknown', release });
+  }
+
+  return {
+    scanned: stuckJobs.length,
+    fixed: results.filter((item) => item.release?.updated).length,
+    skipped: results.filter((item) => !item.release?.updated).length,
+    items: results,
+  };
+}
+
+async function autoConfirmOverdueJobs() {
+  const pendingSnapshot = await adminDb.collection('requests')
+    .where('status', '==', 'pending_confirmation')
+    .limit(300)
+    .get();
+
+  const cutoffMs = Date.now() - (48 * 60 * 60 * 1000);
+  const overdue = pendingSnapshot.docs
+    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+    .filter((row) => {
+      const completedMs = toMillis(row.completedAt);
+      return completedMs > 0 && completedMs <= cutoffMs && hasEscrowPaymentProof(row);
+    });
+
+  let released = 0;
+  for (const row of overdue) {
+    const result = await releaseEscrowForRequest({
+      requestId: row.id,
+      actorEmail: 'auto-confirm@connecthub',
+      source: 'auto_confirmation',
+      forceReconcile: false,
+    });
+    if (result.updated) {
+      released += 1;
+      await logStatusTransition({
+        userId: row.user || null,
+        jobId: row.id,
+        oldStatus: row.status,
+        newStatus: 'paid',
+        triggeredBy: 'auto',
+        actorEmail: 'auto-confirm@connecthub',
+        reason: '48h_timeout',
+      });
+    }
+  }
+
+  if (overdue.length > 0) {
+    logger.info({ overdue: overdue.length, released }, 'AUTO_CONFIRM_48H_SWEEP_COMPLETE');
+  }
+}
+
+async function autoCancelUnpaidAcceptedJobs() {
+  const acceptedSnapshot = await adminDb.collection('requests')
+    .where('status', '==', 'accepted')
+    .limit(400)
+    .get();
+
+  const cutoffMs = Date.now() - ACCEPTED_PAYMENT_TIMEOUT_MS;
+  const overdueAccepted = acceptedSnapshot.docs
+    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+    .filter((row) => {
+      const acceptedAtMs = toMillis(row.acceptedAt);
+      if (acceptedAtMs <= 0 || acceptedAtMs > cutoffMs) return false;
+      if (row.paid === true || row.payment_released === true) return false;
+      if (row.payment_received === true || row.escrowFunded === true) return false;
+      return true;
+    });
+
+  for (const row of overdueAccepted) {
+    const requestRef = adminDb.collection('requests').doc(row.id);
+    await requestRef.set({
+      status: 'cancelled',
+      cancelledAt: new Date().toISOString(),
+      cancelledBy: 'system@connecthub',
+      cancellationReason: 'payment_timeout_24h',
+      paymentTimeoutAt: new Date().toISOString(),
+    }, { merge: true });
+
+    await logStatusTransition({
+      userId: row.user || null,
+      jobId: row.id,
+      oldStatus: row.status || 'accepted',
+      newStatus: 'cancelled',
+      triggeredBy: 'auto',
+      actorEmail: 'system@connecthub',
+      reason: 'payment_timeout_24h',
+    });
+    await logStatusAttempt({
+      jobId: row.id,
+      attemptedBy: 'system@connecthub',
+      fromStatus: row.status || 'accepted',
+      toStatus: 'cancelled',
+      success: true,
+      reason: 'payment_timeout_24h',
+      source: 'auto_cancel_unpaid',
+    });
+
+    if (row.user) {
+      await notifyUser(
+        row.user,
+        `Your job "${row.title || row.id}" was cancelled because escrow payment was not made within 24 hours.`,
+        'Job Cancelled - Payment Timeout',
+        { screen: 'job-details', requestId: row.id, jobId: row.id }
+      );
+    }
+
+    if (row.acceptedBy) {
+      await notifyUser(
+        row.acceptedBy,
+        `Job "${row.title || row.id}" was cancelled because customer payment was not received within 24 hours.`,
+        'Job Cancelled - Payment Timeout',
+        { screen: 'job-details', requestId: row.id, jobId: row.id }
+      );
+    }
+  }
+
+  if (overdueAccepted.length > 0) {
+    logger.info({ cancelled: overdueAccepted.length }, 'AUTO_CANCEL_UNPAID_ACCEPTED_COMPLETE');
+  }
+}
+
+app.get('/admin/jobs/stuck-payments', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const rows = await collectStuckPaymentJobs(200);
+    return sendSuccess(res, req, {
+      data: rows.map((row) => ({
+        id: row.id,
+        title: row.title || row.id,
+        status: row.status || 'unknown',
+        user: row.user || null,
+        acceptedBy: row.acceptedBy || null,
+        price: parseMoney(row.price),
+        escrowFunded: Boolean(row.escrowFunded),
+        payoutCredited: Boolean(row.payoutCredited),
+        completedAt: row.completedAt || null,
+        paidAt: row.paidAt || null,
+      })),
+      count: rows.length,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_STUCK_PAYMENTS_LIST_ERROR');
+    return sendError(res, req, 500, 'admin_stuck_payments_failed', 'Could not load stuck payments');
+  }
+});
+
+app.post('/admin/jobs/:id/manual-release', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const requestId = String(req.params.id || '').trim();
+    if (!requestId) {
+      return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+    }
+
+    const result = await releaseEscrowForRequest({
+      requestId,
+      actorEmail: req.userEmail || req.user?.email || ADMIN_EMAIL,
+      source: 'manual_admin_release',
+      forceReconcile: false,
+    });
+
+    await logAdminAction(req.userEmail || req.user?.email || ADMIN_EMAIL, 'manual_admin_release', {
+      requestId,
+      releaseResult: result,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
+
+    if (!result.updated) {
+      return sendError(res, req, 409, 'manual_release_skipped', 'Manual release skipped', result);
+    }
+
+    return sendSuccess(res, req, {
+      message: 'Payment released manually',
+      data: { requestId, result },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_MANUAL_RELEASE_ERROR');
+    return sendError(res, req, 500, 'manual_release_failed', 'Could not release payment manually');
+  }
+});
+
+app.post('/admin/jobs/reconcile-stuck-payments', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const maxJobs = Number(req.body?.maxJobs || 200);
+    const summary = await reconcileStuckPayments({ reason: 'manual_admin_release', maxJobs });
+    await logAdminAction(req.userEmail || req.user?.email || ADMIN_EMAIL, 'reconcile_stuck_payments', {
+      summary: {
+        scanned: summary.scanned,
+        fixed: summary.fixed,
+        skipped: summary.skipped,
+      },
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
+    return sendSuccess(res, req, { data: summary });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_RECONCILE_STUCK_PAYMENTS_ERROR');
+    return sendError(res, req, 500, 'reconcile_stuck_payments_failed', 'Could not reconcile stuck payments');
   }
 });
 
@@ -3864,9 +4757,15 @@ function scheduleDailySubscriptionSweep() {
   setTimeout(() => {
     expireDueSubscriptions();
     cleanupExpiredOTPs();
+    autoConfirmOverdueJobs().catch((error) => logger.error({ err: error }, 'AUTO_CONFIRM_SWEEP_ERROR'));
+    reconcileStuckPayments({ reason: 'auto_reconcile_stuck_payments', maxJobs: 120 }).catch((error) => logger.error({ err: error }, 'AUTO_RECONCILE_SWEEP_ERROR'));
+    autoCancelUnpaidAcceptedJobs().catch((error) => logger.error({ err: error }, 'AUTO_CANCEL_UNPAID_SWEEP_ERROR'));
     setInterval(() => {
       expireDueSubscriptions();
       cleanupExpiredOTPs();
+      autoConfirmOverdueJobs().catch((error) => logger.error({ err: error }, 'AUTO_CONFIRM_SWEEP_ERROR'));
+      reconcileStuckPayments({ reason: 'auto_reconcile_stuck_payments', maxJobs: 120 }).catch((error) => logger.error({ err: error }, 'AUTO_RECONCILE_SWEEP_ERROR'));
+      autoCancelUnpaidAcceptedJobs().catch((error) => logger.error({ err: error }, 'AUTO_CANCEL_UNPAID_SWEEP_ERROR'));
     }, 24 * 60 * 60 * 1000);
   }, delayMs);
 }
@@ -3874,6 +4773,9 @@ function scheduleDailySubscriptionSweep() {
 scheduleDailySubscriptionSweep();
 expireDueSubscriptions();
 cleanupExpiredOTPs();
+autoConfirmOverdueJobs().catch((error) => logger.error({ err: error }, 'AUTO_CONFIRM_SWEEP_ERROR'));
+reconcileStuckPayments({ reason: 'startup_reconcile_stuck_payments', maxJobs: 80 }).catch((error) => logger.error({ err: error }, 'AUTO_RECONCILE_SWEEP_ERROR'));
+autoCancelUnpaidAcceptedJobs().catch((error) => logger.error({ err: error }, 'AUTO_CANCEL_UNPAID_SWEEP_ERROR'));
 
 app.post('/admin/sync-claims', requireAdminOrBootstrapSecret, async (req, res) => {
   try {
@@ -4063,7 +4965,7 @@ app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, 
     const requestId = req.params.id;
     const { status, note } = req.body || {};
 
-    const allowedStatuses = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'disputed', 'cancelled'];
+    const allowedStatuses = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid', 'disputed', 'cancelled'];
 
     if (!requestId) {
       return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
@@ -4081,8 +4983,45 @@ app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, 
     }
 
     const beforeData = existingSnapshot.data();
+    const oldStatus = normalizeRequestStatus(beforeData?.status || (beforeData?.paid ? 'paid' : 'open'));
+    const newStatus = normalizeRequestStatus(status);
+
+    if (['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid'].includes(oldStatus)
+      && ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid'].includes(newStatus)
+      && !canAdvanceStatus(oldStatus, newStatus)) {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: req.user?.email || null,
+        fromStatus: oldStatus,
+        toStatus: newStatus,
+        success: false,
+        reason: 'backward_transition_blocked',
+        source: 'admin_moderate',
+      });
+      return sendError(res, req, 409, 'invalid_status_transition', `Cannot move request backward from ${oldStatus} to ${newStatus}`);
+    }
+
+    const gate = validateStatusTransitionGate({
+      fromStatus: oldStatus,
+      toStatus: newStatus,
+      requestData: beforeData,
+      allowAutoConfirm: false,
+    });
+    if (!gate.ok && !['disputed', 'cancelled', 'open'].includes(newStatus)) {
+      await logStatusAttempt({
+        jobId: requestId,
+        attemptedBy: req.user?.email || null,
+        fromStatus: oldStatus,
+        toStatus: newStatus,
+        success: false,
+        reason: gate.reason,
+        source: 'admin_moderate',
+      });
+      return sendError(res, req, 409, 'invalid_status_transition', `Cannot move request from ${oldStatus} to ${newStatus}: ${gate.reason}`);
+    }
+
     const patch = {
-      status,
+      status: newStatus,
       moderatedBy: req.user?.email || null,
       moderatedAt: new Date().toISOString(),
       moderationNote: note || null,
@@ -4091,6 +5030,11 @@ app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, 
     if (status === 'open') {
       patch.acceptedBy = null;
       patch.paid = false;
+      patch.payment_received = false;
+      patch.work_started = false;
+      patch.work_completed = false;
+      patch.customer_confirmed = false;
+      patch.payment_released = false;
       patch.escrowFunded = false;
       patch.escrowStatus = null;
       patch.paymentHold = false;
@@ -4100,6 +5044,24 @@ app.post('/admin/requests/:id/moderate', requireAuth, requireAdmin, async (req, 
     }
 
     await requestRef.set(patch, { merge: true });
+    await logStatusTransition({
+      userId: beforeData?.user || null,
+      jobId: requestId,
+      oldStatus,
+      newStatus,
+      triggeredBy: 'manual',
+      actorEmail: req.user?.email || null,
+      reason: 'admin_status_change',
+    });
+    await logStatusAttempt({
+      jobId: requestId,
+      attemptedBy: req.user?.email || null,
+      fromStatus: oldStatus,
+      toStatus: newStatus,
+      success: true,
+      reason: 'admin_status_change',
+      source: 'admin_moderate',
+    });
 
     await writeAuditLog({
       actorEmail: req.user?.email || null,
@@ -4804,8 +5766,8 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
       commission = parseMoney(grossProviderShare * COMMISSION_RATE);
       providerPayout = parseMoney(grossProviderShare - commission);
       customerRefund = 0;
-      nextStatus = 'paid';
-      paid = true;
+      nextStatus = 'completed';
+      paid = false;
     } else if (resolution === 'refund_customer') {
       grossProviderShare = 0;
       commission = 0;
@@ -4818,8 +5780,8 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
       commission = parseMoney(grossProviderShare * COMMISSION_RATE);
       providerPayout = parseMoney(grossProviderShare - commission);
       customerRefund = parseMoney(requestPrice - grossProviderShare);
-      nextStatus = 'paid';
-      paid = true;
+      nextStatus = 'completed';
+      paid = false;
     }
 
     const paymentReference = `dispute_${resolution}_${requestId}_${Date.now()}`;
@@ -4827,6 +5789,8 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
       status: nextStatus,
       paid,
       paidAt: paid ? now : null,
+      payment_released: false,
+      payoutCredited: false,
       paymentHold: false,
       escrowStatus: resolution === 'refund_customer' ? 'refunded' : 'released',
       disputeResolvedAt: now,
@@ -4838,18 +5802,25 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
       commission,
       commissionRate: COMMISSION_RATE,
       customerRefund,
-      paymentReference,
-      paymentStatus: resolution === 'refund_customer' ? 'refunded' : 'resolved',
-      paymentChannel: 'dispute_resolution',
+      customer_confirmed: resolution === 'refund_customer' ? false : true,
+      customerConfirmedAt: resolution === 'refund_customer' ? null : now,
+      paymentReference: beforeRequest.paymentReference || null,
+      paymentStatus: resolution === 'refund_customer'
+        ? 'refunded'
+        : (beforeRequest.paymentStatus || 'success'),
+      paymentChannel: beforeRequest.paymentChannel || 'paystack',
       gatewayResponse: resolution === 'release_to_worker'
         ? 'Escrow released to provider by admin after dispute review'
         : resolution === 'refund_customer'
           ? 'Escrow refunded to customer by admin after dispute review'
           : 'Escrow split between customer and provider by admin after dispute review',
+      disputeResolutionReference: paymentReference,
       splitPercentToWorker: resolution === 'split' ? splitPercentToWorker : null,
       splitPercentToCustomer: resolution === 'split' ? parseFloat((100 - splitPercentToWorker).toFixed(2)) : null,
       refundAmount: resolution === 'refund_customer' ? customerRefund : null,
       refundedAt: resolution === 'refund_customer' ? now : null,
+      payoutCreditedAt: null,
+      payoutCreditReason: null,
     };
 
     await requestRef.set(requestPatch, { merge: true });
@@ -4924,18 +5895,18 @@ app.post('/admin/disputes/:id/resolve', requireAuth, requireAdmin, async (req, r
     });
 
     if (providerPayout > 0 && beforeRequest.acceptedBy) {
-      await creditWalletBalance(beforeRequest.acceptedBy, providerPayout);
-
-      await createTransactionRecordOnServer({
-        requestId,
-        requestData: { ...beforeRequest, ...requestPatch },
-        transactionId: paymentReference,
-        amount: grossProviderShare,
-        commission,
-        netAmount: providerPayout,
-        status: 'SUCCESS',
-        paymentMethod: 'Dispute Resolution',
+      const payoutRelease = await markRequestPaid(requestId, paymentReference, {
+        paymentChannel: 'dispute_resolution',
+        gatewayResponse: requestPatch.gatewayResponse,
+        source: 'dispute_resolution',
       });
+
+      if (!payoutRelease.updated) {
+        return sendError(res, req, 409, 'dispute_payout_release_failed', 'Dispute resolved but payout release failed', payoutRelease);
+      }
+
+      nextStatus = 'paid';
+      paid = true;
     }
 
     return sendSuccess(res, req, {

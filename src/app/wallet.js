@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
 
@@ -141,6 +141,47 @@ export default function Wallet() {
     loadWallet();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEmail, refresh]);
+
+  useEffect(() => {
+    if (!currentEmail) return undefined;
+    const userRef = doc(db, 'users', currentEmail);
+    return onSnapshot(userRef, (snap) => {
+      const balance = snap.exists() ? Number(snap.data()?.walletBalance || 0) : 0;
+      setWalletBalance(Number.isFinite(balance) ? balance : 0);
+    });
+  }, [currentEmail]);
+
+  useEffect(() => {
+    if (!currentEmail) return undefined;
+
+    const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
+    const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
+
+    let sentRows = [];
+    let receivedRows = [];
+
+    const mergeRows = () => {
+      const byId = new Map();
+      [...sentRows, ...receivedRows].forEach((row) => byId.set(row.id, row));
+      const merged = Array.from(byId.values()).sort((a, b) => toMs(b.timestamp) - toMs(a.timestamp));
+      setTransactions(merged);
+    };
+
+    const unsubSent = onSnapshot(sentQ, (snap) => {
+      sentRows = snap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'sent' }));
+      mergeRows();
+    });
+
+    const unsubReceived = onSnapshot(receivedQ, (snap) => {
+      receivedRows = snap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'received' }));
+      mergeRows();
+    });
+
+    return () => {
+      unsubSent();
+      unsubReceived();
+    };
+  }, [currentEmail]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);

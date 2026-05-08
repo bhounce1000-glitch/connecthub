@@ -66,8 +66,13 @@ export default function Pay() {
         const snapshot = await getDoc(doc(db, 'requests', requestId));
         const row = snapshot.exists() ? snapshot.data() : {};
         const status = row?.status || null;
-        const isPaid = Boolean(row?.paid) || status === 'paid';
-        const isEscrowFunded = Boolean(row?.escrowFunded) || status === 'in_progress' || status === 'pending_confirmation' || status === 'completed' || status === 'disputed' || status === 'paid';
+        const paymentReference = String(row?.paymentReference || '').trim();
+        const paymentStatus = String(row?.paymentStatus || '').trim().toLowerCase();
+        const isPaid = Boolean(row?.payment_released) || Boolean(row?.paid);
+        const isEscrowFunded = Boolean(row?.payment_received)
+          && Boolean(row?.escrowFunded)
+          && Boolean(paymentReference)
+          && paymentStatus === 'success';
 
         if (isMounted) {
           setRequestState({

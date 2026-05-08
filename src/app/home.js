@@ -1,7 +1,7 @@
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { collection, doc, getDoc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { collection, getDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -21,10 +21,28 @@ import { apiPost, assertApiSuccess } from '../utils/api-client';
 import { distanceKm, getLocationCity, getLocationCoords, getLocationLabel } from '../utils/location';
 
 function getEffectiveStatus(item) {
-  if (item.status) return item.status;
   if (item.paid) return REQUEST_STATUS.PAID;
+  if (item.status) return item.status;
   if (item.acceptedBy) return REQUEST_STATUS.ACCEPTED;
   return REQUEST_STATUS.OPEN;
+}
+
+function isOverduePending(item) {
+  const status = getEffectiveStatus(item);
+  if (status !== REQUEST_STATUS.PENDING_CONFIRMATION) return false;
+  const completedMs = item?.completedAt?.seconds
+    ? item.completedAt.seconds * 1000
+    : new Date(item?.completedAt || 0).getTime();
+  if (!Number.isFinite(completedMs) || completedMs <= 0) return false;
+  return (Date.now() - completedMs) > (48 * 60 * 60 * 1000);
+}
+
+function isWithinRatingWindow(item) {
+  const paidMs = item?.paidAt?.seconds
+    ? item.paidAt.seconds * 1000
+    : new Date(item?.paidAt || 0).getTime();
+  if (!Number.isFinite(paidMs) || paidMs <= 0) return true;
+  return (Date.now() - paidMs) <= (72 * 60 * 60 * 1000);
 }
 
 const STATUS_META = {
@@ -286,10 +304,8 @@ export default function Home() {
     await runRequestAction(
       item, 'cancel', 'Request cancelled', `${item.title} was cancelled and moved to history.`,
       async () => {
-        await updateDoc(doc(db, 'requests', item.id), {
-          status: REQUEST_STATUS.CANCELLED,
-          cancelledAt: new Date().toISOString(),
-        });
+        const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/cancel`, {}, { requireAuth: true });
+        assertApiSuccess(response, data, 'Could not cancel this request');
       }
     );
   };
@@ -327,7 +343,9 @@ export default function Home() {
       { text: 'Open', onPress: () => setStatusFilter(REQUEST_STATUS.OPEN) },
       { text: 'Accepted', onPress: () => setStatusFilter(REQUEST_STATUS.ACCEPTED) },
       { text: 'In Progress', onPress: () => setStatusFilter(REQUEST_STATUS.IN_PROGRESS) },
-      { text: 'Completed', onPress: () => setStatusFilter('completed') },
+      { text: 'Overdue Pending', onPress: () => setStatusFilter('overdue_pending') },
+      { text: 'Completed Jobs', onPress: () => setStatusFilter('completed') },
+      { text: 'Paid Jobs', onPress: () => setStatusFilter('paid') },
       { text: 'Cancel', style: 'cancel' },
     ]);
   };
@@ -372,10 +390,10 @@ export default function Home() {
     return requests.filter((item) => {
       if (!item.title || !item.location || !item.price) return false;
       const status = getEffectiveStatus(item);
-      if (status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED || status === REQUEST_STATUS.CANCELLED) return false;
       const isOwner = item.user === currentEmail;
       const isProvider = item.acceptedBy === currentEmail;
       const isOpen = status === REQUEST_STATUS.OPEN;
+      const isTerminal = status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED || status === REQUEST_STATUS.CANCELLED;
       if (!isOwner && !isProvider && !(isOpen && !isOwner)) return false;
       // Search filter
       const locationLabel = getLocationLabel(item.location) || item.locationText || '';
@@ -392,11 +410,16 @@ export default function Home() {
 
       if (statusFilter !== 'all') {
         if (statusFilter === 'completed') {
-          const done = [REQUEST_STATUS.COMPLETED, REQUEST_STATUS.PAID].includes(status) || item.paid;
-          if (!done) return false;
+          if (status !== REQUEST_STATUS.COMPLETED) return false;
+        } else if (statusFilter === 'paid') {
+          if (status !== REQUEST_STATUS.PAID && !item.paid) return false;
+        } else if (statusFilter === 'overdue_pending') {
+          if (!isOverduePending(item)) return false;
         } else if (status !== statusFilter) {
           return false;
         }
+      } else if (isTerminal) {
+        return false;
       }
 
       // Providers can narrow by city and near-me radius for faster job discovery.
@@ -820,7 +843,7 @@ export default function Home() {
                 </View>
 
                 {/* Visual status stepper */}
-                <JobStepper status={status} />
+                <JobStepper status={status} request={item} />
 
                 {/* Action buttons */}
                 {!item.acceptedBy && !isOwner && status === REQUEST_STATUS.OPEN ? (
@@ -843,6 +866,11 @@ export default function Home() {
                   <View style={{ marginTop: AppSpace.sm, backgroundColor: '#fef9c3', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#facc15' }}>
                     <Text style={{ color: '#a16207', fontWeight: '800', fontSize: 12 }}>Awaiting Customer Confirmation</Text>
                     <Text style={{ color: '#a16207', fontSize: 12, marginTop: 2 }}>Payment remains locked until customer confirms.</Text>
+                    {isOverduePending(item) ? (
+                      <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 12, marginTop: 6 }}>
+                        Overdue - no customer response (48h+). Auto-confirm will release payment.
+                      </Text>
+                    ) : null}
                   </View>
                 ) : null}
 
@@ -863,11 +891,11 @@ export default function Home() {
                   <AppButton label={isConfirmingDelete ? 'Tap Again To Cancel Request' : 'Cancel Request'} variant="danger" onPress={() => handleCancel(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'cancel'} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
-                {isOwner && status === REQUEST_STATUS.PAID && item.acceptedBy && !item.rating ? (
+                {isOwner && status === REQUEST_STATUS.PAID && item.acceptedBy && !item.rating && isWithinRatingWindow(item) ? (
                   <AppButton label="⭐ Rate Provider" variant="warning" onPress={() => openRateScreen(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
-                {isProvider && status === REQUEST_STATUS.PAID && !item.customerRating ? (
+                {isProvider && status === REQUEST_STATUS.PAID && !item.customerRating && isWithinRatingWindow(item) ? (
                   <AppButton label="⭐ Rate Customer" variant="warning" onPress={() => openRateCustomerScreen(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 

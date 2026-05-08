@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { useState } from 'react';
 import {
@@ -183,11 +183,42 @@ export default function RequestWizard() {
         preferredDate: preferredDate.trim(),
         image: imageUrl || '',
         user: user.email,
+        userId: user.email,
         status: 'open',
         paid: false,
         acceptedBy: null,
+        payment_received: false,
+        work_started: false,
+        work_completed: false,
+        customer_confirmed: false,
+        payment_released: false,
         createdAt: serverTimestamp(),
       });
+
+      try {
+        const providerQuery = query(collection(db, 'providers'), where('isAvailable', '==', true));
+        const providerSnap = await getDocs(providerQuery);
+        const matching = providerSnap.docs
+          .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+          .filter((row) => {
+            const providerCategory = String(row.category || '').trim().toLowerCase();
+            return !providerCategory || providerCategory === String(category || '').trim().toLowerCase();
+          })
+          .slice(0, 50);
+
+        await Promise.all(matching.map((provider) => addDoc(collection(db, 'notifications'), {
+          user: provider.email || provider.id,
+          userId: provider.email || provider.id,
+          title: 'New Job Posted',
+          body: `${title.trim()} • ${locationLabel} • GHS ${isFlexible ? 'Negotiable' : Number(price || 0).toFixed(2)}`,
+          type: 'job_posted',
+          read: false,
+          createdAt: serverTimestamp(),
+        })));
+      } catch {
+        // Non-blocking: request creation should still succeed even if broadcast fails.
+      }
+
       setIsSuccess(true);
     } catch (_e) {
       setError('Failed to post job. Please try again.');

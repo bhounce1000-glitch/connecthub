@@ -7,12 +7,14 @@ import AppCard from '../components/ui/app-card';
 import AppNotice from '../components/ui/app-notice';
 import LoadingSkeleton from '../components/ui/loading-skeleton';
 import { CATEGORY_ICONS, REQUEST_STATUS, STATUS_LABELS } from '../constants/access';
+import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
+import { apiPost, assertApiSuccess } from '../utils/api-client';
 import { getLocationLabel } from '../utils/location';
 
-import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 
 const STATUS_STYLE = {
   [REQUEST_STATUS.OPEN]: { border: '#2563eb', badgeBg: '#dbeafe', badgeText: '#1d4ed8', label: 'Open' },
@@ -32,6 +34,16 @@ function postedAgo(value) {
   if (diffDays === 0) return 'Posted today';
   if (diffDays === 1) return 'Posted 1 day ago';
   return `Posted ${diffDays} days ago`;
+}
+
+function isOverduePending(item) {
+  const status = item.status || REQUEST_STATUS.OPEN;
+  if (status !== REQUEST_STATUS.PENDING_CONFIRMATION) return false;
+  const completedMs = item?.completedAt?.seconds
+    ? item.completedAt.seconds * 1000
+    : new Date(item?.completedAt || 0).getTime();
+  if (!Number.isFinite(completedMs) || completedMs <= 0) return false;
+  return (Date.now() - completedMs) > (48 * 60 * 60 * 1000);
 }
 
 function EmptyState({ emoji, title, subtitle, actionLabel, onAction }) {
@@ -87,7 +99,8 @@ export default function MyRequests() {
   const visibleRequests = useMemo(() => {
     return myRequests.filter((item) => {
       const status = item.status || REQUEST_STATUS.OPEN;
-      if (tab === 'completed') return status === REQUEST_STATUS.PAID || item.paid;
+      if (tab === 'completed') return status === REQUEST_STATUS.COMPLETED;
+      if (tab === 'paid') return status === REQUEST_STATUS.PAID || item.paid;
       if (tab === 'active') return status !== REQUEST_STATUS.PAID && status !== REQUEST_STATUS.CANCELLED && !item.paid;
       return true;
     });
@@ -114,10 +127,8 @@ export default function MyRequests() {
 
       setPendingDeleteId(item.id);
       setNotice(null);
-      await updateDoc(doc(db, 'requests', item.id), {
-        status: REQUEST_STATUS.CANCELLED,
-        cancelledAt: new Date().toISOString(),
-      });
+      const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${item.id}/cancel`, {}, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not cancel this request');
       setConfirmDeleteId(null);
       setNotice({ tone: 'success', title: 'Request cancelled', message: `${item.title} was cancelled and kept in history.` });
     } catch (error) {
@@ -158,7 +169,10 @@ export default function MyRequests() {
       return <EmptyState emoji="📋" title="No active requests" subtitle="Post a job to get started" actionLabel="Post a Job" onAction={() => router.push('/request-wizard')} />;
     }
     if (tab === 'completed') {
-      return <EmptyState emoji="✅" title="No completed jobs yet" subtitle="Jobs you complete will appear here" />;
+      return <EmptyState emoji="✅" title="No completed jobs yet" subtitle="Confirmed jobs waiting for payout will appear here" />;
+    }
+    if (tab === 'paid') {
+      return <EmptyState emoji="💸" title="No paid jobs yet" subtitle="Paid jobs will appear here once wallet payout is done" />;
     }
     return <EmptyState emoji="📭" title="No requests yet" />;
   };
@@ -173,6 +187,7 @@ export default function MyRequests() {
       <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: AppRadius.md, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
         <TabButton keyName="active" label="Active" />
         <TabButton keyName="completed" label="Completed" />
+        <TabButton keyName="paid" label="Paid" />
         <TabButton keyName="all" label="All" />
       </View>
 
@@ -233,6 +248,11 @@ export default function MyRequests() {
 
               {status === REQUEST_STATUS.PENDING_CONFIRMATION ? (
                 <View style={{ marginTop: AppSpace.sm }}>
+                  {isOverduePending(item) ? (
+                    <View style={{ backgroundColor: '#fff1f2', borderWidth: 1, borderColor: '#fecdd3', borderRadius: 8, padding: 8, marginBottom: 8 }}>
+                      <Text style={{ color: '#be123c', fontSize: 12, fontWeight: '800' }}>Overdue - waiting 48h+ for customer confirmation</Text>
+                    </View>
+                  ) : null}
                   <AppButton
                     label="Confirm Work ✅"
                     onPress={() => router.push({ pathname: '/confirm-completion', params: { requestId: item.id } })}
