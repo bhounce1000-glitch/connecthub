@@ -3970,6 +3970,49 @@ app.post('/subscription/cancel', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/subscription/client-event', requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const eventName = String(req.body?.event || '').trim().toLowerCase();
+    const plan = normalizePlan(req.body?.plan || 'free');
+    const platform = String(req.body?.platform || '').trim().toLowerCase();
+    const status = String(req.body?.status || '').trim().toLowerCase();
+    const message = String(req.body?.message || '').trim().slice(0, 500);
+    const reference = String(req.body?.reference || '').trim().slice(0, 120);
+    const sessionType = String(req.body?.sessionType || '').trim().toLowerCase();
+
+    if (!actorEmail) {
+      return sendError(res, req, 401, 'invalid_auth_token', 'Could not determine authenticated user');
+    }
+
+    if (!eventName) {
+      return sendError(res, req, 400, 'missing_event', 'event is required');
+    }
+
+    const nowIso = new Date().toISOString();
+    await adminDb.collection('subscription_client_events').add({
+      email: actorEmail,
+      event: eventName,
+      plan,
+      platform,
+      status,
+      message,
+      reference: reference || null,
+      sessionType: sessionType || null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: nowIso,
+      ip: req.ip || null,
+      userAgent: String(req.headers['user-agent'] || '').slice(0, 300),
+    });
+
+    logger.info({ actorEmail, eventName, plan, platform, status }, 'SUBSCRIPTION_CLIENT_EVENT_RECORDED');
+    return sendSuccess(res, req, { message: 'Subscription client event recorded' });
+  } catch (error) {
+    logger.error({ err: error }, 'SUBSCRIPTION_CLIENT_EVENT_ERROR');
+    return sendError(res, req, 500, 'subscription_client_event_failed', 'Could not record subscription client event');
+  }
+});
+
 async function pollPaystackTransferStatus(transferCode, paystackSecret) {
   try {
     const response = await fetch(`https://api.paystack.co/transfer/${transferCode}`, {

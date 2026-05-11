@@ -55,6 +55,11 @@ export default function Subscription() {
 
     if (resolvedStatus === 'success' && resolvedPlan) {
       const label = String(resolvedPlan).trim().toLowerCase();
+      void logSubscriptionEvent({
+        event: 'callback_status_seen',
+        planKey: label,
+        statusText: 'success',
+      });
       Alert.alert('Subscription Activated', `🎉 Your ${label} plan is now active!`);
       setNotice({
         tone: 'success',
@@ -65,6 +70,11 @@ export default function Subscription() {
     }
 
     if (resolvedStatus === 'failed') {
+      void logSubscriptionEvent({
+        event: 'callback_status_seen',
+        planKey: String(resolvedPlan || '').trim().toLowerCase() || 'free',
+        statusText: 'failed',
+      });
       Alert.alert('Payment Failed', 'Payment failed. Please try again.');
       setNotice({
         tone: 'error',
@@ -73,6 +83,27 @@ export default function Subscription() {
       });
     }
   }, [resolvedStatus, resolvedPlan]);
+
+  const logSubscriptionEvent = async ({ event, planKey, statusText = '', message = '', reference = '', sessionType = '' }) => {
+    if (!currentEmail) return;
+    try {
+      await apiPost(
+        `${API_BASE_URL}/subscription/client-event`,
+        {
+          event,
+          plan: planKey,
+          platform: Platform.OS,
+          status: statusText,
+          message,
+          reference,
+          sessionType,
+        },
+        { requireAuth: true }
+      );
+    } catch {
+      // Diagnostics logging must never break checkout flow.
+    }
+  };
 
   const handleUpgrade = async (planKey) => {
     if (!currentEmail) return;
@@ -83,11 +114,18 @@ export default function Subscription() {
 
     setPendingPlan(planKey);
     setNotice(null);
+    void logSubscriptionEvent({ event: 'checkout_start', planKey, statusText: 'started' });
 
     // Safety timeout: auto-reset pendingPlan after 60 seconds (in case state gets stuck on mobile)
     const timeoutId = setTimeout(() => {
       setPendingPlan('');
       Alert.alert('Checkout timeout', 'Payment session expired. Please try again.');
+      void logSubscriptionEvent({
+        event: 'checkout_timeout',
+        planKey,
+        statusText: 'timeout',
+        message: 'Session timed out after 60 seconds',
+      });
     }, 60000);
 
     try {
@@ -105,24 +143,46 @@ export default function Subscription() {
       );
 
       const authorizationUrl = data?.authorization_url || data?.data?.authorization_url || '';
+      const paymentReference = String(data?.reference || data?.data?.reference || '').trim();
       if (!response.ok || !data?.status || !authorizationUrl) {
         clearTimeout(timeoutId);
         throw new Error(data?.message || 'Could not start subscription checkout.');
       }
 
+      void logSubscriptionEvent({
+        event: 'checkout_initialized',
+        planKey,
+        statusText: 'initialized',
+        reference: paymentReference,
+      });
+
       if (Platform.OS === 'web') {
         clearTimeout(timeoutId);
         await Linking.openURL(authorizationUrl);
         setPendingPlan('');
+        void logSubscriptionEvent({
+          event: 'checkout_opened_web',
+          planKey,
+          statusText: 'opened',
+          reference: paymentReference,
+        });
       } else {
         const redirectUri = 'connecthub://subscription';
         const sessionResult = await WebBrowser.openAuthSessionAsync(authorizationUrl, redirectUri);
         clearTimeout(timeoutId);
+        const sessionType = String(sessionResult?.type || '').trim().toLowerCase();
 
         if (sessionResult?.type === 'success' && sessionResult.url) {
           const callbackUrl = new URL(sessionResult.url);
           const callbackStatus = callbackUrl.searchParams.get('status') || '';
           const callbackPlan = callbackUrl.searchParams.get('plan') || '';
+          void logSubscriptionEvent({
+            event: 'checkout_callback',
+            planKey,
+            statusText: callbackStatus || 'success',
+            reference: paymentReference,
+            sessionType,
+          });
           if (callbackStatus) {
             router.replace({
               pathname: '/subscription',
@@ -134,6 +194,13 @@ export default function Subscription() {
           }
         } else if (sessionResult?.type === 'dismiss' || sessionResult?.type === 'cancel') {
           setPendingPlan('');
+          void logSubscriptionEvent({
+            event: 'checkout_cancelled',
+            planKey,
+            statusText: 'cancelled',
+            reference: paymentReference,
+            sessionType,
+          });
           setNotice({
             tone: 'info',
             title: 'Checkout cancelled',
@@ -141,6 +208,13 @@ export default function Subscription() {
           });
         } else {
           setPendingPlan('');
+          void logSubscriptionEvent({
+            event: 'checkout_session_ended',
+            planKey,
+            statusText: 'ended',
+            reference: paymentReference,
+            sessionType,
+          });
           setNotice({
             tone: 'error',
             title: 'Checkout session ended',
@@ -151,6 +225,12 @@ export default function Subscription() {
     } catch (error) {
       clearTimeout(timeoutId);
       setPendingPlan('');
+      void logSubscriptionEvent({
+        event: 'checkout_failed',
+        planKey,
+        statusText: 'failed',
+        message: String(error?.message || 'Could not start checkout.'),
+      });
       Alert.alert('Checkout failed', error?.message || 'Could not start checkout.');
       setNotice({ tone: 'error', title: 'Checkout failed', message: error?.message || 'Could not start checkout.' });
     }
