@@ -110,6 +110,9 @@ export default function Admin() {
   const [signupErrors, setSignupErrors] = useState([]);
   const [signupErrorsLoading, setSignupErrorsLoading] = useState(false);
   const [signupErrorsError, setSignupErrorsError] = useState(null);
+  const [signupErrorSourceFilter, setSignupErrorSourceFilter] = useState('all');
+  const [signupErrorTypeFilter, setSignupErrorTypeFilter] = useState('all');
+  const [signupErrorSearch, setSignupErrorSearch] = useState('');
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -1038,6 +1041,24 @@ export default function Admin() {
   const pendingFraudCount = fraudAlerts.filter((a) => !a.resolved).length;
   const stuckPaymentCount = stuckPayments.length;
   const signupErrorCount = signupErrors.length;
+  const signupErrorTypeOptions = useMemo(() => {
+    const set = new Set(['all']);
+    signupErrors.forEach((entry) => set.add(String(entry.errorType || 'unknown_error').toLowerCase()));
+    return Array.from(set);
+  }, [signupErrors]);
+  const filteredSignupErrors = useMemo(() => {
+    const q = String(signupErrorSearch || '').trim().toLowerCase();
+    return signupErrors.filter((entry) => {
+      const source = String(entry.source || 'unknown').toLowerCase();
+      const errorType = String(entry.errorType || 'unknown_error').toLowerCase();
+      const email = String(entry.email || '').toLowerCase();
+      const message = String(entry.errorMessage || '').toLowerCase();
+      if (signupErrorSourceFilter !== 'all' && source !== signupErrorSourceFilter) return false;
+      if (signupErrorTypeFilter !== 'all' && errorType !== signupErrorTypeFilter) return false;
+      if (!q) return true;
+      return email.includes(q) || message.includes(q) || errorType.includes(q) || source.includes(q);
+    });
+  }, [signupErrors, signupErrorSearch, signupErrorSourceFilter, signupErrorTypeFilter]);
 
   return (
     <ListScreen
@@ -1702,6 +1723,64 @@ export default function Admin() {
                     <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 10 }}>
                       Review recent signup and OTP failures reported by backend and client.
                     </Text>
+                    <AppInput
+                      label="Search by email/message"
+                      placeholder="e.g. gmail, otp_send_failed"
+                      value={signupErrorSearch}
+                      onChangeText={setSignupErrorSearch}
+                    />
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                      {[
+                        ['all', 'All Sources'],
+                        ['otp_send', 'OTP Send'],
+                        ['otp_verify', 'OTP Verify'],
+                        ['client_signup', 'Client Signup'],
+                      ].map(([value, label]) => {
+                        const selected = signupErrorSourceFilter === value;
+                        return (
+                          <TouchableOpacity
+                            key={`signup-source-${value}`}
+                            onPress={() => setSignupErrorSourceFilter(value)}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: selected ? '#f87171' : '#334155',
+                              backgroundColor: selected ? '#7f1d1d' : '#0f172a',
+                            }}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                      {signupErrorTypeOptions.slice(0, 8).map((value) => {
+                        const selected = signupErrorTypeFilter === value;
+                        return (
+                          <TouchableOpacity
+                            key={`signup-type-${value}`}
+                            onPress={() => setSignupErrorTypeFilter(value)}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: selected ? '#fca5a5' : '#334155',
+                              backgroundColor: selected ? '#450a0a' : '#0f172a',
+                            }}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
+                              {value === 'all' ? 'All Types' : value}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 10 }}>
+                      Showing {filteredSignupErrors.length} of {signupErrors.length}
+                    </Text>
                     <AppButton
                       label={signupErrorsLoading ? 'Refreshing...' : 'Refresh'}
                       onPress={loadSignupErrors}
@@ -1713,9 +1792,9 @@ export default function Admin() {
 
                   {signupErrorsLoading ? (
                     <Text style={{ color: AppColors.ink500 }}>Loading signup errors…</Text>
-                  ) : signupErrors.length === 0 ? (
+                  ) : filteredSignupErrors.length === 0 ? (
                     <Text style={{ color: AppColors.ink500 }}>No signup errors recorded yet.</Text>
-                  ) : signupErrors.map((entry) => {
+                  ) : filteredSignupErrors.map((entry) => {
                     const email = String(entry.email || 'unknown');
                     const errorType = String(entry.errorType || 'unknown_error');
                     const errorMessage = String(entry.errorMessage || 'No error message');
