@@ -260,21 +260,9 @@ export default function Auth() {
     const referrerEmail = String(referrerDoc.data()?.email || referrerDoc.id || '').trim().toLowerCase();
     if (!referrerEmail || referrerEmail === normalizedNewUserEmail) return;
 
-    // Save referredBy on the new user
+    // Save referredBy on the new user. The backend owns referrer aggregation,
+    // so the client only writes its own document to stay within Firestore rules.
     await setDoc(doc(db, 'users', normalizedNewUserEmail), { referredBy: referrerEmail }, { merge: true });
-
-    // Add new user to referrer's referredUsers array
-    const currentReferredUsers = Array.isArray(referrerDoc.data().referredUsers) ? referrerDoc.data().referredUsers : [];
-    const alreadyLinked = currentReferredUsers.some((item) => String(item?.email || '').trim().toLowerCase() === normalizedNewUserEmail);
-    const nextReferredUsers = alreadyLinked
-      ? currentReferredUsers
-      : [
-          ...currentReferredUsers,
-          { email: normalizedNewUserEmail, status: 'pending', joinedAt: new Date().toISOString() },
-        ];
-    await setDoc(doc(db, 'users', referrerEmail), {
-      referredUsers: nextReferredUsers,
-    }, { merge: true });
 
     // Claim GHS 5 signup bonus via backend (fire-and-forget — don't block signup)
     try {
