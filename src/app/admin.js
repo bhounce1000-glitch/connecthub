@@ -2,7 +2,7 @@ import CryptoJS from 'crypto-js';
 import { useRouter } from 'expo-router';
 import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Linking, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, Linking, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -113,6 +113,7 @@ export default function Admin() {
   const [signupErrorSourceFilter, setSignupErrorSourceFilter] = useState('all');
   const [signupErrorTypeFilter, setSignupErrorTypeFilter] = useState('all');
   const [signupErrorSearch, setSignupErrorSearch] = useState('');
+  const [signupErrorDateRange, setSignupErrorDateRange] = useState('all');
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -1046,19 +1047,77 @@ export default function Admin() {
     signupErrors.forEach((entry) => set.add(String(entry.errorType || 'unknown_error').toLowerCase()));
     return Array.from(set);
   }, [signupErrors]);
+
+  const getSignupErrorTimestampMs = (entry) => {
+    const value = entry?.timestamp || entry?.createdAt || entry?.timestampIso || entry?.createdAtIso;
+    if (!value) return 0;
+    if (typeof value?.toDate === 'function') return value.toDate().getTime();
+    if (typeof value?.seconds === 'number') return value.seconds * 1000;
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
   const filteredSignupErrors = useMemo(() => {
     const q = String(signupErrorSearch || '').trim().toLowerCase();
+    const now = Date.now();
+    const dateCutoff = signupErrorDateRange === '24h'
+      ? now - 24 * 60 * 60 * 1000
+      : signupErrorDateRange === '7d'
+        ? now - 7 * 24 * 60 * 60 * 1000
+        : signupErrorDateRange === '30d'
+          ? now - 30 * 24 * 60 * 60 * 1000
+          : 0;
+
     return signupErrors.filter((entry) => {
       const source = String(entry.source || 'unknown').toLowerCase();
       const errorType = String(entry.errorType || 'unknown_error').toLowerCase();
       const email = String(entry.email || '').toLowerCase();
       const message = String(entry.errorMessage || '').toLowerCase();
+      const timestampMs = getSignupErrorTimestampMs(entry);
       if (signupErrorSourceFilter !== 'all' && source !== signupErrorSourceFilter) return false;
       if (signupErrorTypeFilter !== 'all' && errorType !== signupErrorTypeFilter) return false;
+      if (dateCutoff > 0 && (timestampMs <= 0 || timestampMs < dateCutoff)) return false;
       if (!q) return true;
       return email.includes(q) || message.includes(q) || errorType.includes(q) || source.includes(q);
     });
-  }, [signupErrors, signupErrorSearch, signupErrorSourceFilter, signupErrorTypeFilter]);
+  }, [signupErrors, signupErrorSearch, signupErrorSourceFilter, signupErrorTypeFilter, signupErrorDateRange]);
+
+  const exportSignupErrorsCsv = () => {
+    if (filteredSignupErrors.length === 0) {
+      setNotice({ tone: 'warning', title: 'No data to export', message: 'No signup errors match your current filters.' });
+      return;
+    }
+
+    const headers = ['id', 'timestamp', 'email', 'source', 'errorType', 'errorMessage', 'metadata'];
+    const rows = filteredSignupErrors.map((entry) => [
+      entry.id || '',
+      formatIsoDate(entry.timestamp || entry.createdAt || entry.timestampIso || entry.createdAtIso),
+      entry.email || '',
+      entry.source || '',
+      entry.errorType || '',
+      entry.errorMessage || '',
+      entry.metadata ? JSON.stringify(entry.metadata) : '',
+    ]);
+    const csv = [headers.join(','), ...rows.map((line) => line.map(escapeCsv).join(','))].join('\n');
+    const timestamp = new Date().toISOString().replace(/[.:]/g, '-');
+    const fileName = `signup-errors-${signupErrorDateRange}-${timestamp}.csv`;
+
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setNotice({ tone: 'success', title: 'CSV exported', message: `Downloaded ${fileName}` });
+      return;
+    }
+
+    setNotice({ tone: 'warning', title: 'Export not supported on this device', message: 'Please use web admin to download CSV exports.' });
+  };
 
   return (
     <ListScreen
@@ -1778,16 +1837,50 @@ export default function Admin() {
                         );
                       })}
                     </View>
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                      {[
+                        ['all', 'All Time'],
+                        ['24h', '24h'],
+                        ['7d', '7d'],
+                        ['30d', '30d'],
+                      ].map(([value, label]) => {
+                        const selected = signupErrorDateRange === value;
+                        return (
+                          <TouchableOpacity
+                            key={`signup-date-${value}`}
+                            onPress={() => setSignupErrorDateRange(value)}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: selected ? '#fca5a5' : '#334155',
+                              backgroundColor: selected ? '#7f1d1d' : '#0f172a',
+                            }}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
                     <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 10 }}>
                       Showing {filteredSignupErrors.length} of {signupErrors.length}
                     </Text>
-                    <AppButton
-                      label={signupErrorsLoading ? 'Refreshing...' : 'Refresh'}
-                      onPress={loadSignupErrors}
-                      loading={signupErrorsLoading}
-                      disabled={Boolean(pendingAction) || signupErrorsLoading}
-                      style={{ backgroundColor: '#7f1d1d', paddingVertical: 8 }}
-                    />
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                      <AppButton
+                        label={signupErrorsLoading ? 'Refreshing...' : 'Refresh'}
+                        onPress={loadSignupErrors}
+                        loading={signupErrorsLoading}
+                        disabled={Boolean(pendingAction) || signupErrorsLoading}
+                        style={{ backgroundColor: '#7f1d1d', paddingVertical: 8 }}
+                      />
+                      <AppButton
+                        label="Export CSV"
+                        onPress={exportSignupErrorsCsv}
+                        disabled={Boolean(pendingAction) || filteredSignupErrors.length === 0}
+                        style={{ backgroundColor: '#1d4ed8', paddingVertical: 8 }}
+                      />
+                    </View>
                   </AppCard>
 
                   {signupErrorsLoading ? (
