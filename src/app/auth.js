@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
@@ -204,7 +204,7 @@ export default function Auth() {
         })
         .finally(() => setIsSubmitting(false));
     }
-  }, [response, role, router, referralInput]);
+  }, [response, role, router, referralInput, logSignupFailure]);
 
   const normalizedEmail = email.trim().toLowerCase();
 
@@ -359,9 +359,10 @@ export default function Auth() {
 
   const getApiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
 
-  async function logSignupFailure(errorType, errorMessage, metadata = {}) {
+  const logSignupFailure = useCallback(async (errorType, errorMessage, metadata = {}) => {
     try {
-      await fetch(`${getApiBase()}/auth/signup-error-log`, {
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
+      await fetch(`${apiBase}/auth/signup-error-log`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -375,7 +376,7 @@ export default function Auth() {
     } catch {
       // Never block signup UX on diagnostics logging.
     }
-  }
+  }, [normalizedEmail]);
 
   const mapOtpSendError = (payload = {}, fallbackMessage = '') => {
     const code = String(payload?.code || '').trim().toLowerCase();
@@ -863,7 +864,7 @@ export default function Auth() {
               inputStyle={{ backgroundColor: AppColors.slate50 }}
             />
             <Text style={{ color: '#64748b', fontSize: 12, marginTop: -6, marginBottom: 8 }}>
-              We'll send a 6-digit code to verify your phone number.
+              We&apos;ll send a 6-digit code to verify your phone number.
             </Text>
             <Text style={{ color: '#334155', fontSize: 12, marginBottom: AppSpace.sm }}>
               We verify your phone to protect your account and prevent spam.
