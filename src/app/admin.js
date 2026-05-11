@@ -1082,6 +1082,22 @@ export default function Admin() {
     });
   }, [signupErrors, signupErrorSearch, signupErrorSourceFilter, signupErrorTypeFilter, signupErrorDateRange]);
 
+  const topSignupFailureReasons = useMemo(() => {
+    const counts = {};
+    filteredSignupErrors.forEach((entry) => {
+      const errorType = String(entry?.errorType || 'unknown_error').toLowerCase();
+      const source = String(entry?.source || 'unknown').toLowerCase();
+      const key = `${errorType}__${source}`;
+      const current = counts[key] || { key, errorType, source, count: 0 };
+      current.count += 1;
+      counts[key] = current;
+    });
+
+    return Object.values(counts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [filteredSignupErrors]);
+
   const exportSignupErrorsCsv = () => {
     if (filteredSignupErrors.length === 0) {
       setNotice({ tone: 'warning', title: 'No data to export', message: 'No signup errors match your current filters.' });
@@ -1881,6 +1897,40 @@ export default function Admin() {
                         style={{ backgroundColor: '#1d4ed8', paddingVertical: 8 }}
                       />
                     </View>
+                  </AppCard>
+
+                  <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: '#f5d0fe' }}>
+                    <Text style={{ color: '#6b21a8', fontWeight: '800', marginBottom: 6 }}>Top Failure Reasons</Text>
+                    {topSignupFailureReasons.length === 0 ? (
+                      <Text style={{ color: AppColors.ink500, fontSize: 12 }}>
+                        No failure trends available for the current filters.
+                      </Text>
+                    ) : topSignupFailureReasons.map((item) => (
+                      <View
+                        key={item.key}
+                        style={{
+                          flexDirection: 'row',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: 7,
+                          paddingVertical: 6,
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#f3e8ff',
+                        }}
+                      >
+                        <View style={{ flex: 1, paddingRight: 10 }}>
+                          <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 12 }}>
+                            {item.errorType}
+                          </Text>
+                          <Text style={{ color: AppColors.ink500, fontSize: 11 }}>
+                            Source: {item.source}
+                          </Text>
+                        </View>
+                        <View style={{ backgroundColor: '#ede9fe', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 }}>
+                          <Text style={{ color: '#5b21b6', fontWeight: '800', fontSize: 12 }}>{item.count}</Text>
+                        </View>
+                      </View>
+                    ))}
                   </AppCard>
 
                   {signupErrorsLoading ? (
