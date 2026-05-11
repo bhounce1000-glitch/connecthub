@@ -107,6 +107,9 @@ export default function Admin() {
   const [wdStats, setWdStats] = useState(null);
   const [wdStatsLoading, setWdStatsLoading] = useState(false);
   const [wdStatsError, setWdStatsError] = useState(null);
+  const [signupErrors, setSignupErrors] = useState([]);
+  const [signupErrorsLoading, setSignupErrorsLoading] = useState(false);
+  const [signupErrorsError, setSignupErrorsError] = useState(null);
   const currentEmail = user?.email || '';
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
 
@@ -251,6 +254,11 @@ export default function Admin() {
     loadWdStats();
   }, [isAdmin, activeTab]);
 
+  useEffect(() => {
+    if (!isAdmin || activeTab !== 'signup-errors') return;
+    loadSignupErrors();
+  }, [isAdmin, activeTab]);
+
   const loadWdStats = async () => {
     setWdStatsLoading(true);
     setWdStatsError(null);
@@ -262,6 +270,21 @@ export default function Admin() {
       setWdStatsError(String(err?.message || 'Failed to load withdrawal stats'));
     } finally {
       setWdStatsLoading(false);
+    }
+  };
+
+  const loadSignupErrors = async () => {
+    setSignupErrorsLoading(true);
+    setSignupErrorsError(null);
+    try {
+      const { response, data } = await apiGet(`${API_BASE_URL}/admin/auth/signup-errors?limit=100`, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not load signup errors');
+      setSignupErrors(Array.isArray(data?.logs) ? data.logs : []);
+    } catch (error) {
+      setSignupErrors([]);
+      setSignupErrorsError(String(error?.message || 'Failed to load signup errors'));
+    } finally {
+      setSignupErrorsLoading(false);
     }
   };
 
@@ -1014,6 +1037,7 @@ export default function Admin() {
   const openDisputeCount = disputes.filter((d) => (d.status || 'open') !== 'resolved').length;
   const pendingFraudCount = fraudAlerts.filter((a) => !a.resolved).length;
   const stuckPaymentCount = stuckPayments.length;
+  const signupErrorCount = signupErrors.length;
 
   return (
     <ListScreen
@@ -1048,6 +1072,10 @@ export default function Admin() {
             <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
               <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Stuck Payments</Text>
               <Text style={{ color: '#92400e', fontWeight: '800', fontSize: 18 }}>{stuckPaymentCount}</Text>
+            </AppCard>
+            <AppCard style={{ flex: 1, marginBottom: 0, paddingVertical: 10 }}>
+              <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Signup Errors</Text>
+              <Text style={{ color: '#b91c1c', fontWeight: '800', fontSize: 18 }}>{signupErrorCount}</Text>
             </AppCard>
           </View>
 
@@ -1193,6 +1221,24 @@ export default function Admin() {
                 Stuck ({stuckPaymentCount})
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setActiveTab('signup-errors');
+                loadSignupErrors();
+              }}
+              style={{
+                flex: 1,
+                paddingVertical: 10,
+                borderRadius: AppRadius.md,
+                backgroundColor: activeTab === 'signup-errors' ? '#7f1d1d' : '#1e293b',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: activeTab === 'signup-errors' ? '#fff' : AppColors.ink500, fontWeight: '700', fontSize: 13 }}>
+                Signup Errors ({signupErrorCount})
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
@@ -1215,6 +1261,8 @@ export default function Admin() {
                 ? fraudAlerts.length > 0
               : activeTab === 'stuck'
                 ? true
+              : activeTab === 'signup-errors'
+                ? true
                 : users.length > 0
       }
       emptyTitle={
@@ -1234,6 +1282,8 @@ export default function Admin() {
                 ? 'No fraud alerts'
               : activeTab === 'stuck'
                 ? 'No stuck payments'
+              : activeTab === 'signup-errors'
+                ? 'No signup errors'
                 : 'No users found'
       }
       emptyDescription={
@@ -1253,6 +1303,8 @@ export default function Admin() {
                 ? 'Fraud alerts will appear here when risk checks are triggered.'
               : activeTab === 'stuck'
                 ? 'Jobs with paid/completed states but no wallet credit will appear here.'
+              : activeTab === 'signup-errors'
+                ? 'Signup failures will appear here for debugging.'
                 : 'Users will appear here once activity is detected.'
       }
     >
@@ -1637,6 +1689,52 @@ export default function Admin() {
                       />
                     </AppCard>
                   ))}
+                </>
+              )
+            : activeTab === 'signup-errors'
+              ? (
+                <>
+                  <AppCard style={{ marginBottom: 10, borderWidth: 1, borderColor: '#fecaca' }}>
+                    <Text style={{ color: '#7f1d1d', fontWeight: '800', marginBottom: 6 }}>Signup Error Diagnostics</Text>
+                    {signupErrorsError ? (
+                      <Text style={{ color: '#b91c1c', fontSize: 12, marginBottom: 8 }}>{signupErrorsError}</Text>
+                    ) : null}
+                    <Text style={{ color: AppColors.ink500, fontSize: 12, marginBottom: 10 }}>
+                      Review recent signup and OTP failures reported by backend and client.
+                    </Text>
+                    <AppButton
+                      label={signupErrorsLoading ? 'Refreshing...' : 'Refresh'}
+                      onPress={loadSignupErrors}
+                      loading={signupErrorsLoading}
+                      disabled={Boolean(pendingAction) || signupErrorsLoading}
+                      style={{ backgroundColor: '#7f1d1d', paddingVertical: 8 }}
+                    />
+                  </AppCard>
+
+                  {signupErrorsLoading ? (
+                    <Text style={{ color: AppColors.ink500 }}>Loading signup errors…</Text>
+                  ) : signupErrors.length === 0 ? (
+                    <Text style={{ color: AppColors.ink500 }}>No signup errors recorded yet.</Text>
+                  ) : signupErrors.map((entry) => {
+                    const email = String(entry.email || 'unknown');
+                    const errorType = String(entry.errorType || 'unknown_error');
+                    const errorMessage = String(entry.errorMessage || 'No error message');
+                    const source = String(entry.source || 'unknown');
+                    const metadataPreview = entry.metadata ? JSON.stringify(entry.metadata) : '';
+
+                    return (
+                      <AppCard key={entry.id} style={{ marginBottom: 10, borderWidth: 1, borderColor: '#fca5a5' }}>
+                        <Text style={{ color: '#7f1d1d', fontWeight: '800', marginBottom: 2 }}>{errorType}</Text>
+                        <Text style={{ color: AppColors.ink700, fontSize: 13 }}>Email: {email}</Text>
+                        <Text style={{ color: AppColors.ink700, fontSize: 13 }}>Source: {source}</Text>
+                        <Text style={{ color: AppColors.ink700, fontSize: 13 }}>Time: {formatIsoDate(entry.timestamp || entry.timestampIso || entry.createdAt || entry.createdAtIso)}</Text>
+                        <Text style={{ color: '#475569', fontSize: 12, marginTop: 6 }}>{errorMessage}</Text>
+                        {metadataPreview ? (
+                          <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 6 }} numberOfLines={3}>Meta: {metadataPreview}</Text>
+                        ) : null}
+                      </AppCard>
+                    );
+                  })}
                 </>
               )
             : activeTab === 'users'
