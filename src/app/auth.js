@@ -496,15 +496,22 @@ export default function Auth() {
 
       const trimmedUsername = username.trim();
       const usernameLower = trimmedUsername.toLowerCase();
+
+      // Create the Firebase Auth account first so the user is signed in before
+      // any Firestore reads — Firestore rules require isSignedIn() on the users
+      // collection, so username uniqueness check must run after auth creation.
+      await recordSignupAttempt();
+      const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+
+      // Now authenticated: check username uniqueness; roll back auth user if taken.
       const usernameSnap = await getDocs(
         query(collection(db, 'users'), where('usernameLower', '==', usernameLower))
       );
       if (!usernameSnap.empty) {
+        await credential.user.delete().catch(() => {});
+        await signOut(auth).catch(() => {});
         throw new Error('That username is already taken. Please choose a different one.');
       }
-
-      await recordSignupAttempt();
-      const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
 
       await ensureUserDocument(credential.user, {
         role,
