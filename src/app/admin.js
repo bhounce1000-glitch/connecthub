@@ -1098,6 +1098,69 @@ export default function Admin() {
       .slice(0, 5);
   }, [filteredSignupErrors]);
 
+  const signupQuickFilters = useMemo(() => ([
+    {
+      key: 'email-service-not-configured',
+      label: 'Email Service Down',
+      source: 'otp_send',
+      type: 'email_service_not_configured',
+      search: '',
+    },
+    {
+      key: 'otp-locked',
+      label: 'OTP Locked',
+      source: 'otp_verify',
+      type: 'otp_locked',
+      search: '',
+    },
+    {
+      key: 'otp-send-failed',
+      label: 'OTP Send Failed',
+      source: 'otp_send',
+      type: 'otp_send_failed',
+      search: '',
+    },
+    {
+      key: 'google-signin-failed',
+      label: 'Google Sign-In',
+      source: 'client_signup',
+      type: 'google_signin_failed',
+      search: '',
+    },
+  ]), []);
+
+  const quickFilterCounts = useMemo(() => {
+    const counts = {};
+    signupQuickFilters.forEach((preset) => {
+      counts[preset.key] = signupErrors.filter((entry) => {
+        const source = String(entry?.source || 'unknown').toLowerCase();
+        const errorType = String(entry?.errorType || 'unknown_error').toLowerCase();
+        return source === preset.source && errorType === preset.type;
+      }).length;
+    });
+    return counts;
+  }, [signupErrors, signupQuickFilters]);
+
+  const isQuickFilterActive = (preset) => {
+    const search = String(signupErrorSearch || '').trim().toLowerCase();
+    return signupErrorSourceFilter === preset.source
+      && signupErrorTypeFilter === preset.type
+      && search === String(preset.search || '').toLowerCase();
+  };
+
+  const applySignupQuickFilter = (preset) => {
+    setSignupErrorSourceFilter(preset.source || 'all');
+    setSignupErrorTypeFilter(preset.type || 'all');
+    setSignupErrorSearch(preset.search || '');
+    setSignupErrorDateRange('all');
+  };
+
+  const clearSignupQuickFilter = () => {
+    setSignupErrorSourceFilter('all');
+    setSignupErrorTypeFilter('all');
+    setSignupErrorSearch('');
+  };
+
   const exportSignupErrorsCsv = () => {
     if (filteredSignupErrors.length === 0) {
       setNotice({ tone: 'warning', title: 'No data to export', message: 'No signup errors match your current filters.' });
@@ -1804,6 +1867,47 @@ export default function Admin() {
                       value={signupErrorSearch}
                       onChangeText={setSignupErrorSearch}
                     />
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                      {signupQuickFilters.map((preset) => {
+                        const selected = isQuickFilterActive(preset);
+                        const count = quickFilterCounts[preset.key] || 0;
+                        return (
+                          <TouchableOpacity
+                            key={`signup-quick-${preset.key}`}
+                            onPress={() => applySignupQuickFilter(preset)}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: selected ? '#fdba74' : '#334155',
+                              backgroundColor: selected ? '#9a3412' : '#0f172a',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{preset.label}</Text>
+                            <View style={{ backgroundColor: selected ? '#fed7aa' : '#1e293b', borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 }}>
+                              <Text style={{ color: selected ? '#9a3412' : '#cbd5e1', fontWeight: '800', fontSize: 11 }}>{count}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <TouchableOpacity
+                        onPress={clearSignupQuickFilter}
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 7,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: '#334155',
+                          backgroundColor: '#0f172a',
+                        }}
+                      >
+                        <Text style={{ color: '#cbd5e1', fontWeight: '700', fontSize: 12 }}>Clear Quick Filter</Text>
+                      </TouchableOpacity>
+                    </View>
                     <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                       {[
                         ['all', 'All Sources'],
