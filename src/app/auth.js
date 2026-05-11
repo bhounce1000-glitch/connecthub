@@ -306,6 +306,22 @@ export default function Auth() {
       },
       { merge: true }
     );
+
+    const walletRef = doc(db, 'wallets', String(authUser?.uid || normalizedUserEmail));
+    await setDoc(
+      walletRef,
+      {
+        uid: String(authUser?.uid || normalizedUserEmail),
+        email: normalizedUserEmail,
+        balance: Number(existingData.walletBalance || existingData.balance || 0),
+        walletBalance: Number(existingData.walletBalance || existingData.balance || 0),
+        currency: 'GHS',
+        transactions: Array.isArray(existingData.transactions) ? existingData.transactions : [],
+        createdAt: existingData.createdAt || new Date(),
+        updatedAt: new Date(),
+      },
+      { merge: true }
+    );
   };
 
   const validateForm = () => {
@@ -664,7 +680,17 @@ export default function Auth() {
       const userRef = doc(db, 'users', normalizedUserEmail);
       const existingUserSnap = await getDoc(userRef);
 
-      await ensureUserDocument(credential.user);
+      if (!existingUserSnap.exists()) {
+        await ensureUserDocument(credential.user, {
+          displayName: credential.user.displayName || '',
+          photoURL: credential.user.photoURL || '',
+          role: role || USER_ROLES.CUSTOMER,
+          username: credential.user.displayName || normalizedUserEmail.split('@')[0],
+          usernameLower: String(credential.user.displayName || normalizedUserEmail.split('@')[0]).trim().toLowerCase(),
+          phoneNumber: '',
+          onboardingDone: false,
+        });
+      }
 
       if (!existingUserSnap.exists() && referralInput && referralInput.trim()) {
         await linkReferral(normalizedUserEmail, referralInput.trim()).catch(() => {});

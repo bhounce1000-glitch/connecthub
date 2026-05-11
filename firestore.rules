@@ -40,10 +40,11 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn()
-        && isOwner(userId)
+        && (request.auth.uid == userId || request.auth.token.email == userId)
         && isNotDisposable()
         && request.resource.data.keys().hasAll(['email', 'role', 'createdAt']);
-      allow update: if (isOwner(userId) || isAdmin()) && isNotDisposable();
+      allow update: if (isAdmin() || (isSignedIn() && (request.auth.uid == userId || request.auth.token.email == userId)))
+        && isNotDisposable();
       allow delete: if isAdmin();
     }
 
@@ -132,6 +133,10 @@ service cloud.firestore {
 
     match /subscriptions/{email} {
       allow read, write: if isOwner(email) || isAdmin();
+    }
+
+    match /wallets/{walletId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == walletId || request.auth.token.email == walletId);
     }
 
     match /otp_verifications/{email} {
