@@ -3,18 +3,43 @@ const nodemailer = require('nodemailer');
 const EMAIL_FROM = process.env.EMAIL_FROM || 'no-reply@connecthub.app';
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
+const EMAIL_SERVICE = process.env.EMAIL_SERVICE || 'gmail';
+const EMAIL_HOST = process.env.EMAIL_HOST || '';
+const EMAIL_PORT = Number(process.env.EMAIL_PORT || 0);
+const EMAIL_SECURE = String(process.env.EMAIL_SECURE || '').trim().toLowerCase() === 'true';
+
+const providerName = EMAIL_HOST ? `smtp:${EMAIL_HOST}` : EMAIL_SERVICE;
+
+if (!String(EMAIL_USER || '').trim() || !String(EMAIL_PASS || '').trim()) {
+  console.error('OTP provider API key is missing from environment variables');
+  console.error('Missing one or more of: EMAIL_USER, EMAIL_PASS');
+} else {
+  console.log(`Email provider initialized: ${providerName}`);
+}
 
 function isEmailConfigured() {
   return Boolean(String(EMAIL_USER || '').trim() && String(EMAIL_PASS || '').trim());
 }
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_PASS,
-  },
-});
+const transportConfig = EMAIL_HOST
+  ? {
+      host: EMAIL_HOST,
+      port: EMAIL_PORT || 587,
+      secure: EMAIL_SECURE,
+      auth: {
+        user: EMAIL_USER,
+        pass: EMAIL_PASS,
+      },
+    }
+  : {
+      service: EMAIL_SERVICE,
+      auth: {
+        user: EMAIL_USER,
+        pass: EMAIL_PASS,
+      },
+    };
+
+const transporter = nodemailer.createTransport(transportConfig);
 
 function maskNumber(number) {
   if (!number) return '';
@@ -23,7 +48,24 @@ function maskNumber(number) {
   return str.slice(0, 2) + '****' + str.slice(-2);
 }
 
-async function sendPaymentReceiptEmail(data) {
+async function sendPaymentReceiptEmail(...args) {
+  if (typeof args[0] === 'string' && typeof args[2] === 'string') {
+    const [to, fallbackName, subject, html] = args;
+    const resolvedTo = String(to || '').trim();
+    if (!resolvedTo) {
+      throw new Error('missing_recipient_email');
+    }
+    const resolvedHtml = String(html || '').trim() || `<p>Hello ${String(fallbackName || 'ConnectHub User')}</p>`;
+    await transporter.sendMail({
+      from: EMAIL_FROM,
+      to: resolvedTo,
+      subject: String(subject || 'ConnectHub Notification').trim(),
+      html: resolvedHtml,
+    });
+    return;
+  }
+
+  const data = args[0] || {};
   const {
     senderEmail,
     senderName,

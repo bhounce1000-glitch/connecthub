@@ -20,7 +20,7 @@ export default function ForgotPasswordScreen() {
   const normalizedEmail = email.trim().toLowerCase();
 
   const handleResetPassword = async () => {
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!normalizedEmail || !emailPattern.test(normalizedEmail)) {
       setNotice({
         tone: 'warning',

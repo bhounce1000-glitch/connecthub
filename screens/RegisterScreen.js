@@ -1,14 +1,22 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, Button } from 'react-native';
-import { auth } from '../firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { useState } from 'react';
+import { Button, Text, TextInput, View } from 'react-native';
+import { auth } from '../firebase';
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function RegisterScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   const registerUser = () => {
-    createUserWithEmailAndPassword(auth, email, password)
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!EMAIL_REGEX.test(normalizedEmail)) {
+      alert('Please enter a valid email address.');
+      return;
+    }
+
+    createUserWithEmailAndPassword(auth, normalizedEmail, password)
       .then(() => {
         alert('Account created');
         navigation.navigate('Home');

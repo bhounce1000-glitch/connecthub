@@ -53,40 +53,7 @@ const USERNAME_CHANGE_COOLDOWN_SECONDS = Number(process.env.USERNAME_CHANGE_COOL
 const USERNAME_CHANGE_LOCK_THRESHOLD = Number(process.env.USERNAME_CHANGE_LOCK_THRESHOLD || 3);
 const USERNAME_CHANGE_LOCK_SECONDS = Number(process.env.USERNAME_CHANGE_LOCK_SECONDS || 60 * 60);
 const USERNAME_CHANGE_AUDIT_LIMIT = Number(process.env.USERNAME_CHANGE_AUDIT_LIMIT || 20);
-const BLOCKED_DOMAINS_SERVER = [
-  'mailinator.com',
-  'guerrillamail.com',
-  'tempmail.com',
-  'throwam.com',
-  'sharklasers.com',
-  'yopmail.com',
-  'trashmail.com',
-  'fakeinbox.com',
-  'dispostable.com',
-  'maildrop.cc',
-  'spamgourmet.com',
-  '10minutemail.com',
-  'example.com',
-  'test.com',
-  'tempr.email',
-  'discard.email',
-  'mailnull.com',
-  'spamex.com',
-  'getairmail.com',
-  'filzmail.com',
-  'spam4.me',
-  'bccto.me',
-  'chacuo.net',
-  'mailnesia.com',
-  'mintemail.com',
-  'notsharingmy.info',
-  'putthisinyourspamdatabase.com',
-  'spam.la',
-  'suremail.info',
-  'tradermail.info',
-];
-const BLOCKED_EMAIL_DOMAINS = new Set(BLOCKED_DOMAINS_SERVER);
-const BLOCKED_DOMAIN_KEYWORDS = ['mailinator', 'guerrilla', 'tempmail', 'throwaway', 'disposable', 'trashmail', 'yopmail'];
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 if (!ENCRYPTION_KEY) {
   console.error('CRITICAL: ENCRYPTION_KEY environment variable is not set!');
@@ -128,6 +95,10 @@ checkEnvVars();
 
 const IV_LENGTH = 16;
 const OTP_COLLECTION = 'otp_verifications';
+const SIGNUP_ERROR_LOG_COLLECTION = 'signup_error_logs';
+const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.OTP_RESEND_COOLDOWN_SECONDS || 60);
+const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5);
+const OTP_LOCK_MINUTES = Number(process.env.OTP_LOCK_MINUTES || 15);
 const REQUEST_PAYOUT_COLLECTION = 'request_payouts';
 const REQUEST_STATUS_SEQUENCE = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid'];
 const ACCEPTED_PAYMENT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -427,22 +398,40 @@ function getPaystackSecret() {
   return process.env.PAYSTACK_SECRET || '';
 }
 
-function isBlockedEmail(email) {
-  if (!email || !String(email).includes('@')) return true;
-  const domain = String(email || '').trim().toLowerCase().split('@')[1] || '';
-  if (!domain) return true;
-  if (BLOCKED_EMAIL_DOMAINS.has(domain)) return true;
-  return BLOCKED_DOMAIN_KEYWORDS.some((keyword) => domain.includes(keyword));
+function isValidEmailFormat(email) {
+  return EMAIL_REGEX.test(String(email || '').trim().toLowerCase());
+}
+
+async function logSignupFailure({ email, errorType, errorMessage, source = 'server', metadata = {} }) {
+  try {
+    await adminDb.collection(SIGNUP_ERROR_LOG_COLLECTION).add({
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestampIso: new Date().toISOString(),
+      email: String(email || '').trim().toLowerCase(),
+      errorType: String(errorType || 'unknown_error').trim().toLowerCase(),
+      errorMessage: String(errorMessage || 'Unknown signup error').trim().slice(0, 1000),
+      source: String(source || 'server').trim().toLowerCase(),
+      metadata: sanitizeObject(metadata || {}),
+    });
+  } catch (error) {
+    logger.error({ err: error, email, errorType }, 'SIGNUP_FAILURE_LOG_WRITE_ERROR');
+  }
 }
 
 async function storeOTP(email, otp, phone) {
-  const expires = Date.now() + 10 * 60 * 1000;
+  const now = Date.now();
+  const expires = now + 10 * 60 * 1000;
+  const resendAllowedAt = now + OTP_RESEND_COOLDOWN_SECONDS * 1000;
   await adminDb.collection(OTP_COLLECTION).doc(email).set({
     otp,
     phone: phone || '',
     expires,
+    resendAllowedAt,
+    failedAttempts: 0,
+    lockedUntil: 0,
     verified: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
 }
 
@@ -460,6 +449,8 @@ async function getOTP(email) {
 async function markOTPVerified(email) {
   await adminDb.collection(OTP_COLLECTION).doc(email).set({
     verified: true,
+    failedAttempts: 0,
+    lockedUntil: 0,
     verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
@@ -470,6 +461,19 @@ async function markOTPVerified(email) {
       // ignore cleanup failure
     }
   }, 5 * 60 * 1000);
+}
+
+async function incrementOTPFailure(email, currentFailures = 0) {
+  const nextFailures = Number(currentFailures || 0) + 1;
+  const lockUntil = nextFailures >= OTP_MAX_VERIFY_ATTEMPTS
+    ? Date.now() + OTP_LOCK_MINUTES * 60 * 1000
+    : 0;
+  await adminDb.collection(OTP_COLLECTION).doc(email).set({
+    failedAttempts: nextFailures,
+    lockedUntil: lockUntil,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return { nextFailures, lockUntil };
 }
 
 async function deleteOTP(email) {
@@ -790,10 +794,6 @@ async function requireAuth(req, res, next) {
 
     if (!normalizedEmail) {
       return sendError(res, req, 401, 'invalid_auth_token', 'Authenticated account is missing an email');
-    }
-
-    if (isBlockedEmail(normalizedEmail)) {
-      return sendError(res, req, 403, 'blocked_email', 'This email domain is not allowed');
     }
 
     const userDoc = await adminDb.collection('users').doc(normalizedEmail).get();
@@ -2020,40 +2020,130 @@ app.post('/auth/send-otp', async (req, res) => {
     const rawPhone = String(req.body?.phone || '').trim();
 
     if (!email || !rawPhone) {
+      await logSignupFailure({
+        email,
+        errorType: 'missing_otp_fields',
+        errorMessage: 'Phone and email are required',
+        source: 'otp_send',
+      });
       return sendError(res, req, 400, 'missing_otp_fields', 'Phone and email are required');
     }
 
-    if (isBlockedEmail(email)) {
-      return sendError(res, req, 400, 'blocked_email_domain', 'Please use a real email address. Temporary or disposable emails are not allowed.');
+    if (!isValidEmailFormat(email)) {
+      await logSignupFailure({
+        email,
+        errorType: 'invalid_email_format',
+        errorMessage: 'Email does not match standard format',
+        source: 'otp_send',
+      });
+      return sendError(res, req, 400, 'invalid_email', 'Please enter a valid email address.');
     }
 
     const normalizedPhone = normalizeGhanaPhone(rawPhone);
     if (!normalizedPhone) {
+      await logSignupFailure({
+        email,
+        errorType: 'invalid_phone',
+        errorMessage: 'Invalid Ghana phone format',
+        source: 'otp_send',
+      });
       return sendError(res, req, 400, 'invalid_phone', 'Enter a valid Ghana phone number (e.g. 0241234567)');
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    await storeOTP(email, otp, normalizedPhone);
-
-    if (!isEmailConfigured()) {
-      return sendError(res, req, 503, 'email_not_configured', 'Verification email service is not configured');
+    const existingUser = await admin.auth().getUserByEmail(email).catch((error) => {
+      if (error?.code === 'auth/user-not-found') return null;
+      throw error;
+    });
+    if (existingUser) {
+      await logSignupFailure({
+        email,
+        errorType: 'email_already_registered',
+        errorMessage: 'Email is already registered',
+        source: 'otp_send',
+      });
+      return sendError(res, req, 409, 'email_already_registered', 'This email address is already registered. Please log in instead.');
     }
 
-    await sendPaymentReceiptEmail(
-      email,
-      'ConnectHub User',
-      'Your ConnectHub Verification Code',
-      `<div style="font-family:sans-serif;text-align:center;padding:28px;">
-        <h2>ConnectHub Verification</h2>
-        <p>Your verification code is:</p>
-        <div style="font-size:42px;font-weight:700;letter-spacing:10px;background:#f0f9ff;padding:16px;border-radius:12px;margin:16px 0;">${otp}</div>
-        <p style="color:#64748b;">This code expires in 10 minutes.</p>
-      </div>`
-    );
+    const existingOtp = await getOTP(email);
+    if (existingOtp?.lockedUntil && Date.now() < Number(existingOtp.lockedUntil || 0)) {
+      const remainingMs = Number(existingOtp.lockedUntil || 0) - Date.now();
+      const remainingMinutes = Math.max(1, Math.ceil(remainingMs / (60 * 1000)));
+      await logSignupFailure({
+        email,
+        errorType: 'otp_locked',
+        errorMessage: `OTP verification locked for ${remainingMinutes} minute(s)`,
+        source: 'otp_send',
+      });
+      return sendError(res, req, 429, 'otp_locked', `Too many failed attempts. Please wait ${remainingMinutes} minute(s) before requesting a new code.`);
+    }
+
+    if (existingOtp?.resendAllowedAt && Date.now() < Number(existingOtp.resendAllowedAt || 0)) {
+      const remainingSeconds = Math.max(1, Math.ceil((Number(existingOtp.resendAllowedAt || 0) - Date.now()) / 1000));
+      await logSignupFailure({
+        email,
+        errorType: 'otp_cooldown_active',
+        errorMessage: `Resend cooldown active (${remainingSeconds}s remaining)`,
+        source: 'otp_send',
+      });
+      return sendError(res, req, 429, 'otp_cooldown_active', 'Too many attempts. Please wait 60 seconds before requesting a new code.', { retryAfterSeconds: remainingSeconds });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    try {
+      await storeOTP(email, otp, normalizedPhone);
+    } catch (storeError) {
+      logger.error({ err: storeError, email }, 'STORE_OTP_ERROR');
+      await logSignupFailure({
+        email,
+        errorType: 'otp_store_failed',
+        errorMessage: storeError?.message || 'Could not persist OTP',
+        source: 'otp_send',
+      });
+      return sendError(res, req, 500, 'otp_store_failed', 'Could not create verification code. Please try again.');
+    }
+
+    if (!isEmailConfigured()) {
+      await logSignupFailure({
+        email,
+        errorType: 'email_service_not_configured',
+        errorMessage: 'Verification email service is not configured',
+        source: 'otp_send',
+      });
+      return sendError(res, req, 503, 'email_service_unavailable', 'Could not connect to email service. Please try again in a moment.');
+    }
+
+    try {
+      await sendPaymentReceiptEmail(
+        email,
+        'ConnectHub User',
+        'Your ConnectHub Verification Code',
+        `<div style="font-family:sans-serif;text-align:center;padding:28px;">
+          <h2>ConnectHub Verification</h2>
+          <p>Your verification code is:</p>
+          <div style="font-size:42px;font-weight:700;letter-spacing:10px;background:#f0f9ff;padding:16px;border-radius:12px;margin:16px 0;">${otp}</div>
+          <p style="color:#64748b;">This code expires in 10 minutes.</p>
+        </div>`
+      );
+    } catch (emailError) {
+      logger.error({ err: emailError, email }, 'SEND_OTP_EMAIL_ERROR');
+      await logSignupFailure({
+        email,
+        errorType: 'otp_email_send_failed',
+        errorMessage: emailError?.message || 'Could not send OTP email',
+        source: 'otp_send',
+      });
+      return sendError(res, req, 503, 'otp_email_send_failed', 'Could not connect to email service. Please try again in a moment.');
+    }
 
     return sendSuccess(res, req, { message: 'Verification code sent to your email' });
   } catch (error) {
     logger.error({ err: error }, 'SEND_OTP_ERROR');
+    await logSignupFailure({
+      email: req.body?.email,
+      errorType: 'otp_send_failed',
+      errorMessage: error?.message || 'Could not send verification code',
+      source: 'otp_send',
+    });
     return sendError(res, req, 500, 'otp_send_failed', 'Could not send verification code');
   }
 });
@@ -2067,9 +2157,22 @@ app.post('/auth/verify-otp', async (req, res) => {
       return sendError(res, req, 400, 'missing_verify_fields', 'Email and OTP are required');
     }
 
+    if (!isValidEmailFormat(email)) {
+      return sendError(res, req, 400, 'invalid_email', 'Please enter a valid email address.');
+    }
+
+    if (!/^\d{6}$/.test(otp)) {
+      return sendError(res, req, 400, 'invalid_otp_format', 'Enter the 6-digit verification code.');
+    }
+
     const stored = await getOTP(email);
     if (!stored) {
       return sendError(res, req, 400, 'otp_not_found', 'No verification code found. Request a new one.');
+    }
+
+    if (stored.lockedUntil && Date.now() < Number(stored.lockedUntil || 0)) {
+      const remainingMinutes = Math.max(1, Math.ceil((Number(stored.lockedUntil || 0) - Date.now()) / (60 * 1000)));
+      return sendError(res, req, 429, 'otp_locked', `Too many failed attempts. Please wait ${remainingMinutes} minute(s) before trying again.`);
     }
 
     // Existing registered users should never be blocked by signup OTP gate.
@@ -2088,6 +2191,16 @@ app.post('/auth/verify-otp', async (req, res) => {
     }
 
     if (stored.otp !== otp) {
+      const { nextFailures, lockUntil } = await incrementOTPFailure(email, stored.failedAttempts || 0);
+      if (lockUntil > Date.now()) {
+        await logSignupFailure({
+          email,
+          errorType: 'otp_locked_after_failures',
+          errorMessage: `Exceeded ${OTP_MAX_VERIFY_ATTEMPTS} failed attempts`,
+          source: 'otp_verify',
+        });
+        return sendError(res, req, 429, 'otp_locked', `Too many failed attempts. Please wait ${OTP_LOCK_MINUTES} minutes before trying again.`);
+      }
       return sendError(res, req, 400, 'otp_mismatch', 'Incorrect code. Please check and try again.');
     }
 
@@ -2101,7 +2214,33 @@ app.post('/auth/verify-otp', async (req, res) => {
     return sendSuccess(res, req, { message: 'Phone verified successfully' });
   } catch (error) {
     logger.error({ err: error }, 'VERIFY_OTP_ERROR');
+    await logSignupFailure({
+      email: req.body?.email,
+      errorType: 'otp_verify_failed',
+      errorMessage: error?.message || 'Verification failed',
+      source: 'otp_verify',
+    });
     return sendError(res, req, 500, 'otp_verify_failed', 'Verification failed');
+  }
+});
+
+app.post('/auth/signup-error-log', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const errorType = String(req.body?.errorType || 'client_signup_error').trim().toLowerCase();
+    const errorMessage = String(req.body?.errorMessage || 'Signup failed on client').trim();
+    const source = String(req.body?.source || 'client').trim().toLowerCase();
+    const metadata = req.body?.metadata || {};
+
+    if (email && !isValidEmailFormat(email)) {
+      return sendError(res, req, 400, 'invalid_email', 'Please enter a valid email address.');
+    }
+
+    await logSignupFailure({ email, errorType, errorMessage, source, metadata });
+    return sendSuccess(res, req, { message: 'Signup error logged' });
+  } catch (error) {
+    logger.error({ err: error }, 'SIGNUP_ERROR_LOG_ENDPOINT_ERROR');
+    return sendError(res, req, 500, 'signup_error_log_failed', 'Could not log signup error');
   }
 });
 
@@ -2129,8 +2268,7 @@ app.post('/pay', payInitLimiter, requireAuth, async (req, res) => {
     const normalizedAmount = Number(amount);
 
     // Basic email format validation to avoid sending arbitrary strings to Paystack
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!email || !emailPattern.test(String(email)) || !normalizedAmount || normalizedAmount <= 0 || !requestId) {
+    if (!email || !isValidEmailFormat(String(email)) || !normalizedAmount || normalizedAmount <= 0 || !requestId) {
       return sendError(res, req, 400, 'invalid_payment_payload', 'Missing or invalid payment fields');
     }
 
@@ -3396,6 +3534,22 @@ app.get('/admin/withdrawals/stats', requireAuth, requireAdmin, async (req, res) 
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_WITHDRAWAL_STATS_ERROR');
     return sendError(res, req, 500, 'stats_failed', 'Could not load withdrawal stats');
+  }
+});
+
+app.get('/admin/auth/signup-errors', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 50)));
+    const snap = await adminDb.collection(SIGNUP_ERROR_LOG_COLLECTION)
+      .orderBy('timestamp', 'desc')
+      .limit(limit)
+      .get();
+
+    const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    return sendSuccess(res, req, { logs: rows, count: rows.length });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_SIGNUP_ERROR_LOGS_FETCH_ERROR');
+    return sendError(res, req, 500, 'signup_logs_failed', 'Could not load signup error logs');
   }
 });
 

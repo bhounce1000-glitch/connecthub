@@ -35,29 +35,8 @@ const SOCIAL_AUTH_ENABLED = {
   google: (process.env.EXPO_PUBLIC_AUTH_GOOGLE || 'true').toLowerCase() === 'true',
   facebook: (process.env.EXPO_PUBLIC_AUTH_FACEBOOK || 'false').toLowerCase() === 'true',
 };
-const BLOCKED_DOMAINS = [
-  'mailinator.com', 'guerrillamail.com', 'tempmail.com',
-  'throwam.com', 'sharklasers.com', 'yopmail.com',
-  'trashmail.com', 'fakeinbox.com', 'dispostable.com',
-  'maildrop.cc', 'spamgourmet.com', '10minutemail.com',
-  'example.com', 'test.com', 'mailnull.com', 'spamex.com',
-  'getairmail.com', 'filzmail.com', 'tempr.email',
-  'discard.email', 'spam4.me', 'bccto.me', 'chacuo.net',
-  'mailnesia.com', 'mintemail.com', 'notsharingmy.info',
-  'putthisinyourspamdatabase.com', 'spam.la', 'suremail.info',
-  'tradermail.info',
-];
-const BLOCKED_DOMAIN_KEYWORDS = ['mailinator', 'guerrilla', 'tempmail', 'throwaway', 'disposable', 'trashmail', 'yopmail'];
 const SIGNUP_ATTEMPTS_KEY = 'connecthub_signup_attempts';
-const EMAIL_REGEX = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/;
-
-function isBlockedEmail(emailValue) {
-  if (!emailValue || !String(emailValue).includes('@')) return true;
-  const domain = String(emailValue || '').trim().toLowerCase().split('@')[1] || '';
-  if (!domain) return true;
-  if (BLOCKED_DOMAINS.includes(domain)) return true;
-  return BLOCKED_DOMAIN_KEYWORDS.some((keyword) => domain.includes(keyword));
-}
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function validateUsername(value) {
   const v = String(value || '').trim();
@@ -220,6 +199,7 @@ export default function Auth() {
           router.replace('/');
         })
         .catch((err) => {
+          void logSignupFailure('google_signin_failed', String(err?.message || 'Unable to sign in with Google.'), { stage: 'credential_signin' });
           Alert.alert('Google Sign-In Error', err?.message || 'Unable to sign in with Google.');
         })
         .finally(() => setIsSubmitting(false));
@@ -342,14 +322,11 @@ export default function Auth() {
 
   const validateForm = () => {
     const nextErrors = {};
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
     if (!normalizedEmail) {
       nextErrors.email = 'Please provide your email address.';
-    } else if (!emailPattern.test(normalizedEmail)) {
+    } else if (!EMAIL_REGEX.test(normalizedEmail)) {
       nextErrors.email = 'Please enter a valid email address.';
-    } else if (!isLogin && isBlockedEmail(normalizedEmail)) {
-      nextErrors.email = 'Please use a real email address to sign up.';
     }
 
     if (!isLogin) {
@@ -394,6 +371,38 @@ export default function Auth() {
 
   const getApiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
 
+  async function logSignupFailure(errorType, errorMessage, metadata = {}) {
+    try {
+      await fetch(`${getApiBase()}/auth/signup-error-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          errorType,
+          errorMessage,
+          source: 'client_signup',
+          metadata,
+        }),
+      });
+    } catch {
+      // Never block signup UX on diagnostics logging.
+    }
+  }
+
+  const mapOtpSendError = (payload = {}, fallbackMessage = '') => {
+    const code = String(payload?.code || '').trim().toLowerCase();
+    if (code === 'email_service_unavailable' || code === 'otp_email_send_failed') {
+      return 'Could not connect to email service. Please try again in a moment.';
+    }
+    if (code === 'email_already_registered') {
+      return 'This email address is already registered. Please log in instead.';
+    }
+    if (code === 'otp_cooldown_active') {
+      return 'Too many attempts. Please wait 60 seconds before requesting a new code.';
+    }
+    return payload?.message || payload?.error || fallbackMessage || 'Could not send verification code.';
+  };
+
   const handleSendOTP = async () => {
     const normalizedPhone = normalizeGhanaPhone(phoneNumber);
     if (!/^\+233[0-9]{9}$/.test(normalizedPhone)) {
@@ -415,7 +424,9 @@ export default function Auth() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.status) {
-        throw new Error(data?.message || 'Could not send verification code.');
+        const friendlyMessage = mapOtpSendError(data, 'Could not send verification code.');
+        await logSignupFailure(data?.code || 'otp_send_failed', friendlyMessage, { endpointCode: data?.code || null });
+        throw new Error(friendlyMessage);
       }
 
       setOtpSent(true);
@@ -425,6 +436,7 @@ export default function Auth() {
       setNotice({ tone: 'success', title: 'Code sent', message: `A 6-digit verification code was sent to ${normalizedEmail}.` });
       return true;
     } catch (error) {
+      await logSignupFailure('otp_send_failed', String(error?.message || 'Could not send verification code.'));
       setNotice({ tone: 'error', title: 'OTP send failed', message: error?.message || 'Could not send verification code.' });
       return false;
     } finally {
@@ -448,10 +460,13 @@ export default function Auth() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.status) {
-        throw new Error(data?.message || 'OTP verification failed.');
+        const message = data?.message || data?.error || 'OTP verification failed.';
+        await logSignupFailure(data?.code || 'otp_verify_failed', message, { endpointCode: data?.code || null });
+        throw new Error(message);
       }
       return true;
     } catch (error) {
+      await logSignupFailure('otp_verify_failed', String(error?.message || 'OTP verification failed.'));
       setNotice({ tone: 'error', title: 'Verification failed', message: error?.message || 'OTP verification failed.' });
       return false;
     } finally {
@@ -465,10 +480,6 @@ export default function Auth() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     try {
-      if (isBlockedEmail(normalizedEmail)) {
-        throw new Error('Please use a real email address to sign up.');
-      }
-
       if (!EMAIL_REGEX.test(normalizedEmail)) {
         throw new Error('Please enter a valid email address.');
       }
@@ -520,16 +531,19 @@ export default function Auth() {
       const code = error?.code || '';
       let signupMessage = 'Unable to create your account right now. Please try again.';
       if (code === 'auth/email-already-in-use') {
-        signupMessage = 'Unable to create an account with those details. Try logging in instead.';
+        signupMessage = 'This email address is already registered. Please log in instead.';
       } else if (code === 'auth/too-many-requests') {
         signupMessage = 'Too many attempts. Please wait a few minutes and try again.';
       } else if (code === 'auth/network-request-failed') {
         signupMessage = 'Network error. Check your connection and try again.';
+      } else if (code === 'missing_user_email') {
+        signupMessage = 'Google account did not return an email. Please try another sign-in method.';
       }
+      await logSignupFailure(code || 'signup_failed', String(error?.message || signupMessage), { code: code || null });
       setNotice({
         tone: 'error',
         title: 'Signup failed',
-        message: error?.message || signupMessage,
+        message: signupMessage,
       });
     } finally {
       setIsSubmitting(false);
@@ -611,11 +625,6 @@ export default function Auth() {
       return;
     }
 
-    if (isBlockedEmail(normalizedEmail)) {
-      setNotice({ tone: 'error', title: 'Email not allowed', message: 'Please use a real email address. Temporary or disposable emails are not allowed.' });
-      return;
-    }
-
     if (signupStep === 1) {
       await handleSendOTP();
       return;
@@ -691,19 +700,20 @@ export default function Auth() {
         await handleSocialAuth('google');
       } else {
         if (!request) {
+          void logSignupFailure('google_signin_not_ready', 'Google sign-in request is not initialized yet', { stage: 'init' });
           Alert.alert('Error', 'Google sign-in is not ready yet. Please try again.');
           return;
         }
         await promptAsync();
       }
     } catch (e) {
+      void logSignupFailure('google_signin_failed', String(e?.message || 'Unable to start Google sign-in.'), { stage: 'prompt' });
       Alert.alert('Error', e?.message || 'Unable to start Google sign-in.');
     }
   };
 
   const handleResendVerification = async () => {
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-    if (!normalizedEmail || !emailPattern.test(normalizedEmail)) {
+    if (!normalizedEmail || !EMAIL_REGEX.test(normalizedEmail)) {
       setNotice({ tone: 'warning', title: 'Enter your email first', message: 'Type your email address above, then tap resend.' });
       return;
     }
