@@ -483,33 +483,45 @@ export default function Auth() {
     setIsSubmitting(true);
     setNotice(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    let stage = 'start';
 
     try {
+      stage = 'validate_input';
+
       if (!EMAIL_REGEX.test(normalizedEmail)) {
         throw new Error('Please enter a valid email address.');
       }
 
+      stage = 'validate_password_strength';
       const strength = getPasswordStrength(password);
       if (strength.score < 3) {
         throw new Error('Password is too weak. Use at least 8 characters with uppercase, lowercase, and numbers.');
       }
 
+      stage = 'signup_rate_limit';
       const allowed = await canAttemptSignup();
       if (!allowed) {
         throw new Error('Too many signup attempts. Please wait 5 minutes.');
       }
 
+      stage = 'prepare_username';
       const trimmedUsername = username.trim();
       const usernameLower = trimmedUsername.toLowerCase();
 
       // Create the Firebase Auth account first so the user is signed in before
       // any Firestore reads — Firestore rules require isSignedIn() on the users
       // collection, so username uniqueness check must run after auth creation.
+      stage = 'record_signup_attempt';
       await recordSignupAttempt();
+
+      stage = 'create_auth_user';
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+
+      stage = 'refresh_auth_token';
       await credential.user.getIdToken(true).catch(() => {});
 
       // Now authenticated: check username uniqueness; roll back auth user if taken.
+      stage = 'check_username_uniqueness';
       const usernameSnap = await getDocs(
         query(collection(db, 'users'), where('usernameLower', '==', usernameLower))
       );
@@ -519,6 +531,7 @@ export default function Auth() {
         throw new Error('That username is already taken. Please choose a different one.');
       }
 
+      stage = 'ensure_user_document';
       await ensureUserDocument(credential.user, {
         role,
         username: trimmedUsername,
@@ -528,10 +541,12 @@ export default function Auth() {
       });
 
       if (referralInput && referralInput.trim()) {
+        stage = 'link_referral';
         await linkReferral(normalizedEmail, referralInput.trim()).catch(() => {});
       }
 
       // Fire-and-forget verification email; do not block account usage.
+      stage = 'send_email_verification';
       sendEmailVerification(credential.user).catch(() => {});
 
       setNotice({
@@ -552,6 +567,14 @@ export default function Auth() {
       } else if (code === 'missing_user_email') {
         signupMessage = 'Google account did not return an email. Please try another sign-in method.';
       }
+
+      await logSignupFailure('signup_stage_failed', String(error?.message || signupMessage), {
+        code: code || null,
+        stage,
+        name: error?.name || null,
+        fullCode: error?.code || null,
+      });
+
       await logSignupFailure(code || 'signup_failed', String(error?.message || signupMessage), { code: code || null });
       setNotice({
         tone: 'error',
