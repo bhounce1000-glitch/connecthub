@@ -507,6 +507,7 @@ export default function Auth() {
       // collection, so username uniqueness check must run after auth creation.
       await recordSignupAttempt();
       const credential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+      await credential.user.getIdToken(true).catch(() => {});
 
       // Now authenticated: check username uniqueness; roll back auth user if taken.
       const usernameSnap = await getDocs(
@@ -691,6 +692,8 @@ export default function Auth() {
           onboardingDone: false,
         });
       }
+
+      await credential.user.getIdToken(true).catch(() => {});
 
       if (!existingUserSnap.exists() && referralInput && referralInput.trim()) {
         await linkReferral(normalizedUserEmail, referralInput.trim()).catch(() => {});
