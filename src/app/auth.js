@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
@@ -375,7 +375,7 @@ export default function Auth() {
 
   const getApiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
 
-  const logSignupFailure = useCallback(async (errorType, errorMessage, metadata = {}) => {
+  async function logSignupFailure(errorType, errorMessage, metadata = {}) {
     try {
       const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
       await fetch(`${apiBase}/auth/signup-error-log`, {
@@ -392,7 +392,7 @@ export default function Auth() {
     } catch {
       // Never block signup UX on diagnostics logging.
     }
-  }, [normalizedEmail]);
+  }
 
   const mapOtpSendError = (payload = {}, fallbackMessage = '') => {
     const code = String(payload?.code || '').trim().toLowerCase();
