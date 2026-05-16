@@ -8,11 +8,50 @@ import useAuthUser from '../hooks/use-auth-user';
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import Avatar from '../components/ui/avatar';
+import EmptyState from '../components/ui/empty-state';
 import { STATUS_LABELS } from '../constants/access';
 import { AppColors, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import { toDisplayDateTime } from '../utils/date-time';
 import { getLocationLabel } from '../utils/location';
+
+const STATUS_THEME = {
+  open: { bg: '#dbeafe', fg: '#1d4ed8' },
+  accepted: { bg: '#ffedd5', fg: '#c2410c' },
+  in_progress: { bg: '#ede9fe', fg: '#5b21b6' },
+  pending_confirmation: { bg: '#fef3c7', fg: '#b45309' },
+  completed: { bg: '#dcfce7', fg: '#15803d' },
+  paid: { bg: '#dcfce7', fg: '#166534' },
+};
+
+function TimelineRow({ title, value, done }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
+      <View
+        style={{
+          width: 20,
+          alignItems: 'center',
+          marginTop: 1,
+        }}
+      >
+        <View
+          style={{
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            borderWidth: 2,
+            borderColor: done ? '#16a34a' : '#cbd5e1',
+            backgroundColor: done ? '#16a34a' : '#fff',
+          }}
+        />
+      </View>
+      <View style={{ flex: 1, marginLeft: 8 }}>
+        <Text style={{ color: AppColors.ink900, fontWeight: done ? '800' : '700' }}>{title}</Text>
+        <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>{value || 'Pending'}</Text>
+      </View>
+    </View>
+  );
+}
 
 export default function JobDetails() {
   const router = useRouter();
@@ -52,29 +91,56 @@ export default function JobDetails() {
   if (!job) {
     return (
       <View style={{ flex: 1, backgroundColor: '#f8fafc', justifyContent: 'center', alignItems: 'center', padding: AppSpace.lg }}>
-        <Text style={{ color: AppColors.ink500, marginBottom: 12 }}>Job details unavailable.</Text>
+        <EmptyState
+          title="Job details unavailable"
+          description="This request might have been removed, or your access changed."
+        />
         <AppButton label="Back" variant="neutral" onPress={() => router.back()} />
       </View>
     );
   }
 
+  const statusKey = String(job.status || '').trim().toLowerCase() || 'open';
+  const tone = STATUS_THEME[statusKey] || STATUS_THEME.open;
+  const isOwner = String(job.user || '').trim().toLowerCase() === String(user?.email || '').trim().toLowerCase();
+  const hasProvider = Boolean(job.acceptedBy);
+  const canFundEscrow = isOwner && statusKey === 'accepted' && !job.escrowFunded && !job.payment_received;
+  const canConfirm = isOwner && statusKey === 'pending_confirmation';
+  const canRate = isOwner && (statusKey === 'paid' || job.paid) && !job.rating;
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#f8fafc' }} contentContainerStyle={{ padding: AppSpace.lg }}>
-      <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 24, marginBottom: 12 }}>Job Summary</Text>
+      <View style={{ backgroundColor: '#0f172a', borderRadius: 16, padding: 18, marginBottom: 12 }}>
+        <Text style={{ color: '#93c5fd', fontWeight: '700', fontSize: 12, letterSpacing: 0.8 }}>CONNECTHUB</Text>
+        <Text style={{ fontWeight: '800', color: '#fff', fontSize: 24, marginTop: 4 }} numberOfLines={2}>{job.title}</Text>
+        <View style={{ marginTop: 10, alignSelf: 'flex-start', backgroundColor: tone.bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+          <Text style={{ color: tone.fg, fontWeight: '800', fontSize: 12 }}>
+            {STATUS_LABELS[job.status] || job.status || 'Open'}
+          </Text>
+        </View>
+      </View>
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 17, marginBottom: 4 }}>{job.title}</Text>
+        <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 17, marginBottom: 8 }}>Overview</Text>
         <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{job.description || 'No description provided.'}</Text>
-        <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Status: {STATUS_LABELS[job.status] || job.status || 'Open'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {getLocationLabel(job.location) || job.locationText || 'N/A'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Amount: GHS {job.price || 0}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Created: {toDisplayDateTime(job.createdAt)}</Text>
-        {job.completedAt ? <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Completed: {toDisplayDateTime(job.completedAt)}</Text> : null}
-        {job.paidAt ? <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Paid: {toDisplayDateTime(job.paidAt)}</Text> : null}
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '700', marginBottom: 8, color: AppColors.ink900 }}>Parties</Text>
+        <Text style={{ fontWeight: '800', marginBottom: 10, color: AppColors.ink900 }}>Progress Timeline</Text>
+        <TimelineRow title="Job posted" value={toDisplayDateTime(job.createdAt)} done />
+        <TimelineRow title="Provider accepted" value={job.acceptedAt ? toDisplayDateTime(job.acceptedAt) : 'Waiting for provider'} done={Boolean(job.acceptedAt || job.acceptedBy)} />
+        <TimelineRow title="Escrow funded" value={job.payment_received || job.escrowFunded ? 'Payment secured' : 'Pending customer payment'} done={Boolean(job.payment_received || job.escrowFunded)} />
+        <TimelineRow title="Work in progress" value={job.work_started ? 'Provider started work' : 'Not started'} done={Boolean(job.work_started)} />
+        <TimelineRow title="Work completed" value={job.completedAt ? toDisplayDateTime(job.completedAt) : 'Awaiting completion'} done={Boolean(job.work_completed || job.completedAt)} />
+        <TimelineRow title="Customer confirmed" value={job.completionConfirmedAt ? toDisplayDateTime(job.completionConfirmedAt) : 'Awaiting confirmation'} done={Boolean(job.customer_confirmed || job.completionConfirmedAt)} />
+        <TimelineRow title="Payout released" value={job.paidAt ? toDisplayDateTime(job.paidAt) : 'Awaiting payout'} done={Boolean(job.paid || job.paidAt)} />
+      </AppCard>
+
+      <AppCard style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: '800', marginBottom: 10, color: AppColors.ink900 }}>People</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
           <Avatar src={owner?.profilePicture} email={job.user} size={28} />
           <Text style={{ marginLeft: 8, color: AppColors.ink700 }}>Customer: {owner?.name || job.user || 'Unavailable'}</Text>
@@ -86,12 +152,47 @@ export default function JobDetails() {
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '700', marginBottom: 8, color: AppColors.ink900 }}>Review Summary</Text>
+        <Text style={{ fontWeight: '800', marginBottom: 8, color: AppColors.ink900 }}>Review Summary</Text>
         <Text style={{ color: AppColors.ink700 }}>Provider rating: {job.rating ? `${job.rating} ★` : 'Not yet rated'}</Text>
         {job.review ? <Text style={{ color: AppColors.ink500, marginTop: 4 }}>&quot;{job.review}&quot;</Text> : null}
         <Text style={{ color: AppColors.ink700, marginTop: 8 }}>Customer rating: {job.customerRating ? `${job.customerRating} ★` : 'Not yet rated'}</Text>
         {job.customerReview ? <Text style={{ color: AppColors.ink500, marginTop: 4 }}>&quot;{job.customerReview}&quot;</Text> : null}
       </AppCard>
+
+      <View style={{ marginBottom: 8 }}>
+        {hasProvider ? (
+          <AppButton
+            label="Open Chat"
+            onPress={() => router.push({ pathname: '/chat', params: { requestId: job.id } })}
+            style={{ marginBottom: 8 }}
+          />
+        ) : null}
+
+        {canFundEscrow ? (
+          <AppButton
+            label="Fund Escrow"
+            onPress={() => router.push({ pathname: '/pay', params: { id: job.id, amount: job.price, email: user?.email || '' } })}
+            style={{ marginBottom: 8, backgroundColor: '#16a34a' }}
+          />
+        ) : null}
+
+        {canConfirm ? (
+          <AppButton
+            label="Confirm Completion"
+            onPress={() => router.push({ pathname: '/confirm-completion', params: { requestId: job.id } })}
+            style={{ marginBottom: 8, backgroundColor: '#2563eb' }}
+          />
+        ) : null}
+
+        {canRate ? (
+          <AppButton
+            label="Leave Review"
+            variant="warning"
+            onPress={() => router.push({ pathname: '/rate', params: { requestId: job.id, providerEmail: job.acceptedBy || '' } })}
+            style={{ marginBottom: 8 }}
+          />
+        ) : null}
+      </View>
 
       <AppButton label="Back" variant="neutral" onPress={() => router.back()} />
     </ScrollView>

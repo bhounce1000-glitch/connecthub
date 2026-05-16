@@ -66,6 +66,8 @@ export default function Rate() {
         if (resolvedProviderEmail) {
           addDoc(collection(db, 'notifications'), {
             user: resolvedProviderEmail,
+            userId: resolvedProviderEmail,
+            recipientId: resolvedProviderEmail,
             text: `${auth.currentUser?.email} rated you ${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}${review.trim() ? ` — "${review.trim()}"` : ''}.`,
             read: false,
             createdAt: new Date().toISOString(),
@@ -83,6 +85,8 @@ export default function Rate() {
         if (customerEmail) {
           addDoc(collection(db, 'notifications'), {
             user: customerEmail,
+            userId: customerEmail,
+            recipientId: customerEmail,
             text: `${auth.currentUser?.email} gave you ${'★'.repeat(rating)}${'☆'.repeat(5 - rating)} as a customer${review.trim() ? ` — "${review.trim()}"` : ''}.`,
             read: false,
             createdAt: new Date().toISOString(),

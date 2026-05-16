@@ -9,6 +9,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "build": "expo export --platform web --output-dir dist",
     "lint": "expo lint",
     "smoke:api": "node scripts/smoke-api.js",
     "fix:stuck-payments": "node scripts/fix-stuck-job-payments.js",

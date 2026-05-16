@@ -73,7 +73,7 @@ export default function MyRequests() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [notice, setNotice] = useState(null);
-  const [tab, setTab] = useState('active');
+  const [tab, setTab] = useState('all');
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
@@ -99,12 +99,40 @@ export default function MyRequests() {
   const visibleRequests = useMemo(() => {
     return myRequests.filter((item) => {
       const status = item.status || REQUEST_STATUS.OPEN;
-      if (tab === 'completed') return status === REQUEST_STATUS.COMPLETED;
-      if (tab === 'paid') return status === REQUEST_STATUS.PAID || item.paid;
-      if (tab === 'active') return status !== REQUEST_STATUS.PAID && status !== REQUEST_STATUS.CANCELLED && !item.paid;
+      if (tab === 'active') return [REQUEST_STATUS.OPEN, REQUEST_STATUS.ACCEPTED, REQUEST_STATUS.IN_PROGRESS].includes(status);
+      if (tab === 'awaiting') return [REQUEST_STATUS.PENDING_CONFIRMATION, 'done'].includes(status);
+      if (tab === 'completed') return [REQUEST_STATUS.COMPLETED, REQUEST_STATUS.PAID, 'confirmed'].includes(status) || item.paid;
       return true;
     });
   }, [myRequests, tab]);
+
+  const summary = useMemo(() => {
+    const totals = {
+      total: myRequests.length,
+      active: 0,
+      pendingConfirmation: 0,
+      completed: 0,
+      cancelled: 0,
+    };
+
+    myRequests.forEach((item) => {
+      const status = item.status || REQUEST_STATUS.OPEN;
+      if (status === REQUEST_STATUS.PAID || status === REQUEST_STATUS.COMPLETED || item.paid) {
+        totals.completed += 1;
+        return;
+      }
+      if (status === REQUEST_STATUS.CANCELLED) {
+        totals.cancelled += 1;
+        return;
+      }
+      if (status === REQUEST_STATUS.PENDING_CONFIRMATION) {
+        totals.pendingConfirmation += 1;
+      }
+      totals.active += 1;
+    });
+
+    return totals;
+  }, [myRequests]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -168,11 +196,11 @@ export default function MyRequests() {
     if (tab === 'active') {
       return <EmptyState emoji="📋" title="No active requests" subtitle="Post a job to get started" actionLabel="Post a Job" onAction={() => router.push('/request-wizard')} />;
     }
-    if (tab === 'completed') {
-      return <EmptyState emoji="✅" title="No completed jobs yet" subtitle="Confirmed jobs waiting for payout will appear here" />;
+    if (tab === 'awaiting') {
+      return <EmptyState emoji="⏳" title="No jobs awaiting confirmation" subtitle="When providers mark jobs done, they appear here." />;
     }
-    if (tab === 'paid') {
-      return <EmptyState emoji="💸" title="No paid jobs yet" subtitle="Paid jobs will appear here once wallet payout is done" />;
+    if (tab === 'completed') {
+      return <EmptyState emoji="✅" title="No completed jobs yet" subtitle="Completed and paid jobs will appear here." />;
     }
     return <EmptyState emoji="📭" title="No requests yet" />;
   };
@@ -185,10 +213,17 @@ export default function MyRequests() {
       </View>
 
       <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: AppRadius.md, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
-        <TabButton keyName="active" label="Active" />
-        <TabButton keyName="completed" label="Completed" />
-        <TabButton keyName="paid" label="Paid" />
         <TabButton keyName="all" label="All" />
+        <TabButton keyName="active" label="Active" />
+        <TabButton keyName="awaiting" label="Awaiting Confirmation" />
+        <TabButton keyName="completed" label="Completed" />
+      </View>
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+        <SummaryPill label="Total" value={summary.total} bg="#eef2ff" fg="#4338ca" />
+        <SummaryPill label="Active" value={summary.active} bg="#e0f2fe" fg="#0369a1" />
+        <SummaryPill label="Awaiting Confirmation" value={summary.pendingConfirmation} bg="#fffbeb" fg="#b45309" />
+        <SummaryPill label="Completed" value={summary.completed} bg="#ecfdf5" fg="#15803d" />
       </View>
 
       <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 10 }} />
@@ -224,6 +259,14 @@ export default function MyRequests() {
               <Text style={{ marginTop: 8, color: '#475569', fontSize: 13 }}>📍 {locationLabel}</Text>
               <Text style={{ marginTop: 4, color: '#166534', fontWeight: '900', fontSize: 16 }}>GHS {Number(item.price || 0).toFixed(2)}</Text>
               <Text style={{ marginTop: 4, color: '#94a3b8', fontSize: 12 }}>{postedAgo(item.createdAt)}</Text>
+
+              <View style={{ marginTop: AppSpace.sm }}>
+                <AppButton
+                  label="View Details"
+                  variant="neutral"
+                  onPress={() => router.push({ pathname: '/job-details', params: { requestId: item.id } })}
+                />
+              </View>
 
               {!providerEmail ? (
                 <Text style={{ marginTop: 8, color: '#c2410c', fontWeight: '800' }}>Seeking Provider...</Text>
@@ -298,6 +341,26 @@ export default function MyRequests() {
       />
 
       <AppButton label="← Back to Home" variant="neutral" onPress={() => router.replace('/home')} style={{ marginTop: 8 }} />
+    </View>
+  );
+}
+
+function SummaryPill({ label, value, bg, fg }) {
+  return (
+    <View
+      style={{
+        backgroundColor: bg,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginRight: 8,
+        marginBottom: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+      }}
+    >
+      <Text style={{ color: fg, fontWeight: '700', fontSize: 12 }}>{label}</Text>
+      <Text style={{ color: fg, fontWeight: '900', fontSize: 12, marginLeft: 6 }}>{value}</Text>
     </View>
   );
 }

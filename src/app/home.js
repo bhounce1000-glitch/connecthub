@@ -1,8 +1,8 @@
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { collection, getDoc, onSnapshot, query, where } from 'firebase/firestore';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
@@ -19,6 +19,22 @@ import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
 import { distanceKm, getLocationCity, getLocationCoords, getLocationLabel } from '../utils/location';
+
+const BLOCKED_PROVIDER_EMAIL_PARTS = ['test', 'gmx.dev', 'mailinator', 'example.com', 'local'];
+
+function isPublicProviderEmail(email) {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return !BLOCKED_PROVIDER_EMAIL_PARTS.some((part) => normalized.includes(part));
+}
+
+function isRealRequestRecord(item) {
+  const userEmail = String(item?.user || '').trim().toLowerCase();
+  const providerEmail = String(item?.acceptedBy || '').trim().toLowerCase();
+  const userLooksReal = !userEmail || isPublicProviderEmail(userEmail);
+  const providerLooksReal = !providerEmail || isPublicProviderEmail(providerEmail);
+  return userLooksReal && providerLooksReal;
+}
 
 function getEffectiveStatus(item) {
   if (item.paid) return REQUEST_STATUS.PAID;
@@ -137,12 +153,46 @@ export default function Home() {
 
   useEffect(() => {
     if (!currentEmail) return undefined;
-    const q = query(
+    const qByUserId = query(
+      collection(db, 'notifications'),
+      where('userId', '==', currentEmail),
+      where('read', '==', false),
+    );
+    const qByRecipient = query(
+      collection(db, 'notifications'),
+      where('recipientId', '==', currentEmail),
+      where('read', '==', false),
+    );
+    const qByLegacyUser = query(
       collection(db, 'notifications'),
       where('user', '==', currentEmail),
       where('read', '==', false),
     );
-    return onSnapshot(q, (snap) => setUnreadCount(snap.size), () => setUnreadCount(0));
+
+    let userIdCount = 0;
+    let recipientCount = 0;
+    let legacyCount = 0;
+    const flush = () => setUnreadCount(Math.max(userIdCount, recipientCount, legacyCount));
+
+    const unsubUserId = onSnapshot(qByUserId, (snap) => {
+      userIdCount = snap.size;
+      flush();
+    }, () => setUnreadCount(0));
+
+    const unsubRecipient = onSnapshot(qByRecipient, (snap) => {
+      recipientCount = snap.size;
+      flush();
+    }, () => setUnreadCount(0));
+    const unsubLegacy = onSnapshot(qByLegacyUser, (snap) => {
+      legacyCount = snap.size;
+      flush();
+    }, () => setUnreadCount(0));
+
+    return () => {
+      unsubUserId();
+      unsubRecipient();
+      unsubLegacy();
+    };
   }, [currentEmail]);
 
   useEffect(() => {
@@ -150,6 +200,7 @@ export default function Home() {
     return onSnapshot(providersQuery, (snapshot) => {
       const rows = snapshot.docs
         .map((providerDoc) => ({ id: providerDoc.id, ...providerDoc.data() }))
+        .filter((row) => isPublicProviderEmail(row.email || row.id))
         .slice(0, 8);
       setProviders(rows);
     }, () => setProviders([]));
@@ -165,6 +216,7 @@ export default function Home() {
       return onSnapshot(baseCollection, (snapshot) => {
         const data = snapshot.docs
           .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+          .filter((row) => isRealRequestRecord(row))
           .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
         setRequests(data);
         setIsLoading(false);
@@ -181,7 +233,9 @@ export default function Home() {
       snapshots.forEach((snap) => {
         snap.docs.forEach((d) => seen.set(d.id, { id: d.id, ...d.data() }));
       });
-      return [...seen.values()].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      return [...seen.values()]
+        .filter((row) => isRealRequestRecord(row))
+        .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     };
 
     const snapMap = { open: null, own: null, accepted: null };
@@ -436,9 +490,9 @@ export default function Home() {
 
       return true;
     });
-  }, [requests, currentEmail, searchText, activeCategory, statusFilter, isProvider, selectedCity, nearMeOnly, currentCoords]);
+  }, [requests, currentEmail, searchText, activeCategory, statusFilter, selectedCity, nearMeOnly, currentCoords]);
 
-  const getGhanaHour = () => {
+  const getGhanaHour = useCallback(() => {
     try {
       const parts = new Intl.DateTimeFormat('en-GB', {
         hour: '2-digit',
@@ -452,22 +506,22 @@ export default function Home() {
       // Fallback for environments with limited Intl timezone support.
     }
     return new Date().getUTCHours();
-  };
+  }, []);
 
-  const getGreeting = () => {
+  const getGreeting = useCallback(() => {
     const hours = getGhanaHour();
     if (hours < 5) return 'Good night';
     if (hours < 12) return 'Good morning';
     if (hours < 17) return 'Good afternoon';
     if (hours < 21) return 'Good evening';
     return 'Good night';
-  };
+  }, [getGhanaHour]);
   const [greetingText, setGreetingText] = useState(getGreeting);
   useEffect(() => {
     setGreetingText(getGreeting());
     const interval = setInterval(() => setGreetingText(getGreeting()), 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [getGreeting]);
 
   const firstName = useMemo(() => {
     const raw = String(
@@ -494,6 +548,27 @@ export default function Home() {
     };
   }, [currentEmail, requests, userProfiles]);
 
+  const requestSummary = useMemo(() => {
+    const summary = {
+      open: 0,
+      accepted: 0,
+      inProgress: 0,
+      pendingConfirm: 0,
+      paid: 0,
+    };
+
+    requests.forEach((item) => {
+      const status = getEffectiveStatus(item);
+      if (status === REQUEST_STATUS.OPEN) summary.open += 1;
+      if (status === REQUEST_STATUS.ACCEPTED) summary.accepted += 1;
+      if (status === REQUEST_STATUS.IN_PROGRESS) summary.inProgress += 1;
+      if (status === REQUEST_STATUS.PENDING_CONFIRMATION) summary.pendingConfirm += 1;
+      if (status === REQUEST_STATUS.PAID || item.paid) summary.paid += 1;
+    });
+
+    return summary;
+  }, [requests]);
+
   const renderListHeader = () => (
     <View>
       {/* Hero header */}
@@ -516,7 +591,7 @@ export default function Home() {
               <TouchableOpacity onPress={() => router.push('/notifications')} style={{ position: 'relative' }}>
                 <Text style={{ fontSize: 22 }}>🔔</Text>
                 <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: '#dc2626', borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 }}>
-                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
                 </View>
               </TouchableOpacity>
             )}
@@ -556,7 +631,7 @@ export default function Home() {
         <TouchableOpacity onPress={() => router.push('/request-wizard')} style={{ flex: 1, backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center' }}>
           <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>＋ Post a Job</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/my-requests')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
+        <TouchableOpacity onPress={() => router.push(isProvider ? '/active-jobs' : '/my-requests')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
           <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 13 }}>My Jobs</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={openWallet} activeOpacity={0.8} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
@@ -576,7 +651,7 @@ export default function Home() {
           <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🔔 Alerts</Text>
           {unreadCount > 0 ? (
             <View style={{ position: 'absolute', top: 6, right: 8, backgroundColor: '#dc2626', borderRadius: 9, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
             </View>
           ) : null}
         </TouchableOpacity>
@@ -690,6 +765,15 @@ export default function Home() {
           <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>📋 Live Requests ({visibleRequests.length})</Text>
           <View style={{ flex: 1, height: 1, backgroundColor: '#e2e8f0', marginLeft: 10 }} />
         </View>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+          <StatusChip label="Open" value={requestSummary.open} bg="#dbeafe" fg="#1d4ed8" />
+          <StatusChip label="Accepted" value={requestSummary.accepted} bg="#ffedd5" fg="#c2410c" />
+          <StatusChip label="Working" value={requestSummary.inProgress} bg="#ede9fe" fg="#5b21b6" />
+          <StatusChip label="Awaiting Confirm" value={requestSummary.pendingConfirm} bg="#fef3c7" fg="#b45309" />
+          <StatusChip label="Paid" value={requestSummary.paid} bg="#dcfce7" fg="#15803d" />
+        </View>
+
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {CATEGORIES.map((cat) => {
             const active = cat === activeCategory;
@@ -869,6 +953,13 @@ export default function Home() {
                 {/* Visual status stepper */}
                 <JobStepper status={status} request={item} />
 
+                <AppButton
+                  label="View Details"
+                  variant="neutral"
+                  onPress={() => router.push({ pathname: '/job-details', params: { requestId: item.id } })}
+                  style={{ marginTop: AppSpace.sm }}
+                />
+
                 {/* Action buttons */}
                 {!item.acceptedBy && !isOwner && status === REQUEST_STATUS.OPEN ? (
                   <AppButton label="Accept Job" variant="primary" onPress={() => handleAccept(item)} disabled={Boolean(pendingAction)} loading={activeAction === 'accept'} loadingLabel="Accepting..." style={{ marginTop: AppSpace.sm }} />
@@ -953,6 +1044,26 @@ export default function Home() {
           <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700', marginTop: -2 }}>+</Text>
         </TouchableOpacity>
       </Animated.View>
+    </View>
+  );
+}
+
+function StatusChip({ label, value, bg, fg }) {
+  return (
+    <View
+      style={{
+        backgroundColor: bg,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginRight: 8,
+        marginBottom: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+      }}
+    >
+      <Text style={{ color: fg, fontWeight: '700', fontSize: 12 }}>{label}</Text>
+      <Text style={{ color: fg, fontWeight: '900', fontSize: 12, marginLeft: 6 }}>{value}</Text>
     </View>
   );
 }

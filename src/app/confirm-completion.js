@@ -14,6 +14,7 @@ import { API_BASE_URL } from '../constants/api';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import { auth, db, storage } from '../firebase';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
+import jobStateMachine from '../utils/jobStateMachine';
 
 export default function ConfirmCompletion() {
   const router = useRouter();
@@ -128,6 +129,10 @@ export default function ConfirmCompletion() {
     setSaving(true);
     setNotice(null);
     try {
+      jobStateMachine.canTransition('done', 'confirmed', 'customer', {
+        jobId: resolvedRequestId,
+        userId: String(auth.currentUser?.uid || ''),
+      });
       const { response, data } = await apiPost(`${API_BASE_URL}/jobs/${resolvedRequestId}/confirm-completion`, {
         rating: rating >= 1 && rating <= 5 ? rating : null,
         comment: comment.trim(),

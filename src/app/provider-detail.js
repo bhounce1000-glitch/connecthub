@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -37,6 +37,15 @@ function Badge({ label, color = '#e0e7ff', textColor = '#3730a3' }) {
   return (
     <View style={{ backgroundColor: color, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginRight: 6, marginBottom: 6 }}>
       <Text style={{ fontSize: 12, fontWeight: '700', color: textColor }}>{label}</Text>
+    </View>
+  );
+}
+
+function HighlightPill({ label, value }) {
+  return (
+    <View style={{ backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8, marginBottom: 8 }}>
+      <Text style={{ color: '#c7d2fe', fontSize: 11, fontWeight: '700' }}>{label}</Text>
+      <Text style={{ color: '#ffffff', fontSize: 13, fontWeight: '900', marginTop: 2 }}>{value}</Text>
     </View>
   );
 }
@@ -334,6 +343,13 @@ export default function ProviderDetail() {
 
   const rating = liveStats.avgRating ?? (provider.avgRating ? Number(provider.avgRating).toFixed(1) : null);
   const jobs = liveStats.jobs ?? provider.jobsCompleted ?? 0;
+  const portfolioPhotos = Array.isArray(provider.portfolioPhotos) ? provider.portfolioPhotos.filter(Boolean).slice(0, 6) : [];
+  const serviceHighlights = [
+    provider.category ? `Specializes in ${provider.category}` : null,
+    provider.location ? `Covers ${provider.location}` : null,
+    provider.experience ? `${provider.experience}+ years experience` : null,
+    provider.startingPrice ? `Starts from GHS ${provider.startingPrice}` : null,
+  ].filter(Boolean);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#eef2ff' }}>
@@ -352,6 +368,12 @@ export default function ProviderDetail() {
           {provider.category ? (
             <Text style={{ color: '#c7d2fe', marginTop: 6, fontWeight: '600' }}>{provider.category}</Text>
           ) : null}
+
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 14 }}>
+            <HighlightPill label="Response" value={provider.isAvailable ? 'Available now' : 'Offline'} />
+            <HighlightPill label="Completed" value={String(jobs)} />
+            <HighlightPill label="Rating" value={rating ? `${rating} / 5` : 'New'} />
+          </View>
         </View>
 
         {/* Identity card */}
@@ -393,6 +415,20 @@ export default function ProviderDetail() {
               About
             </Text>
             <Text style={{ color: AppColors.ink700, lineHeight: 22 }}>{provider.bio}</Text>
+          </AppCard>
+        ) : null}
+
+        {serviceHighlights.length > 0 ? (
+          <AppCard style={{ marginBottom: AppSpace.md }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: AppColors.ink500, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Why clients hire this provider
+            </Text>
+            {serviceHighlights.map((item) => (
+              <View key={item} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ color: '#16a34a', fontSize: 14, marginRight: 8 }}>●</Text>
+                <Text style={{ color: AppColors.ink700, lineHeight: 20, flex: 1 }}>{item}</Text>
+              </View>
+            ))}
           </AppCard>
         ) : null}
 
@@ -442,6 +478,24 @@ export default function ProviderDetail() {
             </View>
           ) : null}
         </AppCard>
+
+        {portfolioPhotos.length > 0 ? (
+          <AppCard style={{ marginBottom: AppSpace.md }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: AppColors.ink500, marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Portfolio Preview
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {portfolioPhotos.map((photo) => (
+                <Image
+                  key={photo}
+                  source={{ uri: photo }}
+                  style={{ width: 180, height: 132, borderRadius: 14, marginRight: 10, backgroundColor: '#e2e8f0' }}
+                  resizeMode="cover"
+                />
+              ))}
+            </ScrollView>
+          </AppCard>
+        ) : null}
 
         {/* Reviews */}
         {reviews.length > 0 && (

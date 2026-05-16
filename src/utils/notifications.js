@@ -121,6 +121,7 @@ export async function registerForPushNotifications() {
       {
         email: userEmail,
         pushToken,
+        fcmToken: pushToken,
         pushTokenUpdatedAt: new Date().toISOString(),
       },
       { merge: true }

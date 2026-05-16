@@ -175,7 +175,7 @@ export default function Pay() {
     } finally {
       setIsVerifying(false);
     }
-  }, [isVerifying, reference, requestId, router]);
+  }, [isVerifying, reference, router]);
 
   useEffect(() => {
     if (!callbackReference || callbackAttempted.current) {

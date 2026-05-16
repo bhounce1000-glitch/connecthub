@@ -18,6 +18,13 @@ import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost } from '../utils/api-client';
 
+const QUICK_REPLIES = [
+  'I am on my way.',
+  'Please share your exact location.',
+  'Can we confirm the final price?',
+  'I have completed the work.',
+];
+
 export default function Chat() {
   const router = useRouter();
   const { requestId, jobId } = useLocalSearchParams();
@@ -302,10 +309,25 @@ export default function Chat() {
       eyebrow="CONVERSATION"
       title={jobTitle || 'Chat'}
       subtitle={resolvedRequestId ? `${counterpartyName || counterpartyEmail || 'Participant'} • Request: ${resolvedRequestId}` : 'Open a request chat to talk with the other party.'}
-      accentColor="#1d4ed8"
-      accentTextColor="#dbeafe"
+      accentColor="#0f172a"
+      accentTextColor="#bfdbfe"
     >
-      <AppCard style={{ flex: 1 }}>
+      <AppCard style={{ flex: 1, borderRadius: 16 }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <Text style={{ color: '#1e3a8a', fontWeight: '800' }}>Secure Request Chat</Text>
+          <Text style={{ color: '#64748b', fontSize: 12 }}>{messages.length} message{messages.length === 1 ? '' : 's'}</Text>
+        </View>
+
+        {(counterpartyName || counterpartyEmail) ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 12 }}>
+            <Avatar src={senderProfiles[counterpartyEmail]?.profilePicture} email={counterpartyEmail || counterpartyName} size={38} style={{ marginRight: 10 }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#0f172a', fontWeight: '800' }}>{counterpartyName || counterpartyEmail}</Text>
+              <Text style={{ color: '#64748b', fontSize: 12 }}>Request conversation is encrypted and tied to this job.</Text>
+            </View>
+          </View>
+        ) : null}
+
         <AppNotice
           tone={notice?.tone}
           title={notice?.title}
@@ -335,6 +357,26 @@ export default function Chat() {
           />
         )}
 
+        {!isLoading && resolvedRequestId ? (
+          <View style={{ marginTop: 12, marginBottom: 2 }}>
+            <Text style={{ color: '#64748b', fontSize: 12, fontWeight: '700', marginBottom: 8 }}>Quick replies</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+              {QUICK_REPLIES.map((reply) => (
+                <View key={reply} style={{ marginRight: 8, marginBottom: 8 }}>
+                  <AppButton
+                    label={reply}
+                    variant="neutral"
+                    onPress={() => setText(reply)}
+                    disabled={isSending}
+                    style={{ paddingHorizontal: 12, paddingVertical: 8, minHeight: 0, backgroundColor: '#eff6ff' }}
+                    textStyle={{ color: '#1d4ed8', fontSize: 12, fontWeight: '700' }}
+                  />
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         <View style={{ flexDirection: 'row', marginTop: 14 }}>
           <AppInput
             value={text}
@@ -343,8 +385,9 @@ export default function Chat() {
             containerStyle={{ flex: 1, marginBottom: 0 }}
             inputStyle={{
               flex: 1,
-              borderRadius: 20,
+              borderRadius: 999,
               paddingVertical: 10,
+              backgroundColor: '#f8fafc',
             }}
           />
 
@@ -353,7 +396,7 @@ export default function Chat() {
             onPress={sendMessage}
             disabled={!normalizedText || !resolvedRequestId}
             loading={isSending}
-            style={{ marginLeft: 8, borderRadius: 20, paddingHorizontal: 16 }}
+            style={{ marginLeft: 8, borderRadius: 999, paddingHorizontal: 16, backgroundColor: '#1d4ed8' }}
           />
         </View>
       </AppCard>

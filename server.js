@@ -8,6 +8,7 @@ const { rateLimit } = require('express-rate-limit');
 const admin = require('firebase-admin');
 const pino = require('pino');
 const { sendPaymentReceiptEmail, sendKycSubmissionEmail, sendKycApprovalEmail, sendKycRejectionEmail, isEmailConfigured, transporter: emailTransporter, EMAIL_FROM: emailFrom } = require('./src/server/email');
+const { canTransition: canWorkflowTransition, normalizeStatus: normalizeWorkflowStatus } = require('./src/utils/jobStateMachine');
 
 const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -197,6 +198,64 @@ function validateStatusTransitionGate({ fromStatus, toStatus, requestData = {}, 
   }
 
   return { ok: false, reason: `transition_not_allowed:${from}->${to}` };
+}
+
+function requestStatusToWorkflowStatus(value) {
+  const normalized = normalizeRequestStatus(value);
+  if (normalized === 'in_progress') return 'working';
+  if (normalized === 'pending_confirmation') return 'done';
+  if (normalized === 'completed') return 'confirmed';
+  return normalized;
+}
+
+function workflowStatusToRequestStatus(value) {
+  const normalized = normalizeWorkflowStatus(value);
+  if (normalized === 'working') return 'in_progress';
+  if (normalized === 'done') return 'pending_confirmation';
+  if (normalized === 'confirmed') return 'completed';
+  return normalized;
+}
+
+function enforceStatusTransition({
+  requestData,
+  fromStatus,
+  toStatus,
+  actorRole,
+  actorEmail,
+  actorUid,
+  allowAutoConfirm = false,
+}) {
+  const fromWorkflowStatus = requestStatusToWorkflowStatus(fromStatus || requestData?.status || 'open');
+  const toWorkflowStatus = requestStatusToWorkflowStatus(toStatus);
+
+  canWorkflowTransition(fromWorkflowStatus, toWorkflowStatus, actorRole, {
+    jobId: requestData?.id || requestData?.requestId || null,
+    userId: actorUid || actorEmail || null,
+  });
+
+  if (fromWorkflowStatus === 'open' && toWorkflowStatus === 'accepted') {
+    if (requestData?.acceptedBy) {
+      throw new Error('Invalid transition: provider already assigned for this job');
+    }
+  }
+
+  if (fromWorkflowStatus === 'working' && toWorkflowStatus === 'done') {
+    const assignedProvider = String(requestData?.acceptedBy || '').trim().toLowerCase();
+    const normalizedActor = String(actorEmail || '').trim().toLowerCase();
+    if (!assignedProvider || assignedProvider !== normalizedActor) {
+      throw new Error('Invalid transition: only the assigned provider can mark work as done');
+    }
+  }
+
+  if (fromWorkflowStatus === 'done' && toWorkflowStatus === 'confirmed') {
+    const ownerEmail = String(requestData?.user || '').trim().toLowerCase();
+    const normalizedActor = String(actorEmail || '').trim().toLowerCase();
+    if (!allowAutoConfirm && (!ownerEmail || ownerEmail !== normalizedActor)) {
+      throw new Error('Invalid transition: only the customer can confirm completion');
+    }
+  }
+
+  return true;
 }
 
 // NOTE FOR SCALING: The SimpleCache below is in-memory.
@@ -666,20 +725,47 @@ async function logStatusAttempt({
   }
 }
 
-async function writeNotification(userEmail, text) {
+async function writeNotification(userEmail, text, options = {}) {
   if (!userEmail || !text) return;
   const normalizedEmail = String(userEmail).trim().toLowerCase();
+  const type = String(options.type || 'system').trim() || 'system';
+  const title = String(options.title || 'ConnectHub').trim() || 'ConnectHub';
+  const body = String(options.body || text).trim() || String(text || '').trim();
+  const jobId = options.jobId ? String(options.jobId) : null;
+
   try {
     await adminDb.collection('notifications').add({
-      user: normalizedEmail,
-      userLower: normalizedEmail,
-      text,
+      recipientId: normalizedEmail,
+      type,
+      title,
+      body,
+      jobId,
       read: false,
-      createdAt: new Date().toISOString(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      user: normalizedEmail,
+      userId: normalizedEmail,
+      userLower: normalizedEmail,
+      text: body,
+      createdAtIso: new Date().toISOString(),
     });
   } catch (error) {
     logger.error({ err: error }, 'NOTIFICATION_WRITE_ERROR');
   }
+}
+
+async function sendNotification(recipientId, type, data = {}) {
+  if (!recipientId) return;
+  const normalizedRecipient = String(recipientId).trim().toLowerCase();
+  const title = String(data.title || 'ConnectHub').trim() || 'ConnectHub';
+  const body = String(data.body || '').trim();
+  if (!body) return;
+
+  await writeNotification(normalizedRecipient, body, {
+    type,
+    title,
+    body,
+    jobId: data.jobId || data.requestId || null,
+  });
 }
 
 async function logAdminAction(adminEmail, action, details = {}) {
@@ -756,7 +842,12 @@ async function notifyUser(userEmail, text, pushTitle = 'ConnectHub', pushData = 
   let pushDelivered = false;
   let pushTokenFound = false;
 
-  await writeNotification(normalizedEmail, text);
+  await sendNotification(normalizedEmail, String(pushData?.type || 'system'), {
+    title: pushTitle,
+    body: text,
+    jobId: pushData?.jobId || pushData?.requestId || null,
+    requestId: pushData?.requestId || null,
+  });
   inAppNotificationStored = true;
 
   const pushToken = await getPushTokenForUser(normalizedEmail);
@@ -822,6 +913,48 @@ function requireAdmin(req, res, next) {
   }
 
   return next();
+}
+
+async function verifyAdminToken(req, res, next) {
+  try {
+    const authHeader = String(req.headers.authorization || '');
+
+    if (!authHeader.startsWith('Bearer ')) {
+      return sendError(res, req, 401, 'missing_bearer_token', 'Missing bearer token');
+    }
+
+    const token = authHeader.slice('Bearer '.length).trim();
+
+    if (!token || token.length < 10) {
+      return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token format');
+    }
+
+    const decodedToken = await admin.auth().verifyIdToken(token, true);
+    const normalizedEmail = String(decodedToken.email || '').trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      return sendError(res, req, 401, 'invalid_auth_token', 'Authenticated account is missing an email');
+    }
+
+    const userDoc = await adminDb.collection('users').doc(normalizedEmail).get();
+    const userData = userDoc.exists ? (userDoc.data() || {}) : {};
+    const hasFirestoreAdmin = String(userData.role || '').trim().toLowerCase() === 'admin' || userData.admin === true || userData.isAdmin === true;
+    const hasClaimAdmin = decodedToken.admin === true || String(decodedToken.role || '').trim().toLowerCase() === 'admin';
+
+    if (!hasFirestoreAdmin && !hasClaimAdmin && !isAdminEmail(normalizedEmail)) {
+      return sendError(res, req, 403, 'admin_access_required', 'Admin access required');
+    }
+
+    req.user = decodedToken;
+    req.userEmail = normalizedEmail;
+    req.adminProfile = userData;
+    return next();
+  } catch (error) {
+    if (error?.code === 'auth/id-token-revoked') {
+      return sendError(res, req, 401, 'token_revoked', 'Session expired. Please log in again.');
+    }
+    return sendError(res, req, 401, 'invalid_auth_token', 'Invalid auth token');
+  }
 }
 
 async function requireAdminOrBootstrapSecret(req, res, next) {
@@ -906,6 +1039,22 @@ async function markRequestPaid(requestId, paymentReference, extraFields = {}) {
     if (!payoutGate.ok && !extraFields?.forceReconcile) {
       currentStatus = payoutGate.reason || 'invalid_status_transition';
       return;
+    }
+
+    if (!extraFields?.forceReconcile) {
+      try {
+        enforceStatusTransition({
+          requestData: { ...beforeData, id: requestId },
+          fromStatus: currentStatus,
+          toStatus: 'paid',
+          actorRole: 'system',
+          actorEmail: String(extraFields?.source || 'escrow-system').toLowerCase(),
+          actorUid: String(extraFields?.source || 'escrow-system').toLowerCase(),
+        });
+      } catch (error) {
+        currentStatus = error.message || 'invalid_status_transition';
+        return;
+      }
     }
 
     const requestPrice = parseMoney(beforeData?.price);
@@ -1808,6 +1957,19 @@ async function markRequestEscrowFunded(requestId, paymentReference, extraFields 
     return { updated: false, reason: 'invalid_status_transition', currentStatus };
   }
 
+  try {
+    enforceStatusTransition({
+      requestData: { ...beforeData, id: requestId },
+      fromStatus: currentStatus,
+      toStatus: 'in_progress',
+      actorRole: 'system',
+      actorEmail: String(extraFields?.source || 'payment-system').toLowerCase(),
+      actorUid: String(extraFields?.source || 'payment-system').toLowerCase(),
+    });
+  } catch (error) {
+    return { updated: false, reason: error.message || 'invalid_status_transition', currentStatus };
+  }
+
   if (!beforeData?.acceptedBy) {
     return { updated: false, reason: 'missing_assigned_provider', currentStatus };
   }
@@ -1893,7 +2055,7 @@ async function markRequestEscrowFunded(requestId, paymentReference, extraFields 
       beforeData.acceptedBy,
       `Customer has funded escrow for "${title}". You can now begin work.`,
       'Payment Received!',
-      { screen: 'job-details', requestId, jobId: requestId }
+      { type: 'payment_received', screen: 'job-details', requestId, jobId: requestId }
     );
   }
   if (beforeData?.user) {
@@ -1901,7 +2063,7 @@ async function markRequestEscrowFunded(requestId, paymentReference, extraFields 
       beforeData.user,
       `Escrow payment received for "${title}". Your job is now in progress.`,
       'Escrow Funded',
-      { screen: 'job-details', requestId, jobId: requestId }
+      { type: 'payment_received', screen: 'job-details', requestId, jobId: requestId }
     );
   }
 
@@ -4269,7 +4431,7 @@ async function processCompletedTransferFromPolling(transferCode, paystackStatus,
 
 async function handlePaystackWebhook(req, res) {
   try {
-    const paystackSecret = getPaystackSecret();
+    const paystackSecret = process.env.PAYSTACK_WEBHOOK_SECRET || getPaystackSecret();
     const signature = req.headers['x-paystack-signature'];
     const rawBody = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
 
@@ -4607,6 +4769,107 @@ app.post('/admin/withdrawals/poll-transfer-status', async (req, res) => {
 app.post('/paystack/webhook', handlePaystackWebhook);
 app.post('/webhook', handlePaystackWebhook);
 
+app.post('/api/jobs', requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const payload = req.body || {};
+
+    const category = String(payload.category || '').trim();
+    const title = String(payload.title || '').trim();
+    const description = String(payload.description || '').trim();
+    const location = payload.location || {};
+    const area = String(location.area || payload.area || '').trim();
+    const fullAddress = String(location.fullAddress || payload.fullAddress || '').trim();
+    const specialInstructions = String(location.specialInstructions || payload.specialInstructions || '').trim();
+    const urgency = String(payload.urgency || 'normal').trim().toLowerCase() === 'urgent' ? 'urgent' : 'normal';
+    const preferredDate = String(payload.preferredDate || '').trim();
+    const budget = parseMoney(payload.budget || payload.price || 0);
+
+    if (!category) return sendError(res, req, 400, 'invalid_category', 'Category is required');
+    if (title.length < 5 || title.length > 80) return sendError(res, req, 400, 'invalid_title', 'Title must be between 5 and 80 characters');
+    if (description.length < 20 || description.length > 500) return sendError(res, req, 400, 'invalid_description', 'Description must be between 20 and 500 characters');
+    if (!Number.isFinite(budget) || budget < 10) return sendError(res, req, 400, 'invalid_budget', 'Budget must be at least GHS 10');
+    if (!area) return sendError(res, req, 400, 'invalid_area', 'Area is required');
+    if (specialInstructions.length > 200) return sendError(res, req, 400, 'invalid_special_instructions', 'Special instructions cannot exceed 200 characters');
+
+    const preferredDateMs = preferredDate ? new Date(preferredDate).getTime() : Date.now();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (!Number.isFinite(preferredDateMs) || preferredDateMs < startOfToday.getTime()) {
+      return sendError(res, req, 400, 'invalid_preferred_date', 'Preferred date must be today or later');
+    }
+
+    const createdAtIso = new Date().toISOString();
+    const jobRef = adminDb.collection('requests').doc();
+    const referenceNumber = `JOB-${Date.now().toString().slice(-8)}-${jobRef.id.slice(0, 4).toUpperCase()}`;
+    const locationLabel = fullAddress ? `${area}, ${fullAddress}` : area;
+
+    await jobRef.set({
+      category,
+      title,
+      description,
+      price: budget,
+      budget,
+      urgency,
+      preferredDate,
+      location: {
+        area,
+        fullAddress,
+        specialInstructions,
+        label: locationLabel,
+      },
+      locationText: locationLabel,
+      user: actorEmail,
+      userId: actorEmail,
+      customerId: actorEmail,
+      status: 'open',
+      referenceNumber,
+      paid: false,
+      escrowFunded: false,
+      payment_received: false,
+      work_started: false,
+      work_completed: false,
+      customer_confirmed: false,
+      payment_released: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtIso,
+    });
+
+    const providersSnapshot = await adminDb.collection('providers').where('isAvailable', '==', true).limit(300).get();
+    const normalizedCategory = category.toLowerCase();
+    const normalizedArea = area.toLowerCase();
+    const recipients = providersSnapshot.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .filter((provider) => {
+        const providerCategory = String(provider.category || '').trim().toLowerCase();
+        const providerArea = String(provider.locationArea || provider.area || '').trim().toLowerCase();
+        const categoryMatch = !providerCategory || providerCategory === normalizedCategory;
+        const areaMatch = !providerArea || providerArea.includes(normalizedArea) || normalizedArea.includes(providerArea);
+        return categoryMatch && areaMatch;
+      })
+      .map((provider) => String(provider.email || provider.id || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    await Promise.all(recipients.map((recipient) => sendNotification(recipient, 'job_accepted', {
+      title: 'New Job Nearby',
+      body: `${title} • ${area} • GHS ${budget.toFixed(2)}`,
+      jobId: jobRef.id,
+    })));
+
+    return sendSuccess(res, req, {
+      message: 'Job posted successfully',
+      data: {
+        jobId: jobRef.id,
+        referenceNumber,
+        status: 'open',
+      },
+    }, 201);
+  } catch (error) {
+    logger.error({ err: error }, 'API_CREATE_JOB_ERROR');
+    return sendError(res, req, 500, 'create_job_failed', 'Could not post job right now');
+  }
+});
+
 app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
   try {
     const requestId = String(req.params.id || '').trim();
@@ -4625,6 +4888,11 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
     const beforeData = snap.data() || {};
     const actorProfileSnap = await adminDb.collection('users').doc(actorEmail).get().catch(() => null);
     const actorProfile = actorProfileSnap && actorProfileSnap.exists ? (actorProfileSnap.data() || {}) : {};
+    const actorRole = String(actorProfile.role || '').trim().toLowerCase();
+
+    if (actorRole !== 'provider') {
+      return sendError(res, req, 403, 'provider_access_required', 'Only providers can accept open jobs');
+    }
 
     if (actorProfile.banned === true) {
       return sendError(res, req, 403, 'account_banned', 'Your account has been suspended. Contact support for assistance.');
@@ -4672,8 +4940,21 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
     }
 
     const currentStatus = normalizeRequestStatus(beforeData.status || 'open');
-    if (!['open', 'accepted'].includes(currentStatus)) {
+    if (currentStatus !== 'open') {
       return sendError(res, req, 409, 'invalid_status_transition', 'Only open requests can be accepted');
+    }
+
+    try {
+      enforceStatusTransition({
+        requestData: { ...beforeData, id: requestId },
+        fromStatus: currentStatus,
+        toStatus: 'accepted',
+        actorRole: 'provider',
+        actorEmail,
+        actorUid: req.user?.uid || null,
+      });
+    } catch (error) {
+      return sendError(res, req, 403, 'invalid_status_transition', error.message || 'Status transition not allowed');
     }
 
     const patch = {
@@ -4722,7 +5003,7 @@ app.post('/jobs/:id/accept', requireAuth, async (req, res) => {
         beforeData.user,
         `${providerName} has accepted your job: ${beforeData.title || requestId}. Please fund escrow within 24 hours to start work.`,
         'Job Accepted!',
-        { screen: 'job-details', requestId, jobId: requestId }
+        { type: 'job_accepted', screen: 'job-details', requestId, jobId: requestId }
       );
     }
 
@@ -4780,6 +5061,19 @@ app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
       return sendError(res, req, 409, 'invalid_status_transition', 'Job must be in progress to mark complete');
     }
 
+    try {
+      enforceStatusTransition({
+        requestData: { ...beforeData, id: requestId },
+        fromStatus: beforeData.status,
+        toStatus: 'pending_confirmation',
+        actorRole: 'provider',
+        actorEmail,
+        actorUid: req.user?.uid || null,
+      });
+    } catch (error) {
+      return sendError(res, req, 403, 'invalid_status_transition', error.message || 'Status transition not allowed');
+    }
+
     if (!hasEscrowPaymentProof(beforeData) || beforeData?.work_started !== true) {
       await logStatusAttempt({
         jobId: requestId,
@@ -4825,7 +5119,7 @@ app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
         beforeData.user,
         `${beforeData.acceptedBy || 'Your provider'} marked your job as complete. Please confirm.`,
         'Work Completed!',
-        { screen: 'confirm-completion', requestId, jobId: requestId }
+        { type: 'job_done', screen: 'confirm-completion', requestId, jobId: requestId }
       );
     }
 
@@ -4845,6 +5139,71 @@ app.post('/jobs/:id/mark-complete', requireAuth, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'JOB_MARK_COMPLETE_ERROR');
     return sendError(res, req, 500, 'job_mark_complete_failed', 'Could not mark job complete');
+  }
+});
+
+app.post('/jobs/:id/start-working', requireAuth, async (req, res) => {
+  try {
+    const requestId = String(req.params.id || '').trim();
+    const actorEmail = String(req.user?.email || '').toLowerCase();
+    if (!requestId) return sendError(res, req, 400, 'missing_request_id', 'Missing request id');
+
+    const requestRef = adminDb.collection('requests').doc(requestId);
+    const snap = await requestRef.get();
+    if (!snap.exists) return sendError(res, req, 404, 'request_not_found', 'Request not found');
+
+    const beforeData = snap.data() || {};
+    const acceptedBy = String(beforeData.acceptedBy || '').toLowerCase();
+    if (!acceptedBy || acceptedBy !== actorEmail) {
+      return sendError(res, req, 403, 'provider_access_required', 'Only the assigned provider can start work');
+    }
+
+    if (!beforeData.escrowFunded || !beforeData.payment_received) {
+      return sendError(res, req, 409, 'escrow_not_funded', 'Customer payment must succeed before work can start');
+    }
+
+    if (normalizeRequestStatus(beforeData.status) !== 'accepted') {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Job must be accepted before starting work');
+    }
+
+    try {
+      enforceStatusTransition({
+        requestData: { ...beforeData, id: requestId },
+        fromStatus: beforeData.status,
+        toStatus: 'in_progress',
+        actorRole: 'system',
+        actorEmail: 'provider-triggered-system',
+        actorUid: req.user?.uid || null,
+      });
+    } catch (error) {
+      return sendError(res, req, 403, 'invalid_status_transition', error.message || 'Status transition not allowed');
+    }
+
+    const patch = {
+      status: 'in_progress',
+      startedAt: new Date().toISOString(),
+      work_started: true,
+      workStartedAt: new Date().toISOString(),
+    };
+    await requestRef.set(patch, { merge: true });
+
+    await logStatusTransition({
+      userId: actorEmail,
+      jobId: requestId,
+      oldStatus: beforeData.status,
+      newStatus: 'in_progress',
+      triggeredBy: 'manual',
+      actorEmail,
+      reason: 'provider_started_work',
+    });
+
+    return sendSuccess(res, req, {
+      message: 'Job moved to in progress',
+      data: { id: requestId, ...patch },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'JOB_START_WORKING_ERROR');
+    return sendError(res, req, 500, 'job_start_failed', 'Could not start this job');
   }
 });
 
@@ -5029,6 +5388,19 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
       return sendError(res, req, 409, 'invalid_status_transition', 'Job is not pending customer confirmation');
     }
 
+    try {
+      enforceStatusTransition({
+        requestData: { ...beforeData, id: requestId },
+        fromStatus: beforeData.status,
+        toStatus: 'completed',
+        actorRole: 'customer',
+        actorEmail,
+        actorUid: req.user?.uid || null,
+      });
+    } catch (error) {
+      return sendError(res, req, 403, 'invalid_status_transition', error.message || 'Status transition not allowed');
+    }
+
     if (!beforeData?.work_completed) {
       await logStatusAttempt({
         jobId: requestId,
@@ -5096,7 +5468,7 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
         beforeData.acceptedBy,
         `Your payment for ${beforeData.title || requestId} has been released to your wallet.`,
         'Payment Released!',
-        { screen: 'wallet', requestId, jobId: requestId }
+        { type: 'payment_received', screen: 'wallet', requestId, jobId: requestId }
       );
     }
     if (beforeData.user) {
@@ -5104,7 +5476,7 @@ app.post('/jobs/:id/confirm-completion', requireAuth, async (req, res) => {
         beforeData.user,
         `Job "${beforeData.title || requestId}" completed successfully. Payment has been released.`,
         'Payment Released',
-        { screen: 'job-details', requestId, jobId: requestId }
+        { type: 'auto_confirmed', screen: 'job-details', requestId, jobId: requestId }
       );
     }
 
@@ -5773,6 +6145,63 @@ app.post('/admin/users/:email/unban', requireAuth, requireAdmin, async (req, res
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_UNBAN_ERROR');
     return sendError(res, req, 500, 'unban_failed', 'Could not unban user');
+  }
+});
+
+app.post('/admin/delete-user', verifyAdminToken, async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+
+    if (!uid && !email) {
+      return sendError(res, req, 400, 'missing_uid', 'uid or email is required');
+    }
+
+    let targetUser = null;
+
+    if (uid) {
+      try {
+        targetUser = await admin.auth().getUser(uid);
+      } catch {
+        targetUser = null;
+      }
+    }
+
+    if (!targetUser && email) {
+      try {
+        targetUser = await admin.auth().getUserByEmail(email);
+      } catch {
+        targetUser = null;
+      }
+    }
+
+    if (!targetUser) {
+      return sendError(res, req, 404, 'user_not_found', 'User not found');
+    }
+
+    const targetEmail = String(targetUser.email || email || '').trim().toLowerCase();
+
+    await admin.auth().deleteUser(targetUser.uid);
+
+    if (targetEmail) {
+      await adminDb.collection('users').doc(targetEmail).delete().catch(() => null);
+    }
+
+    await writeAuditLog({
+      actorEmail: req.user?.email || null,
+      eventType: 'user_deleted',
+      metadata: { targetUid: targetUser.uid, targetEmail },
+    });
+    await logAdminAction(req.user?.email || null, 'user_deleted', { targetUid: targetUser.uid, targetEmail, ip: req.ip });
+
+    return sendSuccess(res, req, {
+      message: `${targetEmail || targetUser.uid} deleted.`,
+      uid: targetUser.uid,
+      email: targetEmail || null,
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_DELETE_USER_ERROR');
+    return sendError(res, req, 500, 'delete_user_failed', 'Could not delete user');
   }
 });
 
@@ -7405,3 +7834,226 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
     return sendError(res, req, 500, 'wallet_topup_verify_failed', 'Could not verify wallet top up');
   }
 });
+
+app.post('/api/payments/initiate', paymentLimiter, requireAuth, async (req, res) => {
+  try {
+    const paystackSecret = getPaystackSecret();
+    const jobId = String(req.body?.jobId || req.body?.requestId || '').trim();
+    const customerEmail = String(req.user?.email || '').trim().toLowerCase();
+
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    }
+
+    if (!jobId) {
+      return sendError(res, req, 400, 'missing_job_id', 'Job id is required');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(jobId);
+    const requestSnap = await requestRef.get();
+    if (!requestSnap.exists) {
+      return sendError(res, req, 404, 'job_not_found', 'Job was not found');
+    }
+
+    const requestData = requestSnap.data() || {};
+    const ownerEmail = String(requestData.user || '').trim().toLowerCase();
+    const providerId = String(requestData.acceptedBy || '').trim().toLowerCase();
+    const amount = parseMoney(requestData.price || 0);
+    const status = normalizeRequestStatus(requestData.status || 'open');
+
+    if (!ownerEmail || ownerEmail !== customerEmail) {
+      return sendError(res, req, 403, 'owner_access_required', 'Only the job customer can initiate payment');
+    }
+
+    if (!providerId) {
+      return sendError(res, req, 409, 'provider_not_assigned', 'Provider must be assigned before payment');
+    }
+
+    if (!['open', 'accepted'].includes(status)) {
+      return sendError(res, req, 409, 'invalid_status_transition', 'Payment can only start for open or accepted jobs');
+    }
+
+    if (!Number.isFinite(amount) || amount < 10) {
+      return sendError(res, req, 400, 'invalid_amount', 'Job budget is invalid for payment');
+    }
+
+    const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: Math.round(amount * 100),
+        currency: 'GHS',
+        email: ownerEmail,
+        callback_url: `${NORMALIZED_CALLBACK_BASE_URL}/pay-return?id=${encodeURIComponent(jobId)}`,
+        metadata: {
+          jobId,
+          requestId: jobId,
+          customerId: ownerEmail,
+          providerId,
+        },
+      }),
+    });
+
+    const payload = await paystackResponse.json();
+    if (!paystackResponse.ok || !payload?.status || !payload?.data?.reference) {
+      return sendError(res, req, 502, 'paystack_init_failed', payload?.message || 'Could not initialize payment');
+    }
+
+    await requestRef.set({
+      paymentInitReference: payload.data.reference,
+      paymentInitAt: new Date().toISOString(),
+    }, { merge: true });
+
+    return sendSuccess(res, req, {
+      message: 'Payment initialized',
+      data: {
+        jobId,
+        reference: payload.data.reference,
+        authorizationUrl: payload.data.authorization_url,
+        accessCode: payload.data.access_code,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'API_PAYMENTS_INITIATE_ERROR');
+    return sendError(res, req, 500, 'payments_initiate_failed', 'Could not initiate payment');
+  }
+});
+
+app.post('/api/payments/verify', paymentLimiter, requireAuth, async (req, res) => {
+  try {
+    const paystackSecret = getPaystackSecret();
+    const reference = String(req.body?.reference || '').trim();
+    if (!reference) {
+      return sendError(res, req, 400, 'missing_reference', 'Payment reference is required');
+    }
+
+    if (!paystackSecret) {
+      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
+    }
+
+    const verifyResponse = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    const verifiedPayload = await verifyResponse.json();
+
+    if (!verifyResponse.ok || !verifiedPayload?.status || verifiedPayload?.data?.status !== 'success') {
+      return sendError(res, req, 400, 'payment_not_verified', 'Payment verification was not successful', verifiedPayload);
+    }
+
+    const jobId = String(verifiedPayload?.data?.metadata?.jobId || verifiedPayload?.data?.metadata?.requestId || '').trim();
+    if (!jobId) {
+      return sendError(res, req, 409, 'missing_job_reference', 'Verified payment does not include a valid job id');
+    }
+
+    const requestRef = adminDb.collection('requests').doc(jobId);
+    const requestSnap = await requestRef.get();
+    if (!requestSnap.exists) {
+      return sendError(res, req, 404, 'job_not_found', 'Job was not found for this payment');
+    }
+
+    const requestData = requestSnap.data() || {};
+    const ownerEmail = String(requestData.user || '').trim().toLowerCase();
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    if (!ownerEmail || ownerEmail !== actorEmail) {
+      return sendError(res, req, 403, 'owner_access_required', 'Only the job customer can verify this payment');
+    }
+
+    const chargedAmount = parseMoney(Number(verifiedPayload?.data?.amount || 0) / 100);
+    const jobAmount = parseMoney(requestData.price || 0);
+    if (Math.abs(chargedAmount - jobAmount) > 0.01) {
+      return sendError(res, req, 409, 'amount_mismatch', 'Payment amount does not match job amount');
+    }
+
+    const updateResult = await markRequestEscrowFunded(jobId, reference, {
+      paymentChannel: verifiedPayload?.data?.channel || 'paystack',
+      gatewayResponse: verifiedPayload?.data?.gateway_response || 'verified',
+      source: 'api_payments_verify',
+    });
+    if (!updateResult.updated) {
+      return sendError(res, req, 409, 'status_update_failed', 'Payment verified but status transition failed', updateResult);
+    }
+
+    await adminDb.collection('transactions').add({
+      jobId,
+      requestId: jobId,
+      customerId: ownerEmail,
+      providerId: String(requestData.acceptedBy || '').trim().toLowerCase(),
+      amount: jobAmount,
+      paystackRef: reference,
+      status: 'escrowed',
+      type: 'escrow',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAtIso: new Date().toISOString(),
+    });
+
+    await adminDb.collection('escrow').doc(jobId).set({
+      jobId,
+      customerId: ownerEmail,
+      providerId: String(requestData.acceptedBy || '').trim().toLowerCase(),
+      amount: jobAmount,
+      paystackRef: reference,
+      status: 'held',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAtIso: new Date().toISOString(),
+    }, { merge: true });
+
+    return sendSuccess(res, req, {
+      message: 'Payment verified and escrow funded',
+      data: {
+        jobId,
+        reference,
+        status: 'working',
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'API_PAYMENTS_VERIFY_ERROR');
+    return sendError(res, req, 500, 'payments_verify_failed', 'Could not verify payment');
+  }
+});
+
+app.post('/api/payments/release', requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    if (!isAdminEmail(actorEmail) && req.user?.admin !== true) {
+      return sendError(res, req, 403, 'system_only', 'This endpoint is system-only');
+    }
+
+    const jobId = String(req.body?.jobId || req.body?.requestId || '').trim();
+    if (!jobId) {
+      return sendError(res, req, 400, 'missing_job_id', 'Job id is required');
+    }
+
+    const release = await releaseEscrowForRequest({
+      requestId: jobId,
+      actorEmail,
+      source: String(req.body?.triggeredBy || 'api_release'),
+      forceReconcile: false,
+    });
+
+    if (!release.updated) {
+      return sendError(res, req, 409, 'release_failed', 'Escrow release was not applied', release);
+    }
+
+    return sendSuccess(res, req, {
+      message: 'Escrow released and job marked paid',
+      data: { jobId, status: 'paid' },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'API_PAYMENTS_RELEASE_ERROR');
+    return sendError(res, req, 500, 'payments_release_failed', 'Could not release escrow payment');
+  }
+});
+
+app.post('/api/withdrawals/request', requireAuth, (req, res, next) => {
+  req.url = '/wallet/withdraw';
+  return app.handle(req, res, next);
+});
+
+app.post('/api/webhooks/paystack', handlePaystackWebhook);

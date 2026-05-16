@@ -90,12 +90,14 @@ export default function Wallet() {
   const { refresh } = useLocalSearchParams();
   const { user } = useAuthUser();
   const currentEmail = (user?.email || '').trim().toLowerCase();
+  const currentUid = String(user?.uid || '').trim();
 
   const [transactions, setTransactions] = useState([]);
   const [walletBalance, setWalletBalance] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [activityFilter, setActivityFilter] = useState('all');
 
   const handleWithdraw = () => {
     router.push('/wallet-withdraw');
@@ -115,18 +117,41 @@ export default function Wallet() {
 
     setErrorMessage('');
     try {
-      const userSnap = await getDoc(doc(db, 'users', currentEmail));
-      const balance = userSnap.exists() ? Number(userSnap.data()?.walletBalance || 0) : 0;
+      let balance = 0;
+      if (currentUid) {
+        const walletByUid = await getDoc(doc(db, 'wallets', currentUid));
+        if (walletByUid.exists()) {
+          balance = Number(walletByUid.data()?.balance || walletByUid.data()?.walletBalance || 0);
+        }
+      }
+      if (!balance && currentEmail) {
+        const walletByEmail = await getDoc(doc(db, 'wallets', currentEmail));
+        if (walletByEmail.exists()) {
+          balance = Number(walletByEmail.data()?.balance || walletByEmail.data()?.walletBalance || 0);
+        }
+      }
+      if (!balance) {
+        const userSnap = await getDoc(doc(db, 'users', currentEmail));
+        balance = userSnap.exists() ? Number(userSnap.data()?.walletBalance || 0) : 0;
+      }
 
+      const byUserIdQ = currentUid
+        ? query(collection(db, 'transactions'), where('userId', '==', currentUid), orderBy('createdAt', 'desc'))
+        : null;
       const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
       const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
-      const [sentSnap, receivedSnap] = await Promise.all([getDocs(sentQ), getDocs(receivedQ)]);
+      const [userIdSnap, sentSnap, receivedSnap] = await Promise.all([
+        byUserIdQ ? getDocs(byUserIdQ) : Promise.resolve({ docs: [] }),
+        getDocs(sentQ),
+        getDocs(receivedQ),
+      ]);
 
+      const userIdRows = userIdSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: d.data()?.type === 'credit' ? 'received' : 'sent' }));
       const sentRows = sentSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'sent' }));
       const receivedRows = receivedSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'received' }));
 
       const byId = new Map();
-      [...sentRows, ...receivedRows].forEach((row) => byId.set(row.id, row));
+      [...userIdRows, ...sentRows, ...receivedRows].forEach((row) => byId.set(row.id, row));
       const merged = Array.from(byId.values()).sort((a, b) => toMs(b.timestamp) - toMs(a.timestamp));
 
       setWalletBalance(Number.isFinite(balance) ? balance : 0);
@@ -146,13 +171,14 @@ export default function Wallet() {
   }, [currentEmail, refresh]);
 
   useEffect(() => {
-    if (!currentEmail) return undefined;
-    const userRef = doc(db, 'users', currentEmail);
-    return onSnapshot(userRef, (snap) => {
-      const balance = snap.exists() ? Number(snap.data()?.walletBalance || 0) : 0;
+    if (!currentEmail && !currentUid) return undefined;
+    const refPath = currentUid ? doc(db, 'wallets', currentUid) : doc(db, 'wallets', currentEmail);
+    const unsubWallet = onSnapshot(refPath, (snap) => {
+      const balance = snap.exists() ? Number(snap.data()?.balance || snap.data()?.walletBalance || 0) : 0;
       setWalletBalance(Number.isFinite(balance) ? balance : 0);
     });
-  }, [currentEmail]);
+    return unsubWallet;
+  }, [currentEmail, currentUid]);
 
   useEffect(() => {
     if (!currentEmail) return undefined;
@@ -206,7 +232,7 @@ export default function Wallet() {
         earned += amount;
       }
 
-      if (withdrawal && ['pending_admin_approval', 'manual_review', 'pending'].includes(status)) {
+      if (withdrawal && ['pending_admin_approval', 'manual_review', 'pending', 'processing', 'escrowed'].includes(status)) {
         pending += amount;
       }
 
@@ -218,15 +244,41 @@ export default function Wallet() {
     return { earned, pending, withdrawn };
   }, [transactions]);
 
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((row) => {
+      const withdrawal = isWithdrawalRow(row);
+      const isReceived = row.direction === 'received' && !withdrawal;
+      const isSent = row.direction === 'sent' && !withdrawal;
+
+      if (activityFilter === 'received') return isReceived;
+      if (activityFilter === 'sent') return isSent;
+      if (activityFilter === 'withdrawals') return withdrawal;
+      return true;
+    });
+  }, [activityFilter, transactions]);
+
   const grouped = useMemo(() => {
     const map = new Map();
-    transactions.forEach((row) => {
+    filteredTransactions.forEach((row) => {
       const label = groupLabel(toMs(row.timestamp));
       if (!map.has(label)) map.set(label, []);
       map.get(label).push(row);
     });
     return Array.from(map.entries());
-  }, [transactions]);
+  }, [filteredTransactions]);
+
+  const emptyStateCopy = useMemo(() => {
+    if (activityFilter === 'received') {
+      return { icon: '📥', title: 'No incoming payments yet', subtitle: 'Completed jobs and top-ups will appear here.' };
+    }
+    if (activityFilter === 'sent') {
+      return { icon: '📤', title: 'No outgoing payments yet', subtitle: 'Transfers you make to others will appear here.' };
+    }
+    if (activityFilter === 'withdrawals') {
+      return { icon: '🏧', title: 'No withdrawals yet', subtitle: 'Your MoMo cash-outs will appear here once created.' };
+    }
+    return { icon: '👛', title: 'Your wallet is empty', subtitle: 'Complete jobs to earn GHS.' };
+  }, [activityFilter]);
 
   if (isLoading) {
     return (
@@ -279,6 +331,46 @@ export default function Wallet() {
               <QuickStat label="Withdrawn" value={`GHS ${stats.withdrawn.toFixed(2)}`} />
             </View>
 
+            <View style={{ backgroundColor: walletBalance > 0 ? '#ecfdf5' : '#eff6ff', borderRadius: AppRadius.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: walletBalance > 0 ? '#bbf7d0' : '#bfdbfe' }}>
+              <Text style={{ color: walletBalance > 0 ? '#166534' : '#1d4ed8', fontWeight: '800', marginBottom: 4 }}>
+                {walletBalance > 0 ? 'Balance ready for use' : 'Wallet ready for your first payout'}
+              </Text>
+              <Text style={{ color: walletBalance > 0 ? '#15803d' : '#2563eb', fontSize: 12 }}>
+                {walletBalance > 0
+                  ? 'You can withdraw available funds or keep them for future platform payments.'
+                  : 'Top up or complete a job to start seeing funds and transaction history here.'}
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
+              {[
+                { key: 'all', label: 'All' },
+                { key: 'received', label: 'Money In' },
+                { key: 'sent', label: 'Money Out' },
+                { key: 'withdrawals', label: 'Withdrawals' },
+              ].map((item) => {
+                const active = activityFilter === item.key;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    onPress={() => setActivityFilter(item.key)}
+                    style={{
+                      borderRadius: 999,
+                      borderWidth: 1,
+                      borderColor: active ? '#2563eb' : '#cbd5e1',
+                      backgroundColor: active ? '#dbeafe' : '#fff',
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      marginRight: 8,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <Text style={{ color: active ? '#1d4ed8' : '#64748b', fontWeight: '700', fontSize: 12 }}>{item.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
             {errorMessage ? (
               <View style={{ backgroundColor: '#fee2e2', borderRadius: AppRadius.md, padding: 10, marginBottom: 10 }}>
                 <Text style={{ color: '#991b1b', fontSize: 12 }}>{errorMessage}</Text>
@@ -286,15 +378,15 @@ export default function Wallet() {
             ) : null}
 
             <Text style={{ marginBottom: 10, color: AppColors.ink900, fontWeight: '900', fontSize: 16 }}>
-              Transaction History ({transactions.length})
+              Transaction History ({filteredTransactions.length})
             </Text>
           </>
         )}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-            <Text style={{ fontSize: 64 }}>👛</Text>
-            <Text style={{ marginTop: 10, fontWeight: '800', color: AppColors.ink900, fontSize: 18 }}>Your wallet is empty</Text>
-            <Text style={{ color: '#64748b', marginTop: 6 }}>Complete jobs to earn GHS</Text>
+            <Text style={{ fontSize: 64 }}>{emptyStateCopy.icon}</Text>
+            <Text style={{ marginTop: 10, fontWeight: '800', color: AppColors.ink900, fontSize: 18 }}>{emptyStateCopy.title}</Text>
+            <Text style={{ color: '#64748b', marginTop: 6 }}>{emptyStateCopy.subtitle}</Text>
           </View>
         }
         renderItem={({ item, index }) => {
@@ -306,13 +398,13 @@ export default function Wallet() {
               {rows.map((row) => {
                 const isWithdrawal = isWithdrawalRow(row);
                 const isReceived = row.direction === 'received' && !isWithdrawal;
-                const icon = isReceived ? '↑' : isWithdrawal ? '→' : '↓';
+                const icon = isReceived ? '💰' : isWithdrawal ? '💸' : '⏳';
                 const iconBg = isReceived ? '#dcfce7' : isWithdrawal ? '#ffedd5' : '#fee2e2';
                 const iconColor = isReceived ? '#166534' : isWithdrawal ? '#c2410c' : '#b91c1c';
                 const amountColor = isReceived ? '#166534' : '#b91c1c';
                 const statusMeta = humanizeTransactionStatus(row);
                 const counterparty = transactionCounterparty(row, currentEmail);
-                const title = isWithdrawal ? 'Withdrawal' : (row.jobTitle || row.type || 'Transaction');
+                const title = isWithdrawal ? 'Withdrawal' : (row.description || row.jobTitle || row.type || 'Transaction');
                 const subtitle = isWithdrawal
                   ? `Amount sent: GHS ${Number(row.amount || 0).toFixed(2)}`
                   : counterparty;

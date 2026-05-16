@@ -1,541 +1,364 @@
-import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { addDoc, collection, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { useState } from 'react';
-import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
-} from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { CATEGORY_ICONS } from '../constants/access';
-import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
-import { auth, db, storage } from '../firebase';
-import useAuthUser from '../hooks/use-auth-user';
+import { API_BASE_URL } from '../constants/api';
+import { AppRadius, AppSpace } from '../constants/design-tokens';
+import { apiPost, assertApiSuccess } from '../utils/api-client';
 
 const CATEGORIES = [
   { name: 'Cleaning', icon: '🧹' },
   { name: 'Plumbing', icon: '🔧' },
   { name: 'Electrical', icon: '⚡' },
-  { name: 'Driving', icon: '🚗' },
+  { name: 'Delivery', icon: '🚗' },
+  { name: 'Moving', icon: '📦' },
   { name: 'Cooking', icon: '🍳' },
   { name: 'Beauty', icon: '💇' },
-  { name: 'Construction', icon: '🏗️' },
-  { name: 'Moving', icon: '📦' },
-  { name: 'Security', icon: '🔒' },
-  { name: 'Tech Support', icon: '💻' },
+  { name: 'Tech Support', icon: '🖥️' },
   { name: 'Gardening', icon: '🌿' },
-  { name: 'Pet Care', icon: '🐾' },
-  { name: 'Tutoring', icon: '📚' },
-  { name: 'Design', icon: '🎨' },
-  { name: 'Other', icon: '✨' },
+  { name: 'Other', icon: '➕' },
 ];
-const TOTAL_STEPS = 4;
-const STEP_NAMES = ['Category', 'Details', 'Location', 'Review'];
+
+const AREAS = [
+  'East Legon',
+  'Tema',
+  'Osu',
+  'Labone',
+  'Cantonments',
+  'Adenta',
+  'Spintex',
+  'Achimota',
+  'Kumasi',
+  'Takoradi',
+  'Cape Coast',
+  'Other',
+];
+
+function todayString() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, '0');
+  const day = `${d.getDate()}`.padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default function RequestWizard() {
   const router = useRouter();
-  const { user } = useAuthUser();
 
   const [step, setStep] = useState(1);
   const [category, setCategory] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [preferredDate, setPreferredDate] = useState('');
-  const [price, setPrice] = useState('');
-  const [locationCity, setLocationCity] = useState('');
-  const [locationArea, setLocationArea] = useState('');
-  const [locationCoords, setLocationCoords] = useState(null);
-  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
-  const [isFlexible, setIsFlexible] = useState(false);
+  const [budget, setBudget] = useState('');
+  const [preferredDate, setPreferredDate] = useState(todayString());
   const [urgency, setUrgency] = useState('normal');
+  const [area, setArea] = useState('');
+  const [fullAddress, setFullAddress] = useState('');
+  const [specialInstructions, setSpecialInstructions] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [error, setError] = useState('');
-  const [imageUri, setImageUri] = useState(null);
-  const [imageUrl, setImageUrl] = useState('');
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [successRef, setSuccessRef] = useState('');
 
-  const pickImage = async () => {
-    if (Platform.OS === 'web') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.onchange = async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        setImageUri(URL.createObjectURL(file));
-        await uploadImage(file);
-      };
-      input.click();
-    } else {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') { setError('Grant photo library access to attach an image.'); return; }
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 0.8 });
-      if (result.canceled || !result.assets?.[0]) return;
-      const { uri } = result.assets[0];
-      setImageUri(uri);
-      const blob = await (await fetch(uri)).blob();
-      await uploadImage(blob);
+  const titleError = useMemo(() => {
+    const len = title.trim().length;
+    if (len === 0) return 'Title is required';
+    if (len < 5) return 'Minimum 5 characters';
+    if (len > 80) return 'Maximum 80 characters';
+    return '';
+  }, [title]);
+
+  const descriptionError = useMemo(() => {
+    const len = description.trim().length;
+    if (len === 0) return 'Description is required';
+    if (len < 20) return 'Minimum 20 characters';
+    if (len > 500) return 'Maximum 500 characters';
+    return '';
+  }, [description]);
+
+  const budgetError = useMemo(() => {
+    const value = Number(budget);
+    if (!budget.trim()) return 'Budget is required';
+    if (!Number.isFinite(value)) return 'Budget must be numeric';
+    if (value < 10) return 'Minimum budget is GHS 10';
+    return '';
+  }, [budget]);
+
+  const dateError = useMemo(() => {
+    const parsed = new Date(preferredDate).getTime();
+    const floorToday = new Date();
+    floorToday.setHours(0, 0, 0, 0);
+    if (!preferredDate.trim()) return 'Preferred date is required';
+    if (!Number.isFinite(parsed)) return 'Invalid date';
+    if (parsed < floorToday.getTime()) return 'Date must be today or later';
+    return '';
+  }, [preferredDate]);
+
+  const step1Valid = category.length > 0;
+  const step2Valid = !titleError && !descriptionError && !budgetError && !dateError;
+  const step3Valid = area.length > 0 && specialInstructions.length <= 200;
+
+  const handlePost = async () => {
+    setSubmitError('');
+    if (!step1Valid || !step2Valid || !step3Valid) {
+      setSubmitError('Please complete all required fields before posting.');
+      return;
     }
-  };
 
-  const uploadImage = async (fileOrBlob) => {
-    setIsUploadingImage(true);
-    try {
-      const uid = auth.currentUser?.uid;
-      if (!uid) throw new Error('Not authenticated');
-      const storageRef = ref(storage, `request-images/${uid}/${Date.now()}`);
-      await uploadBytes(storageRef, fileOrBlob);
-      const url = await getDownloadURL(storageRef);
-      setImageUrl(url);
-    } catch {
-      setError('Image upload failed. You can still post without one.');
-      setImageUri(null);
-    } finally {
-      setIsUploadingImage(false);
-    }
-  };
-
-  const progressPct = ((step - 1) / (TOTAL_STEPS - 1)) * 100;
-
-  const resolveCurrentLocation = async () => {
-    setError('');
-    setIsDetectingLocation(true);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setError('Location permission is required to auto-detect your location.');
-        return;
-      }
-
-      const currentPosition = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const latitude = Number(currentPosition?.coords?.latitude);
-      const longitude = Number(currentPosition?.coords?.longitude);
-
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        setError('Could not detect coordinates. Enter location manually.');
-        return;
-      }
-
-      setLocationCoords({ latitude, longitude });
-
-      try {
-        const place = await Location.reverseGeocodeAsync({ latitude, longitude });
-        const best = Array.isArray(place) && place.length ? place[0] : {};
-        const city = String(best.city || best.subregion || best.region || '').trim();
-        const area = String(best.district || best.street || best.name || '').trim();
-        if (city && !locationCity.trim()) setLocationCity(city);
-        if (area && !locationArea.trim()) setLocationArea(area);
-      } catch {
-        // Non-blocking: coordinates are still useful for near-me matching.
-      }
-    } catch {
-      setError('Could not detect location right now. Enter it manually.');
-    } finally {
-      setIsDetectingLocation(false);
-    }
-  };
-
-  const goNext = () => {
-    setError('');
-    if (step === 1 && !category) { setError('Please select a category.'); return; }
-    if (step === 2 && !title.trim()) { setError('Please enter a job title.'); return; }
-    if (step === 2 && !locationCity.trim()) { setError('Please enter your city.'); return; }
-    if (step === 3 && !isFlexible && (!price.trim() || isNaN(Number(price)))) { setError('Please enter a valid price.'); return; }
-    setStep((s) => Math.min(s + 1, TOTAL_STEPS));
-  };
-
-  const goBack = () => { setError(''); setStep((s) => Math.max(s - 1, 1)); };
-
-  const handleSubmit = async () => {
-    if (!user?.email) return;
     setIsSubmitting(true);
-    setError('');
     try {
-      const city = locationCity.trim();
-      const area = locationArea.trim();
-      const locationLabel = area ? `${area}, ${city}` : city;
-
-      await addDoc(collection(db, 'requests'), {
+      const payload = {
+        category,
         title: title.trim(),
         description: description.trim(),
-        location: {
-          city,
-          area,
-          label: locationLabel,
-          latitude: locationCoords?.latitude || null,
-          longitude: locationCoords?.longitude || null,
-        },
-        locationText: locationLabel,
-        price: isFlexible ? 0 : Number(price),
-        category,
+        budget: Number(budget),
+        preferredDate,
         urgency,
-        preferredDate: preferredDate.trim(),
-        image: imageUrl || '',
-        user: user.email,
-        userId: user.email,
-        status: 'open',
-        paid: false,
-        acceptedBy: null,
-        payment_received: false,
-        work_started: false,
-        work_completed: false,
-        customer_confirmed: false,
-        payment_released: false,
-        createdAt: serverTimestamp(),
-      });
+        location: {
+          area,
+          fullAddress: fullAddress.trim(),
+          specialInstructions: specialInstructions.trim(),
+        },
+      };
 
-      try {
-        const providerQuery = query(collection(db, 'providers'), where('isAvailable', '==', true));
-        const providerSnap = await getDocs(providerQuery);
-        const matching = providerSnap.docs
-          .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
-          .filter((row) => {
-            const providerCategory = String(row.category || '').trim().toLowerCase();
-            return !providerCategory || providerCategory === String(category || '').trim().toLowerCase();
-          })
-          .slice(0, 50);
-
-        await Promise.all(matching.map((provider) => addDoc(collection(db, 'notifications'), {
-          user: provider.email || provider.id,
-          userId: provider.email || provider.id,
-          title: 'New Job Posted',
-          body: `${title.trim()} • ${locationLabel} • GHS ${isFlexible ? 'Negotiable' : Number(price || 0).toFixed(2)}`,
-          type: 'job_posted',
-          read: false,
-          createdAt: serverTimestamp(),
-        })));
-      } catch {
-        // Non-blocking: request creation should still succeed even if broadcast fails.
-      }
-
-      setIsSuccess(true);
-    } catch (_e) {
-      setError('Failed to post job. Please try again.');
+      const { response, data } = await apiPost(`${API_BASE_URL}/api/jobs`, payload, { requireAuth: true });
+      assertApiSuccess(response, data, 'Could not post job');
+      setSuccessRef(data?.data?.referenceNumber || data?.data?.jobId || 'N/A');
+      setTimeout(() => {
+        router.replace('/my-requests');
+      }, 2500);
+    } catch (error) {
+      setSubmitError(error.message || 'Could not post job right now.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (isSuccess) {
+  if (successRef) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#0f172a', justifyContent: 'center', alignItems: 'center', padding: AppSpace.xl }}>
-        <Text style={{ fontSize: 60, marginBottom: 16 }}>🎉</Text>
-        <Text style={{ fontSize: 28, fontWeight: '800', color: '#f8fafc', textAlign: 'center', marginBottom: 8 }}>
-          Your job is live!
-        </Text>
-        <Text style={{ fontSize: 15, color: '#94a3b8', textAlign: 'center', marginBottom: 32 }}>
-          Providers will respond shortly. You&apos;ll get a notification when someone accepts.
-        </Text>
-        <TouchableOpacity
-          onPress={() => router.replace('/home')}
-          style={{ backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 14, paddingHorizontal: 32 }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Go to Dashboard</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => {
-          setIsSuccess(false);
-          setStep(1);
-          setCategory('');
-          setTitle('');
-          setDescription('');
-          setLocationCity('');
-          setLocationArea('');
-          setLocationCoords(null);
-          setPrice('');
-          setPreferredDate('');
-          setIsFlexible(false);
-          setUrgency('normal');
-        }} style={{ marginTop: 16 }}>
-          <Text style={{ color: '#6366f1', fontWeight: '600' }}>Post another job</Text>
-        </TouchableOpacity>
+      <View style={{ flex: 1, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center', padding: AppSpace.xl }}>
+        <Text style={{ fontSize: 48 }}>🎉</Text>
+        <Text style={{ marginTop: 10, fontSize: 28, fontWeight: '900', color: '#0f172a' }}>Job Posted!</Text>
+        <Text style={{ marginTop: 8, color: '#334155', textAlign: 'center' }}>Reference: {successRef}</Text>
+        <Text style={{ marginTop: 8, color: '#64748b', textAlign: 'center' }}>Redirecting to My Requests...</Text>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-        {/* Header */}
-        <View style={{ backgroundColor: '#0f172a', paddingTop: 52, paddingBottom: 20, paddingHorizontal: AppSpace.lg }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-            <TouchableOpacity onPress={() => (step === 1 ? router.back() : goBack())} style={{ marginRight: 12, padding: 4 }}>
-              <Text style={{ color: '#93c5fd', fontSize: 22 }}>←</Text>
-            </TouchableOpacity>
-            <Text style={{ color: '#f8fafc', fontWeight: '800', fontSize: 18, flex: 1 }}>Post a Job</Text>
-            <Text style={{ color: '#94a3b8', fontSize: 13 }}>Step {step} of {TOTAL_STEPS}</Text>
-          </View>
-          {/* Progress bar */}
-          <View style={{ height: 4, backgroundColor: '#334155', borderRadius: 2 }}>
-            <View style={{ height: 4, backgroundColor: '#6366f1', borderRadius: 2, width: `${progressPct}%` }} />
-          </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
-            {STEP_NAMES.map((name, index) => (
-              <Text
-                key={name}
+    <ScrollView style={{ flex: 1, backgroundColor: '#f8fafc' }} contentContainerStyle={{ padding: AppSpace.lg }}>
+      <Text style={{ color: '#64748b', fontWeight: '700' }}>STEP {step} OF 4</Text>
+      <Text style={{ color: '#0f172a', fontSize: 26, fontWeight: '900', marginTop: 4 }}>Post a Job</Text>
+
+      {submitError ? (
+        <View style={{ backgroundColor: '#fee2e2', borderRadius: 10, padding: 10, marginTop: 12 }}>
+          <Text style={{ color: '#991b1b', fontWeight: '700' }}>{submitError}</Text>
+        </View>
+      ) : null}
+
+      {step === 1 ? (
+        <View style={{ marginTop: 14, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+          {CATEGORIES.map((item) => {
+            const selected = category === item.name;
+            return (
+              <TouchableOpacity
+                key={item.name}
+                onPress={() => setCategory(item.name)}
                 style={{
-                  color: step - 1 >= index ? '#c7d2fe' : '#64748b',
-                  fontSize: 11,
-                  fontWeight: step - 1 === index ? '800' : '600',
+                  width: '48%',
+                  backgroundColor: selected ? '#dbeafe' : '#fff',
+                  borderWidth: 2,
+                  borderColor: selected ? '#2563eb' : '#e2e8f0',
+                  borderRadius: AppRadius.md,
+                  paddingVertical: 16,
+                  marginBottom: 10,
+                  alignItems: 'center',
                 }}
               >
-                {name}
-              </Text>
-            ))}
+                <Text style={{ fontSize: 28 }}>{item.icon}</Text>
+                <Text style={{ marginTop: 4, fontWeight: '800', color: '#0f172a' }}>{item.name}</Text>
+                {selected ? <Text style={{ marginTop: 4, color: '#1d4ed8', fontWeight: '800' }}>✓</Text> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {step === 2 ? (
+        <View style={{ marginTop: 14 }}>
+          <Field label="Title" value={title} onChangeText={setTitle} placeholder="e.g. Deep clean 2-bedroom apartment" />
+          {titleError ? <ErrorText text={titleError} /> : null}
+
+          <Field
+            label="Description"
+            value={description}
+            onChangeText={setDescription}
+            placeholder="Describe the job clearly"
+            multiline
+            height={120}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            {descriptionError ? <ErrorText text={descriptionError} /> : <View />}
+            <Text style={{ color: '#64748b', fontSize: 12 }}>{description.length}/500</Text>
+          </View>
+
+          <Field label="Budget" value={budget} onChangeText={setBudget} placeholder="GHS 100" prefix="GHS" keyboardType="numeric" />
+          {budgetError ? <ErrorText text={budgetError} /> : null}
+
+          <Field label="Preferred Date" value={preferredDate} onChangeText={setPreferredDate} placeholder="YYYY-MM-DD" />
+          {dateError ? <ErrorText text={dateError} /> : null}
+
+          <Text style={{ marginTop: 12, color: '#0f172a', fontWeight: '700' }}>Urgency</Text>
+          <View style={{ flexDirection: 'row', marginTop: 8 }}>
+            {['normal', 'urgent'].map((value) => {
+              const selected = urgency === value;
+              return (
+                <TouchableOpacity
+                  key={value}
+                  onPress={() => setUrgency(value)}
+                  style={{
+                    flex: 1,
+                    marginRight: value === 'normal' ? 8 : 0,
+                    paddingVertical: 12,
+                    borderWidth: 2,
+                    borderColor: selected ? (value === 'urgent' ? '#ea580c' : '#2563eb') : '#cbd5e1',
+                    backgroundColor: selected ? (value === 'urgent' ? '#ffedd5' : '#dbeafe') : '#fff',
+                    borderRadius: 10,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ fontWeight: '800', color: '#0f172a' }}>{value === 'urgent' ? 'Urgent' : 'Normal'}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
+      ) : null}
 
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: AppSpace.lg }} keyboardShouldPersistTaps="handled">
-          {error ? (
-            <View style={{ backgroundColor: '#fef2f2', borderRadius: AppRadius.md, padding: 12, marginBottom: 16 }}>
-              <Text style={{ color: '#dc2626', fontWeight: '600' }}>{error}</Text>
-            </View>
+      {step === 3 ? (
+        <View style={{ marginTop: 14 }}>
+          <Text style={{ color: '#0f172a', fontWeight: '700', marginBottom: 8 }}>Area / Neighbourhood</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {AREAS.map((value) => {
+              const selected = area === value;
+              return (
+                <TouchableOpacity
+                  key={value}
+                  onPress={() => setArea(value)}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: selected ? '#2563eb' : '#cbd5e1',
+                    backgroundColor: selected ? '#dbeafe' : '#fff',
+                    borderRadius: 999,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    marginRight: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <Text style={{ color: '#0f172a', fontWeight: '700', fontSize: 12 }}>{value}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {!area ? <ErrorText text="Please select an area" /> : null}
+
+          <Field label="Full Address (optional)" value={fullAddress} onChangeText={setFullAddress} placeholder="House number / landmark" />
+          <Field
+            label="Special Instructions (optional)"
+            value={specialInstructions}
+            onChangeText={setSpecialInstructions}
+            placeholder="Access notes or reminders"
+            multiline
+            height={90}
+          />
+          {specialInstructions.length > 200 ? <ErrorText text="Maximum 200 characters" /> : null}
+        </View>
+      ) : null}
+
+      {step === 4 ? (
+        <View style={{ marginTop: 14, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14 }}>
+          <ReviewRow label="Category" value={category} onEdit={() => setStep(1)} />
+          <ReviewRow label="Title" value={title} onEdit={() => setStep(2)} />
+          <ReviewRow label="Description" value={description} onEdit={() => setStep(2)} />
+          <ReviewRow label="Budget" value={`GHS ${Number(budget || 0).toFixed(2)}`} onEdit={() => setStep(2)} />
+          <ReviewRow label="Date" value={preferredDate} onEdit={() => setStep(2)} />
+          <ReviewRow label="Location" value={area} onEdit={() => setStep(3)} />
+          <Text style={{ marginTop: 10, color: '#334155', fontWeight: '700' }}>ConnectHub charges 10% on completed jobs</Text>
+
+          <TouchableOpacity
+            onPress={handlePost}
+            disabled={isSubmitting}
+            style={{
+              marginTop: 16,
+              height: 52,
+              borderRadius: 12,
+              backgroundColor: '#2563eb',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {isSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>Post Job</Text>}
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {step < 4 ? (
+        <View style={{ marginTop: 18 }}>
+          {step > 1 ? (
+            <TouchableOpacity onPress={() => setStep((prev) => prev - 1)} style={{ marginBottom: 10, alignItems: 'center', paddingVertical: 12 }}>
+              <Text style={{ color: '#334155', fontWeight: '800' }}>Back</Text>
+            </TouchableOpacity>
           ) : null}
 
-          {/* Step 1 — Category */}
-          {step === 1 && (
-            <View>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: AppColors.ink900, marginBottom: 6 }}>What type of service?</Text>
-              <Text style={{ color: AppColors.ink500, marginBottom: 20 }}>Pick the category that best describes your job.</Text>
-              <FlatList
-                data={CATEGORIES}
-                numColumns={2}
-                keyExtractor={(item) => item.name}
-                scrollEnabled={false}
-                columnWrapperStyle={{ gap: 10, marginBottom: 10 }}
-                renderItem={({ item }) => {
-                  const active = item.name === category;
-                  return (
-                    <TouchableOpacity
-                      onPress={() => setCategory(item.name)}
-                      style={{
-                        flex: 1,
-                        paddingVertical: 18,
-                        paddingHorizontal: 10,
-                        borderRadius: AppRadius.lg,
-                        borderWidth: 2,
-                        borderColor: active ? '#4f46e5' : '#e2e8f0',
-                        backgroundColor: active ? '#eef2ff' : '#fff',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <Text style={{ fontSize: 26, marginBottom: 6 }}>{item.icon || CATEGORY_ICONS[item.name] || '✨'}</Text>
-                      <Text style={{ fontWeight: '700', fontSize: 12, color: active ? '#4f46e5' : AppColors.ink700, textAlign: 'center' }}>{item.name}</Text>
-                      {active ? <Text style={{ color: '#2563eb', marginTop: 4, fontWeight: '800' }}>✓ Selected</Text> : null}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
-            </View>
-          )}
-
-          {/* Step 2 — Job Details */}
-          {step === 2 && (
-            <View>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: AppColors.ink900, marginBottom: 6 }}>Job Details</Text>
-              <Text style={{ color: AppColors.ink500, marginBottom: 20 }}>Give providers enough information to respond.</Text>
-
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Job Title *</Text>
-              <TextInput
-                value={title}
-                onChangeText={setTitle}
-                placeholder="e.g. Fix leaking kitchen pipe"
-                placeholderTextColor="#94a3b8"
-                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 14 }}
-              />
-
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>City *</Text>
-              <TextInput
-                value={locationCity}
-                onChangeText={setLocationCity}
-                placeholder="e.g. Accra"
-                placeholderTextColor="#94a3b8"
-                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 10 }}
-              />
-
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Area / Neighborhood</Text>
-              <TextInput
-                value={locationArea}
-                onChangeText={setLocationArea}
-                placeholder="e.g. East Legon"
-                placeholderTextColor="#94a3b8"
-                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 10 }}
-              />
-
-              <TouchableOpacity
-                onPress={resolveCurrentLocation}
-                disabled={isDetectingLocation}
-                style={{ backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', marginBottom: 14 }}
-              >
-                <Text style={{ color: '#0f766e', fontWeight: '700' }}>{isDetectingLocation ? 'Detecting location...' : '📍 Use Current Location'}</Text>
-              </TouchableOpacity>
-
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Description (optional)</Text>
-              <TextInput
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Describe the job in detail..."
-                placeholderTextColor="#94a3b8"
-                multiline
-                numberOfLines={4}
-                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 14, height: 110, textAlignVertical: 'top' }}
-              />
-
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Preferred Date (optional)</Text>
-              <TextInput
-                value={preferredDate}
-                onChangeText={setPreferredDate}
-                placeholder="e.g. 2026-02-14 or ASAP"
-                placeholderTextColor="#94a3b8"
-                style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900 }}
-              />
-
-              {/* Image attachment */}
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginTop: 14, marginBottom: 6 }}>Photo (optional)</Text>
-              {imageUri ? (
-                <Image source={{ uri: imageUri }} style={{ width: '100%', height: 160, borderRadius: AppRadius.md, marginBottom: 8 }} resizeMode="cover" />
-              ) : null}
-              <TouchableOpacity
-                onPress={pickImage}
-                disabled={isUploadingImage}
-                style={{ backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}
-              >
-                <Text style={{ color: '#4f46e5', fontWeight: '600' }}>
-                  {isUploadingImage ? 'Uploading...' : imageUri ? '📷 Change Photo' : '📷 Attach Photo'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Step 3 — Budget */}
-          {step === 3 && (
-            <View>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: AppColors.ink900, marginBottom: 6 }}>Budget & Urgency</Text>
-              <Text style={{ color: AppColors.ink500, marginBottom: 20 }}>Set your price expectation and how soon you need it.</Text>
-
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-                <TouchableOpacity
-                  onPress={() => setIsFlexible((f) => !f)}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-                >
-                  <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: isFlexible ? '#4f46e5' : '#e2e8f0', backgroundColor: isFlexible ? '#4f46e5' : '#fff', justifyContent: 'center', alignItems: 'center' }}>
-                    {isFlexible && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>✓</Text>}
-                  </View>
-                  <Text style={{ fontWeight: '600', color: AppColors.ink900, fontSize: 15 }}>I&apos;m flexible on price</Text>
-                </TouchableOpacity>
-              </View>
-
-              {!isFlexible && (
-                <>
-                  <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 6 }}>Budget (GHS) *</Text>
-                  <TextInput
-                    value={price}
-                    onChangeText={setPrice}
-                    placeholder="e.g. 150"
-                    placeholderTextColor="#94a3b8"
-                    keyboardType="numeric"
-                    style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: AppRadius.md, padding: 14, fontSize: 15, color: AppColors.ink900, marginBottom: 20 }}
-                  />
-                </>
-              )}
-
-              <Text style={{ fontWeight: '700', color: AppColors.ink900, marginBottom: 10 }}>Urgency</Text>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                {[
-                  { value: 'normal', label: '📅 Normal', desc: 'Within a few days' },
-                  { value: 'urgent', label: '🚨 Urgent', desc: 'ASAP / Today' },
-                ].map((opt) => {
-                  const active = urgency === opt.value;
-                  return (
-                    <TouchableOpacity
-                      key={opt.value}
-                      onPress={() => setUrgency(opt.value)}
-                      style={{ flex: 1, padding: 16, borderRadius: AppRadius.lg, borderWidth: 2, borderColor: active ? '#4f46e5' : '#e2e8f0', backgroundColor: active ? '#eef2ff' : '#fff', alignItems: 'center' }}
-                    >
-                      <Text style={{ fontSize: 20, marginBottom: 4 }}>{opt.label.split(' ')[0]}</Text>
-                      <Text style={{ fontWeight: '700', color: active ? '#4f46e5' : AppColors.ink900 }}>{opt.label.split(' ')[1]}</Text>
-                      <Text style={{ fontSize: 11, color: AppColors.ink500, marginTop: 2, textAlign: 'center' }}>{opt.desc}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-          )}
-
-          {/* Step 4 — Review */}
-          {step === 4 && (
-            <View>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: AppColors.ink900, marginBottom: 6 }}>Review & Post</Text>
-              <Text style={{ color: AppColors.ink500, marginBottom: 20 }}>Confirm your job details before going live.</Text>
-
-              <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, padding: 20, borderWidth: 1, borderColor: '#e2e8f0', gap: 10 }}>
-                <Row label="📁 Category" value={`${CATEGORY_ICONS[category] || ''} ${category}`} onEdit={() => setStep(1)} />
-                <Row label="📝 Title" value={title} onEdit={() => setStep(2)} />
-                {locationCity ? <Row label="📍 Location" value={locationArea ? `${locationArea}, ${locationCity}` : locationCity} onEdit={() => setStep(2)} /> : null}
-                {description ? <Row label="📄 Description" value={description} onEdit={() => setStep(2)} /> : null}
-                {preferredDate ? <Row label="📅 Preferred Date" value={preferredDate} onEdit={() => setStep(2)} /> : null}
-                <Row label="💰 Budget" value={isFlexible ? 'Flexible' : `GHS ${price}`} onEdit={() => setStep(3)} />
-                <Row label="⏱ Urgency" value={urgency === 'urgent' ? '🚨 Urgent' : '📅 Normal'} onEdit={() => setStep(3)} />
-                {imageUri ? (
-                  <Image source={{ uri: imageUri }} style={{ width: '100%', height: 140, borderRadius: AppRadius.md, marginTop: 4 }} resizeMode="cover" />
-                ) : null}
-              </View>
-
-              <TouchableOpacity
-                onPress={handleSubmit}
-                disabled={isSubmitting}
-                style={{ marginTop: 24, backgroundColor: isSubmitting ? '#a5b4fc' : '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 16, alignItems: 'center' }}
-              >
-                {isSubmitting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>🚀 Post Job</Text>}
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Nav buttons (steps 1-3) */}
-          {step < TOTAL_STEPS && (
-            <View style={{ marginTop: 24, gap: 10 }}>
-              {step > 1 ? (
-                <TouchableOpacity
-                  onPress={goBack}
-                  style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center' }}
-                >
-                  <Text style={{ color: AppColors.ink700, fontWeight: '800', fontSize: 15 }}>Back</Text>
-                </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity
-                onPress={goNext}
-                style={{ backgroundColor: '#2563eb', borderRadius: AppRadius.md, paddingVertical: 16, alignItems: 'center' }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>Continue</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </ScrollView>
-      </View>
-    </KeyboardAvoidingView>
+          <TouchableOpacity
+            onPress={() => setStep((prev) => prev + 1)}
+            disabled={(step === 1 && !step1Valid) || (step === 2 && !step2Valid) || (step === 3 && !step3Valid)}
+            style={{
+              borderRadius: 12,
+              paddingVertical: 15,
+              alignItems: 'center',
+              backgroundColor: ((step === 1 && step1Valid) || (step === 2 && step2Valid) || (step === 3 && step3Valid)) ? '#2563eb' : '#94a3b8',
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '900' }}>Next</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </ScrollView>
   );
 }
 
-function Row({ label, value, onEdit }) {
+function Field({ label, value, onChangeText, placeholder, keyboardType, multiline, height, prefix }) {
   return (
-    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-      <Text style={{ color: AppColors.ink500, fontSize: 13, width: 100, flexShrink: 0 }}>{label}:</Text>
-      <Text style={{ color: AppColors.ink900, fontWeight: '600', fontSize: 13, flex: 1 }}>{value}</Text>
-      {onEdit ? (
-        <TouchableOpacity onPress={onEdit}>
-          <Text style={{ color: '#2563eb', fontWeight: '700', fontSize: 12 }}>Edit</Text>
-        </TouchableOpacity>
-      ) : null}
+    <View style={{ marginBottom: 10 }}>
+      <Text style={{ color: '#0f172a', fontWeight: '700', marginBottom: 6 }}>{label}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, backgroundColor: '#fff' }}>
+        {prefix ? <Text style={{ paddingLeft: 12, color: '#334155', fontWeight: '700' }}>{prefix}</Text> : null}
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          keyboardType={keyboardType}
+          multiline={multiline}
+          style={{ flex: 1, paddingHorizontal: 12, paddingVertical: 12, minHeight: height || 46, textAlignVertical: multiline ? 'top' : 'center' }}
+        />
+      </View>
+    </View>
+  );
+}
+
+function ErrorText({ text }) {
+  return <Text style={{ color: '#b91c1c', fontSize: 12, marginBottom: 8 }}>{text}</Text>;
+}
+
+function ReviewRow({ label, value, onEdit }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+      <Text style={{ width: 90, color: '#64748b', fontWeight: '700' }}>{label}</Text>
+      <Text style={{ flex: 1, color: '#0f172a' }} numberOfLines={2}>{value}</Text>
+      <TouchableOpacity onPress={onEdit} style={{ marginLeft: 8 }}>
+        <Text style={{ color: '#2563eb', fontWeight: '900' }}>✏️</Text>
+      </TouchableOpacity>
     </View>
   );
 }

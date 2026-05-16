@@ -1,6 +1,8 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
+
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -8,6 +10,8 @@ import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
+import { db } from '../firebase';
+import useAuthUser from '../hooks/use-auth-user';
 import { apiPost } from '../utils/api-client';
 
 const NETWORKS = [
@@ -67,12 +71,49 @@ const getWithdrawErrorMessage = (errorPayload) => {
 
 export default function WalletWithdraw() {
   const router = useRouter();
+  const { user } = useAuthUser();
   const [amount, setAmount] = useState('');
   const [accountName, setAccountName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [network, setNetwork] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [kycVerified, setKycVerified] = useState(false);
+  const [hasPendingWithdrawal, setHasPendingWithdrawal] = useState(false);
+
+  useEffect(() => {
+    const loadGuards = async () => {
+      const email = String(user?.email || '').trim().toLowerCase();
+      const uid = String(user?.uid || '').trim();
+      if (!email) return;
+
+      const walletByUid = uid ? await getDoc(doc(db, 'wallets', uid)) : null;
+      const walletByEmail = await getDoc(doc(db, 'wallets', email));
+      const userDoc = await getDoc(doc(db, 'users', email));
+
+      const balance = walletByUid?.exists()
+        ? Number(walletByUid.data()?.balance || walletByUid.data()?.walletBalance || 0)
+        : walletByEmail.exists()
+          ? Number(walletByEmail.data()?.balance || walletByEmail.data()?.walletBalance || 0)
+          : Number(userDoc.data()?.walletBalance || 0);
+
+      const kyc = String(userDoc.data()?.kycStatus || '').toLowerCase();
+      const pendingSnap = await getDocs(query(collection(db, 'withdrawals'), where('email', '==', email), where('status', 'in', ['pending', 'pending_admin_approval', 'processing', 'manual_review'])));
+
+      setWalletBalance(Number.isFinite(balance) ? balance : 0);
+      setKycVerified(kyc === 'verified');
+      setHasPendingWithdrawal(!pendingSnap.empty);
+    };
+    loadGuards().catch(() => {});
+  }, [user?.email, user?.uid]);
+
+  const disableReason = useMemo(() => {
+    if (walletBalance < 10) return 'Withdrawal disabled: available balance is below GHS 10.';
+    if (!kycVerified) return 'Withdrawal disabled: complete KYC verification first.';
+    if (hasPendingWithdrawal) return 'Withdrawal disabled: you already have a pending withdrawal.';
+    return '';
+  }, [walletBalance, kycVerified, hasPendingWithdrawal]);
 
   const submitWithdrawal = async () => {
     const numericAmount = Number(amount || 0);
@@ -221,13 +262,21 @@ export default function WalletWithdraw() {
 
         <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 10 }} />
 
+        <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 10 }}>
+          Available balance: GHS {walletBalance.toFixed(2)}
+        </Text>
+
         <AppButton
           label={isSubmitting ? 'Submitting...' : 'Confirm Withdrawal'}
           onPress={submitWithdrawal}
           loading={isSubmitting}
-          disabled={isSubmitting}
+          disabled={isSubmitting || Boolean(disableReason)}
           style={{ backgroundColor: '#2563eb' }}
         />
+
+        {disableReason ? (
+          <Text style={{ marginTop: 8, color: '#b45309', fontSize: 12 }}>{disableReason}</Text>
+        ) : null}
 
         <AppButton
           label="Back to Wallet"
@@ -239,7 +288,7 @@ export default function WalletWithdraw() {
 
       <View style={{ marginTop: 12 }}>
         <Text style={{ color: '#64748b', fontSize: 12, textAlign: 'center' }}>
-          Funds are sent instantly via Paystack Transfer. You'll receive a push notification and email when complete.{'\n\n'}
+          Funds are sent instantly via Paystack Transfer. You&apos;ll receive a push notification and email when complete.{'\n\n'}
           <Text style={{ color: '#2563eb', textDecorationLine: 'underline' }} onPress={() => router.push('/withdrawal-history')}>
             View withdrawal history →
           </Text>

@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 import AppButton from '../components/ui/app-button';
 import AppInput from '../components/ui/app-input';
@@ -108,8 +108,32 @@ export default function ProviderSetup() {
         experience: String(experience || '').trim(),
         skills,
         isAvailable,
-        updatedAt: new Date(),
-        createdAt: existingCreatedAt || new Date(),
+        updatedAt: serverTimestamp(),
+        createdAt: existingCreatedAt || serverTimestamp(),
+      }, { merge: true });
+
+      await setDoc(doc(db, 'providerProfiles', currentEmail), {
+        email: currentEmail,
+        name: name.trim(),
+        bio: bio.trim(),
+        category,
+        location: location.trim(),
+        phone: phone.trim(),
+        startingPrice: String(startingPrice || '').trim(),
+        experience: String(experience || '').trim(),
+        skills,
+        isAvailable,
+        updatedAt: serverTimestamp(),
+        createdAt: existingCreatedAt || serverTimestamp(),
+      }, { merge: true });
+
+      await setDoc(doc(db, 'users', currentEmail), {
+        role: 'provider',
+        name: name.trim(),
+        phoneNumber: phone.trim(),
+        location: location.trim(),
+        category,
+        updatedAt: serverTimestamp(),
       }, { merge: true });
 
       Alert.alert('Profile saved!');

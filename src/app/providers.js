@@ -17,6 +17,13 @@ const FILTER_CATEGORIES = [
 ];
 
 const AVATAR_COLORS = ['#dbeafe', '#fef3c7', '#dcfce7', '#ede9fe', '#fee2e2'];
+const BLOCKED_PROVIDER_EMAIL_PARTS = ['test', 'gmx.dev', 'mailinator', 'example.com', 'local'];
+
+function isPublicProviderEmail(email) {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return !BLOCKED_PROVIDER_EMAIL_PARTS.some((part) => normalized.includes(part));
+}
 
 function buildStars(rating) {
   const n = Math.max(0, Math.min(5, Math.round(Number(rating || 0))));
@@ -80,7 +87,7 @@ export default function Providers() {
             return { ...row, email };
           }
         }));
-        setProviders(enriched);
+        setProviders(enriched.filter((row) => isPublicProviderEmail(row.email || row.id)));
         setIsLoading(false);
       })();
     }, () => setIsLoading(false));
@@ -105,6 +112,29 @@ export default function Providers() {
     return rows;
   }, [providers, searchText, selectedCategory, sortBy]);
 
+  const topStats = useMemo(() => {
+    let premiumCount = 0;
+    let avg = 0;
+    let countWithRating = 0;
+
+    providers.forEach((p) => {
+      const plan = String(p.subscriptionPlan || '').toLowerCase();
+      if (plan === 'pro' || plan === 'premium') premiumCount += 1;
+
+      const rating = Number(p.avgRating || 0);
+      if (rating > 0) {
+        avg += rating;
+        countWithRating += 1;
+      }
+    });
+
+    return {
+      total: providers.length,
+      premium: premiumCount,
+      avgRating: countWithRating > 0 ? (avg / countWithRating).toFixed(1) : 'N/A',
+    };
+  }, [providers]);
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     setTimeout(() => setIsRefreshing(false), 450);
@@ -115,6 +145,11 @@ export default function Providers() {
       <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: 12 }}>
         <Text style={{ color: '#93c5fd', fontSize: 12, fontWeight: '700', letterSpacing: 1 }}>CONNECTHUB</Text>
         <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 4 }}>Browse Providers</Text>
+        <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
+          <StatBadge label="Total" value={topStats.total} bg="rgba(219,234,254,0.16)" color="#bfdbfe" />
+          <StatBadge label="Pro" value={topStats.premium} bg="rgba(236,253,245,0.16)" color="#86efac" />
+          <StatBadge label="Avg" value={topStats.avgRating} bg="rgba(254,249,195,0.16)" color="#fde68a" />
+        </View>
       </View>
 
       <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10 }}>
@@ -156,8 +191,20 @@ export default function Providers() {
           const active = sortBy === key;
           const label = key === 'rating' ? 'Rating' : key === 'price' ? 'Price' : 'Experience';
           return (
-            <TouchableOpacity key={key} onPress={() => setSortBy(key)} style={{ marginRight: 12 }}>
-              <Text style={{ color: active ? '#2563eb' : '#94a3b8', fontWeight: '800', fontSize: 13 }}>{label}</Text>
+            <TouchableOpacity
+              key={key}
+              onPress={() => setSortBy(key)}
+              style={{
+                marginRight: 8,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: active ? '#2563eb' : '#cbd5e1',
+                backgroundColor: active ? '#eff6ff' : '#fff',
+                paddingHorizontal: 10,
+                paddingVertical: 5,
+              }}
+            >
+              <Text style={{ color: active ? '#2563eb' : '#64748b', fontWeight: '800', fontSize: 12 }}>{label}</Text>
             </TouchableOpacity>
           );
         })}
@@ -227,6 +274,14 @@ export default function Providers() {
       )}
 
       <AppButton label="← Back to Home" variant="neutral" onPress={() => router.replace('/home')} style={{ marginTop: 8 }} />
+    </View>
+  );
+}
+
+function StatBadge({ label, value, bg, color }) {
+  return (
+    <View style={{ backgroundColor: bg, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+      <Text style={{ color, fontWeight: '700', fontSize: 11 }}>{label}: {value}</Text>
     </View>
   );
 }
