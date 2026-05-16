@@ -50,7 +50,7 @@ export default function PrivacyPolicyScreen() {
         </Section>
 
         <Section title="7. Contact">
-          For privacy questions, deletion requests, or data export requests, contact bhounce1000@gmail.com.
+          For privacy questions, deletion requests, or data export requests, contact connecthub1000@gmail.com.
         </Section>
       </ScrollView>
     </View>

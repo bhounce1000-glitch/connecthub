@@ -1,7 +1,7 @@
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -196,7 +196,7 @@ export default function Home() {
   }, [currentEmail]);
 
   useEffect(() => {
-    const providersQuery = query(collection(db, 'providers'), where('isAvailable', '==', true));
+    const providersQuery = query(collection(db, 'providers'), where('isAvailable', '==', true), limit(20));
     return onSnapshot(providersQuery, (snapshot) => {
       const rows = snapshot.docs
         .map((providerDoc) => ({ id: providerDoc.id, ...providerDoc.data() }))
@@ -224,9 +224,9 @@ export default function Home() {
     }
 
     // For regular users: listen to open requests + their own requests in parallel
-    const openQuery = query(baseCollection, where('status', '==', REQUEST_STATUS.OPEN));
-    const ownQuery = query(baseCollection, where('user', '==', currentEmail));
-    const acceptedQuery = query(baseCollection, where('acceptedBy', '==', currentEmail));
+    const openQuery = query(baseCollection, where('status', '==', REQUEST_STATUS.OPEN), limit(20));
+    const ownQuery = query(baseCollection, where('user', '==', currentEmail), limit(20));
+    const acceptedQuery = query(baseCollection, where('acceptedBy', '==', currentEmail), limit(20));
 
     const mergeSnapshots = (...snapshots) => {
       const seen = new Map();

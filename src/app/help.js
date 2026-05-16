@@ -6,7 +6,7 @@ import AppCard from '../components/ui/app-card';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import useAuthUser from '../hooks/use-auth-user';
 
-const SUPPORT_EMAIL = 'support@connecthub.app';
+const SUPPORT_EMAIL = 'connecthub1000@gmail.com';
 
 const FAQS = [
   {

@@ -34,11 +34,13 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || `${WEB_BASE_UR
   .split(',')
   .map((item) => item.trim())
   .filter(Boolean);
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_EMAILS || 'bhounce1000@gmail.com')
+// ADMIN LOGIN ACCOUNT — do not change this to support email
+const ADMIN_LOGIN_EMAIL = 'bhounce1000@gmail.com';
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_EMAILS || ADMIN_LOGIN_EMAIL)
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
-const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || ADMIN_EMAILS[0] || 'bhounce1000@gmail.com').trim().toLowerCase();
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'connecthub1000@gmail.com').trim().toLowerCase();
 const ADMIN_BOOTSTRAP_SECRET = process.env.ADMIN_BOOTSTRAP_SECRET || '';
 const COMMISSION_RATE = parseFloat(process.env.COMMISSION_RATE || '0.10');
 const REFERRAL_BONUS_AMOUNT = parseMoney(process.env.REFERRAL_BONUS_AMOUNT || 10);

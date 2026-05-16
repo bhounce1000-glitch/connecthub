@@ -14,6 +14,7 @@ async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const title = 'Deep clean 2-bedroom apartment';
   const customerEmail = 'testcustomer0429@mailinator.com';
+  // ADMIN LOGIN ACCOUNT — do not change this to support email
   const providerEmail = 'bhounce1000@gmail.com';
 
   if (!admin.apps.length) {

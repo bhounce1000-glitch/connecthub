@@ -213,10 +213,10 @@ export default function MyRequests() {
       </View>
 
       <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: AppRadius.md, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>
-        <TabButton keyName="all" label="All" />
-        <TabButton keyName="active" label="Active" />
-        <TabButton keyName="awaiting" label="Awaiting Confirmation" />
-        <TabButton keyName="completed" label="Completed" />
+        <TabButton keyName="all" label={`All (${summary.total})`} />
+        <TabButton keyName="active" label={`Active (${summary.active})`} />
+        <TabButton keyName="awaiting" label={`Awaiting (${summary.pendingConfirmation})`} />
+        <TabButton keyName="completed" label={`Completed (${summary.completed})`} />
       </View>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
@@ -314,7 +314,11 @@ export default function MyRequests() {
                 </View>
               ) : null}
 
-              {(status === REQUEST_STATUS.PAID || item.paid) && !item.rating ? (
+              {(status === REQUEST_STATUS.PAID || item.paid)
+                && Boolean(providerEmail)
+                && !item.rating
+                && !item.review
+                && !item.customerRating ? (
                 <View style={{ marginTop: AppSpace.sm }}>
                   <AppButton
                     label="⭐ Leave Review"

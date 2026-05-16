@@ -50,6 +50,7 @@ export const KYC_STATUS = {
   REJECTED: 'rejected',
 };
 
+// ADMIN LOGIN ACCOUNT — do not change this to support email
 const adminEmailList = (process.env.EXPO_PUBLIC_ADMIN_EMAILS || 'bhounce1000@gmail.com')
   .split(',')
   .map((item) => item.trim().toLowerCase())

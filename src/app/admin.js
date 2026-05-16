@@ -1,13 +1,19 @@
 import { useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
 import {
+    addDoc,
     collection,
     deleteDoc,
     doc,
     getDoc,
     getDocs,
+    limit,
     onSnapshot,
+    orderBy,
     query,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
     where,
 } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
@@ -81,6 +87,10 @@ function firstLetter(value) {
 function safeNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
+}
+
+function formatMoney(value) {
+  return `GHS ${safeNumber(value).toFixed(2)}`;
 }
 
 function matchesUserIdentity(job, identifiers, fields) {
@@ -203,6 +213,19 @@ export default function Admin() {
   const [signupErrors, setSignupErrors] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(0);
+  const [withdrawalsRows, setWithdrawalsRows] = useState([]);
+  const [kycRows, setKycRows] = useState([]);
+  const [disputeRows, setDisputeRows] = useState([]);
+  const [fraudRows, setFraudRows] = useState([]);
+  const [requestRows, setRequestRows] = useState([]);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [adminSettings, setAdminSettings] = useState({
+    supportEmail: 'connecthub1000@gmail.com',
+    commissionRate: '0.10',
+    maintenanceMode: false,
+    kycAutoNotify: true,
+  });
   const [emailTestTarget, setEmailTestTarget] = useState('');
   const [emailTestResult, setEmailTestResult] = useState(null);
   const [emailTestLoading, setEmailTestLoading] = useState(false);
@@ -253,8 +276,10 @@ export default function Admin() {
   useEffect(() => {
     if (!isAdmin) return undefined;
 
-    return onSnapshot(collection(db, 'jobs'), (snapshot) => {
-      setJobs(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+    return onSnapshot(query(collection(db, 'requests'), orderBy('createdAt', 'desc'), limit(100)), (snapshot) => {
+      const rows = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      setJobs(rows);
+      setRequestRows(rows);
     });
   }, [isAdmin]);
 
@@ -277,17 +302,64 @@ export default function Admin() {
   useEffect(() => {
     if (!isAdmin) return undefined;
 
-    return onSnapshot(collection(db, 'disputes'), (snapshot) => {
-      setDisputes(snapshot.size);
+    return onSnapshot(query(collection(db, 'disputes'), orderBy('createdAt', 'desc'), limit(100)), (snapshot) => {
+      const rows = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      setDisputeRows(rows);
+      setDisputes(rows.filter((row) => !['resolved', 'closed'].includes(String(row.status || '').toLowerCase())).length);
     });
   }, [isAdmin]);
 
   useEffect(() => {
     if (!isAdmin) return undefined;
 
-    return onSnapshot(query(collection(db, 'fraudAlerts'), where('resolved', '==', false)), (snapshot) => {
-      setFraudPending(snapshot.size);
+    return onSnapshot(query(collection(db, 'fraudAlerts'), orderBy('timestamp', 'desc'), limit(100)), (snapshot) => {
+      const rows = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }));
+      setFraudRows(rows);
+      setFraudPending(rows.filter((row) => row.resolved !== true).length);
     });
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+
+    return onSnapshot(query(collection(db, 'withdrawals'), orderBy('requestedAt', 'desc'), limit(100)), (snapshot) => {
+      setWithdrawalsRows(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+    });
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+
+    return onSnapshot(query(collection(db, 'kyc_submissions'), orderBy('submittedAt', 'desc'), limit(100)), (snapshot) => {
+      setKycRows(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+    });
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+
+    let mounted = true;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'adminSettings', 'global'));
+        if (mounted && snap.exists()) {
+          const data = snap.data() || {};
+          setAdminSettings((prev) => ({
+            ...prev,
+            supportEmail: String(data.supportEmail || prev.supportEmail),
+            commissionRate: String(data.commissionRate ?? prev.commissionRate),
+            maintenanceMode: data.maintenanceMode === true,
+            kycAutoNotify: data.kycAutoNotify !== false,
+          }));
+        }
+      } catch {
+        // Keep local defaults if settings doc is unavailable.
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
   }, [isAdmin]);
 
   useEffect(() => {
@@ -396,6 +468,58 @@ export default function Admin() {
       riskPercent: Math.round((((fraudPending + disputes + signupErrors) || 0) / Math.max(1, jobs.length || users.length || 1)) * 100),
     };
   }, [disputes, fraudPending, jobs.length, signupErrors, users]);
+
+  const adminSearchTerm = adminSearch.trim().toLowerCase();
+
+  const filteredWithdrawals = useMemo(() => {
+    if (!adminSearchTerm) return withdrawalsRows;
+    return withdrawalsRows.filter((row) => {
+      return [row.email, row.reference, row.status, row.accountNumber, row.accountName]
+        .join(' ')
+        .toLowerCase()
+        .includes(adminSearchTerm);
+    });
+  }, [adminSearchTerm, withdrawalsRows]);
+
+  const filteredKycRows = useMemo(() => {
+    if (!adminSearchTerm) return kycRows;
+    return kycRows.filter((row) => {
+      return [row.email, row.userEmail, row.status, row.fullName]
+        .join(' ')
+        .toLowerCase()
+        .includes(adminSearchTerm);
+    });
+  }, [adminSearchTerm, kycRows]);
+
+  const filteredDisputes = useMemo(() => {
+    if (!adminSearchTerm) return disputeRows;
+    return disputeRows.filter((row) => {
+      return [row.requestId, row.status, row.customerEmail, row.providerEmail, row.reason]
+        .join(' ')
+        .toLowerCase()
+        .includes(adminSearchTerm);
+    });
+  }, [adminSearchTerm, disputeRows]);
+
+  const filteredFraudRows = useMemo(() => {
+    if (!adminSearchTerm) return fraudRows;
+    return fraudRows.filter((row) => {
+      return [row.user, row.userEmail, row.reason, row.type, row.status]
+        .join(' ')
+        .toLowerCase()
+        .includes(adminSearchTerm);
+    });
+  }, [adminSearchTerm, fraudRows]);
+
+  const filteredRequests = useMemo(() => {
+    if (!adminSearchTerm) return requestRows;
+    return requestRows.filter((row) => {
+      return [row.title, row.status, row.user, row.acceptedBy, row.category]
+        .join(' ')
+        .toLowerCase()
+        .includes(adminSearchTerm);
+    });
+  }, [adminSearchTerm, requestRows]);
 
   const loadWalletForUser = async (userRow) => {
     setSelectedUserLoading(true);
@@ -557,6 +681,145 @@ export default function Admin() {
       setEmailTestResult({ type: 'error', message: String(error?.message || 'Failed to send test email') });
     } finally {
       setEmailTestLoading(false);
+    }
+  };
+
+  const handleWithdrawalAction = async (row, action) => {
+    try {
+      const endpoint = action === 'approve'
+        ? `/admin/withdrawals/${row.id}/complete`
+        : `/admin/withdrawals/${row.id}/reject`;
+      const payload = action === 'approve' ? {} : { reason: 'Rejected by admin desk' };
+      const { response, data } = await apiPost(`${API_BASE_URL}${endpoint}`, payload, { requireAuth: true });
+      assertApiSuccess(response, data, `Failed to ${action} withdrawal`);
+
+      const notifyEndpoint = action === 'approve' ? '/admin/notify-withdrawal-paid' : '/admin/notify-withdrawal-rejected';
+      if (row?.email) {
+        await apiPost(
+          `${API_BASE_URL}${notifyEndpoint}`,
+          {
+            email: row.email,
+            amount: row.amount,
+            reference: row.reference || row.id,
+            rejectionReason: action === 'approve' ? '' : 'Rejected by admin desk',
+          },
+          { requireAuth: true }
+        );
+      }
+      Alert.alert('Success', `Withdrawal ${action === 'approve' ? 'approved' : 'rejected'} successfully.`);
+    } catch (error) {
+      Alert.alert('Error', String(error?.message || `Could not ${action} withdrawal`));
+    }
+  };
+
+  const handleKycAction = async (row, action) => {
+    const userEmail = String(row.email || row.userEmail || row.id || '').trim().toLowerCase();
+    if (!userEmail) {
+      Alert.alert('Error', 'KYC record is missing email.');
+      return;
+    }
+
+    try {
+      const endpoint = action === 'approve'
+        ? `/admin/kyc/${encodeURIComponent(userEmail)}/approve`
+        : `/admin/kyc/${encodeURIComponent(userEmail)}/reject`;
+      const payload = action === 'approve'
+        ? {}
+        : { reason: 'Document quality/identity mismatch' };
+      const { response, data } = await apiPost(`${API_BASE_URL}${endpoint}`, payload, { requireAuth: true });
+      assertApiSuccess(response, data, `Failed to ${action} KYC`);
+      Alert.alert('Success', `KYC ${action === 'approve' ? 'approved' : 'rejected'} for ${userEmail}`);
+    } catch (error) {
+      Alert.alert('Error', String(error?.message || `Could not ${action} KYC`));
+    }
+  };
+
+  const handleResolveDispute = async (row) => {
+    try {
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/disputes/${encodeURIComponent(row.id)}/resolve`,
+        { resolution: 'Resolved by admin desk' },
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Failed to resolve dispute');
+      Alert.alert('Success', 'Dispute resolved.');
+    } catch (error) {
+      Alert.alert('Error', String(error?.message || 'Could not resolve dispute'));
+    }
+  };
+
+  const handleResolveFraud = async (row) => {
+    try {
+      const { response, data } = await apiPost(
+        `${API_BASE_URL}/admin/fraud-alerts/${encodeURIComponent(row.id)}/resolve`,
+        {},
+        { requireAuth: true }
+      );
+      assertApiSuccess(response, data, 'Failed to resolve alert');
+
+      const userEmail = String(row.user || row.userEmail || '').trim().toLowerCase();
+      if (userEmail) {
+        const userRef = doc(db, 'users', userEmail);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const previous = safeNumber(userSnap.data()?.fraudFlags);
+          await updateDoc(userRef, { fraudFlags: Math.max(0, previous - 1), updatedAt: serverTimestamp() });
+        }
+      }
+
+      Alert.alert('Success', 'Fraud alert resolved.');
+    } catch (error) {
+      Alert.alert('Error', String(error?.message || 'Could not resolve fraud alert'));
+    }
+  };
+
+  const handleJobStatusUpdate = async (row, status) => {
+    try {
+      const updatePayload = { status, updatedAt: serverTimestamp() };
+      if (status === 'completed') {
+        updatePayload.completedAt = serverTimestamp();
+      }
+      await updateDoc(doc(db, 'requests', row.id), updatePayload);
+
+      if (status === 'completed') {
+        await addDoc(collection(db, 'notifications'), {
+          user: row.user || '',
+          userId: row.user || '',
+          recipientId: row.user || '',
+          title: 'Job Completed',
+          message: `Your request \"${row.title || 'Service'}\" has been marked completed by admin.`,
+          type: 'job_update',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      Alert.alert('Success', `Job moved to ${status.replace('_', ' ')}.`);
+    } catch (error) {
+      Alert.alert('Error', String(error?.message || 'Could not update job status'));
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      await setDoc(
+        doc(db, 'adminSettings', 'global'),
+        {
+          supportEmail: String(adminSettings.supportEmail || '').trim().toLowerCase(),
+          commissionRate: Number(adminSettings.commissionRate || 0.1),
+          maintenanceMode: adminSettings.maintenanceMode === true,
+          kycAutoNotify: adminSettings.kycAutoNotify !== false,
+          updatedBy: String(user?.email || '').trim().toLowerCase(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      Alert.alert('Saved', 'Admin settings updated.');
+    } catch (error) {
+      Alert.alert('Error', String(error?.message || 'Failed to save settings'));
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -1005,15 +1268,13 @@ export default function Admin() {
             </View>
           )}
 
-          {['jobs', 'withdrawals', 'kyc', 'disputes', 'fraud', 'settings'].includes(activeView) && (
+          {['jobs', 'withdrawals', 'kyc', 'disputes', 'fraud'].includes(activeView) && (
             <View
               style={{
                 backgroundColor: ADMIN_CARD_BG,
                 borderRadius: 12,
-                padding: 40,
-                minHeight: 260,
-                justifyContent: 'center',
-                alignItems: 'center',
+                padding: 16,
+                marginBottom: 12,
                 shadowColor: '#000',
                 shadowOpacity: 0.06,
                 shadowRadius: 12,
@@ -1021,12 +1282,193 @@ export default function Admin() {
                 elevation: 2,
               }}
             >
-              <Text style={{ fontSize: 20, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 8 }}>
-                {activeView.charAt(0).toUpperCase() + activeView.slice(1)} Management
+              <TextInput
+                value={adminSearch}
+                onChangeText={setAdminSearch}
+                placeholder="Search records by email, status, id, or reference..."
+                placeholderTextColor={ADMIN_TEXT_LIGHT}
+                style={{
+                  borderWidth: 1,
+                  borderColor: '#e2e8f0',
+                  borderRadius: 8,
+                  paddingHorizontal: 12,
+                  paddingVertical: 12,
+                  color: ADMIN_TEXT,
+                }}
+              />
+            </View>
+          )}
+
+          {activeView === 'withdrawals' && (
+            <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Withdrawals</Text>
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
+                Pending: {withdrawalsRows.filter((row) => String(row.status || '').toLowerCase() === 'pending').length} | Completed: {withdrawalsRows.filter((row) => String(row.status || '').toLowerCase() === 'completed').length} | Rejected: {withdrawalsRows.filter((row) => String(row.status || '').toLowerCase() === 'rejected').length}
               </Text>
-              <Text style={{ color: ADMIN_TEXT_LIGHT, textAlign: 'center' }}>
-                This section is intentionally reserved for the next admin iteration.
+              {filteredWithdrawals.map((row) => (
+                <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>{row.email || 'Unknown user'}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
+                    {formatMoney(row.amount)} • {String(row.status || 'unknown').toUpperCase()} • {formatDate(row.requestedAt)}
+                  </Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Ref: {row.reference || row.id}</Text>
+                  <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                    <ActionButton label="Approve" backgroundColor={BADGE_GREEN} onPress={() => handleWithdrawalAction(row, 'approve')} />
+                    <ActionButton label="Reject" backgroundColor={BADGE_RED} onPress={() => handleWithdrawalAction(row, 'reject')} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {activeView === 'kyc' && (
+            <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>KYC Verification</Text>
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
+                Pending: {kycRows.filter((row) => String(row.status || '').toLowerCase() === 'pending').length} | Approved: {kycRows.filter((row) => ['approved', 'verified'].includes(String(row.status || '').toLowerCase())).length} | Rejected: {kycRows.filter((row) => String(row.status || '').toLowerCase() === 'rejected').length}
               </Text>
+              {filteredKycRows.map((row) => (
+                <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>{row.email || row.userEmail || row.id}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
+                    {String(row.status || 'pending').toUpperCase()} • {formatDate(row.submittedAt || row.createdAt)}
+                  </Text>
+                  <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                    <ActionButton label="Approve" backgroundColor={BADGE_GREEN} onPress={() => handleKycAction(row, 'approve')} />
+                    <ActionButton label="Reject" backgroundColor={BADGE_RED} onPress={() => handleKycAction(row, 'reject')} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {activeView === 'disputes' && (
+            <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Disputes</Text>
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
+                Open: {disputeRows.filter((row) => !['resolved', 'closed'].includes(String(row.status || '').toLowerCase())).length} | Resolved: {disputeRows.filter((row) => ['resolved', 'closed'].includes(String(row.status || '').toLowerCase())).length}
+              </Text>
+              {filteredDisputes.map((row) => (
+                <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>Request: {row.requestId || row.id}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
+                    {row.customerEmail || row.customer || 'N/A'} vs {row.providerEmail || row.provider || 'N/A'}
+                  </Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Reason: {row.reason || 'N/A'}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Status: {String(row.status || 'open').toUpperCase()}</Text>
+                  <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                    <ActionButton label="Resolve" backgroundColor={BADGE_GREEN} onPress={() => handleResolveDispute(row)} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {activeView === 'fraud' && (
+            <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Fraud Alerts</Text>
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
+                Open: {fraudRows.filter((row) => row.resolved !== true).length} | Resolved: {fraudRows.filter((row) => row.resolved === true).length}
+              </Text>
+              {filteredFraudRows.map((row) => (
+                <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>{row.userEmail || row.user || 'Unknown user'}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
+                    Type: {row.type || 'behavior'} • Severity: {String(row.severity || 'medium').toUpperCase()}
+                  </Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Reason: {row.reason || 'N/A'}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Status: {row.resolved ? 'RESOLVED' : 'OPEN'}</Text>
+                  {!row.resolved && (
+                    <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                      <ActionButton label="Mark Resolved" backgroundColor={BADGE_GREEN} onPress={() => handleResolveFraud(row)} />
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+
+          {activeView === 'jobs' && (
+            <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Jobs</Text>
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
+                Total: {requestRows.length} | Open: {requestRows.filter((row) => String(row.status || 'open').toLowerCase() === 'open').length} | In Progress: {requestRows.filter((row) => String(row.status || '').toLowerCase() === 'in_progress').length} | Completed: {requestRows.filter((row) => String(row.status || '').toLowerCase() === 'completed').length}
+              </Text>
+              {filteredRequests.map((row) => (
+                <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>{row.title || 'Untitled Job'}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
+                    {row.user || 'Unknown customer'} • {row.acceptedBy || 'Unassigned'}
+                  </Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
+                    {String(row.status || 'open').toUpperCase()} • {formatMoney(row.price)} • {formatDate(row.createdAt)}
+                  </Text>
+                  <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                    <ActionButton label="Set In Progress" backgroundColor={BADGE_BLUE} onPress={() => handleJobStatusUpdate(row, 'in_progress')} />
+                    <ActionButton label="Mark Completed" backgroundColor={BADGE_GREEN} onPress={() => handleJobStatusUpdate(row, 'completed')} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {activeView === 'settings' && (
+            <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 12 }}>Settings</Text>
+
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 6 }}>Support Email</Text>
+              <TextInput
+                value={adminSettings.supportEmail}
+                onChangeText={(value) => setAdminSettings((prev) => ({ ...prev, supportEmail: value }))}
+                autoCapitalize="none"
+                style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, color: ADMIN_TEXT, marginBottom: 12 }}
+              />
+
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 6 }}>Commission Rate</Text>
+              <TextInput
+                value={adminSettings.commissionRate}
+                onChangeText={(value) => setAdminSettings((prev) => ({ ...prev, commissionRate: value }))}
+                keyboardType="numeric"
+                style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, color: ADMIN_TEXT, marginBottom: 12 }}
+              />
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <Text style={{ color: ADMIN_TEXT, fontWeight: '700' }}>Maintenance Mode</Text>
+                <Pressable
+                  onPress={() => setAdminSettings((prev) => ({ ...prev, maintenanceMode: !prev.maintenanceMode }))}
+                  style={{ backgroundColor: adminSettings.maintenanceMode ? BADGE_GREEN : '#e2e8f0', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}
+                >
+                  <Text style={{ color: adminSettings.maintenanceMode ? '#fff' : ADMIN_TEXT, fontWeight: '800' }}>{adminSettings.maintenanceMode ? 'ON' : 'OFF'}</Text>
+                </Pressable>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <Text style={{ color: ADMIN_TEXT, fontWeight: '700' }}>Auto-send KYC Notifications</Text>
+                <Pressable
+                  onPress={() => setAdminSettings((prev) => ({ ...prev, kycAutoNotify: !prev.kycAutoNotify }))}
+                  style={{ backgroundColor: adminSettings.kycAutoNotify ? BADGE_GREEN : '#e2e8f0', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}
+                >
+                  <Text style={{ color: adminSettings.kycAutoNotify ? '#fff' : ADMIN_TEXT, fontWeight: '800' }}>{adminSettings.kycAutoNotify ? 'ON' : 'OFF'}</Text>
+                </Pressable>
+              </View>
+
+              <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
+                ADMIN LOGIN ACCOUNT — do not change this to support email: bhounce1000@gmail.com
+              </Text>
+
+              <Pressable
+                onPress={handleSaveSettings}
+                disabled={savingSettings}
+                style={({ pressed }) => ({
+                  backgroundColor: ADMIN_ACCENT,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  paddingVertical: 12,
+                  opacity: savingSettings ? 0.7 : pressed ? 0.92 : 1,
+                })}
+              >
+                <Text style={{ color: '#ffffff', fontWeight: '800' }}>{savingSettings ? 'Saving...' : 'Save Settings'}</Text>
+              </Pressable>
             </View>
           )}
         </View>

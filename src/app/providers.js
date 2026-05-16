@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -68,29 +68,54 @@ export default function Providers() {
   }, [isAuthReady, router, user]);
 
   useEffect(() => {
-    const q = query(collection(db, 'providers'), where('isAvailable', '==', true));
-    return onSnapshot(q, (snap) => {
-      (async () => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        const enriched = await Promise.all(rows.map(async (row) => {
-          const email = String(row.email || row.id || '').trim().toLowerCase();
-          if (!email) return row;
-          try {
-            const userSnap = await getDoc(doc(db, 'users', email));
-            const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
-            return {
-              ...row,
-              email,
-              subscriptionPlan: userData.subscriptionPlan || row.subscriptionPlan || 'free',
-            };
-          } catch {
-            return { ...row, email };
-          }
-        }));
-        setProviders(enriched.filter((row) => isPublicProviderEmail(row.email || row.id)));
-        setIsLoading(false);
-      })();
+    const providersQ = query(collection(db, 'providers'), where('isAvailable', '==', true), limit(100));
+    const profilesQ = query(collection(db, 'providerProfiles'), where('isAvailable', '==', true), limit(100));
+
+    let providersRows = [];
+    let profileRows = [];
+
+    const emit = async () => {
+      const mergedMap = new Map();
+      [...providersRows, ...profileRows].forEach((row) => {
+        const email = String(row.email || row.id || '').trim().toLowerCase();
+        if (!email) return;
+        mergedMap.set(email, { ...(mergedMap.get(email) || {}), ...row, email, id: email });
+      });
+
+      const mergedRows = Array.from(mergedMap.values());
+      const enriched = await Promise.all(mergedRows.map(async (row) => {
+        try {
+          const userSnap = await getDoc(doc(db, 'users', row.email));
+          const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+          return {
+            ...row,
+            subscriptionPlan: userData.subscriptionPlan || row.subscriptionPlan || 'free',
+            avgRating: row.avgRating || userData.avgRating || 0,
+            jobsCompleted: row.jobsCompleted || userData.jobsCompleted || 0,
+          };
+        } catch {
+          return row;
+        }
+      }));
+
+      setProviders(enriched.filter((row) => isPublicProviderEmail(row.email || row.id)));
+      setIsLoading(false);
+    };
+
+    const unsubProviders = onSnapshot(providersQ, (snap) => {
+      providersRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      emit();
     }, () => setIsLoading(false));
+
+    const unsubProfiles = onSnapshot(profilesQ, (snap) => {
+      profileRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      emit();
+    }, () => setIsLoading(false));
+
+    return () => {
+      unsubProviders();
+      unsubProfiles();
+    };
   }, []);
 
   const filtered = useMemo(() => {

@@ -6,6 +6,7 @@ admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 const auth = admin.auth();
 
+// ADMIN LOGIN ACCOUNT — do not change this to support email
 const KEEP_EMAILS = ['oseiwusumaroni@gmail.com', 'bhounce1000@gmail.com'];
 
 const WIPE_COLLECTIONS = [
@@ -206,6 +207,7 @@ async function run() {
   }
 
   console.log('Step 4: Resetting kept provider profiles...');
+  // ADMIN LOGIN ACCOUNT — do not change this to support email
   await resetProviderProfile('bhounce1000@gmail.com');
 
   console.log('Full reset complete. App is now clean and fresh.');

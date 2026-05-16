@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
 
@@ -15,6 +15,10 @@ function toMs(value) {
   if (value?.seconds) return value.seconds * 1000;
   const t = new Date(value).getTime();
   return Number.isFinite(t) ? t : 0;
+}
+
+function rowTime(row) {
+  return toMs(row?.timestamp) || toMs(row?.createdAt);
 }
 
 function groupLabel(ts) {
@@ -136,10 +140,10 @@ export default function Wallet() {
       }
 
       const byUserIdQ = currentUid
-        ? query(collection(db, 'transactions'), where('userId', '==', currentUid), orderBy('createdAt', 'desc'))
+        ? query(collection(db, 'transactions'), where('userId', '==', currentUid), orderBy('createdAt', 'desc'), limit(50))
         : null;
-      const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
-      const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
+      const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
+      const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
       const [userIdSnap, sentSnap, receivedSnap] = await Promise.all([
         byUserIdQ ? getDocs(byUserIdQ) : Promise.resolve({ docs: [] }),
         getDocs(sentQ),
@@ -152,7 +156,7 @@ export default function Wallet() {
 
       const byId = new Map();
       [...userIdRows, ...sentRows, ...receivedRows].forEach((row) => byId.set(row.id, row));
-      const merged = Array.from(byId.values()).sort((a, b) => toMs(b.timestamp) - toMs(a.timestamp));
+      const merged = Array.from(byId.values()).sort((a, b) => rowTime(b) - rowTime(a));
 
       setWalletBalance(Number.isFinite(balance) ? balance : 0);
       setTransactions(merged);
@@ -183,8 +187,8 @@ export default function Wallet() {
   useEffect(() => {
     if (!currentEmail) return undefined;
 
-    const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
-    const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'));
+    const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
+    const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
 
     let sentRows = [];
     let receivedRows = [];
@@ -192,7 +196,7 @@ export default function Wallet() {
     const mergeRows = () => {
       const byId = new Map();
       [...sentRows, ...receivedRows].forEach((row) => byId.set(row.id, row));
-      const merged = Array.from(byId.values()).sort((a, b) => toMs(b.timestamp) - toMs(a.timestamp));
+      const merged = Array.from(byId.values()).sort((a, b) => rowTime(b) - rowTime(a));
       setTransactions(merged);
     };
 
@@ -228,15 +232,15 @@ export default function Wallet() {
       const withdrawal = isWithdrawalRow(row);
       const isCredit = row.direction === 'received' && !withdrawal;
 
-      if (isCredit && (status === 'completed' || status === 'success' || !status)) {
+      if (isCredit && (status === 'completed' || status === 'success')) {
         earned += amount;
       }
 
-      if (withdrawal && ['pending_admin_approval', 'manual_review', 'pending', 'processing', 'escrowed'].includes(status)) {
+      if (withdrawal && ['pending_admin_approval', 'pending'].includes(status)) {
         pending += amount;
       }
 
-      if (withdrawal && ['completed', 'success'].includes(status)) {
+      if (withdrawal && status === 'completed') {
         withdrawn += amount;
       }
     });
@@ -260,7 +264,7 @@ export default function Wallet() {
   const grouped = useMemo(() => {
     const map = new Map();
     filteredTransactions.forEach((row) => {
-      const label = groupLabel(toMs(row.timestamp));
+      const label = groupLabel(rowTime(row));
       if (!map.has(label)) map.set(label, []);
       map.get(label).push(row);
     });

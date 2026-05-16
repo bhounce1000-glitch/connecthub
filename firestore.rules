@@ -7,6 +7,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
+      // ADMIN LOGIN ACCOUNT — do not change this to support email
       return isSignedIn() && request.auth.token.email == 'bhounce1000@gmail.com';
     }
 

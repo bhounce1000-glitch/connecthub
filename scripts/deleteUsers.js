@@ -8,6 +8,7 @@ admin.initializeApp({
 const db = admin.firestore();
 const auth = admin.auth();
 
+// ADMIN LOGIN ACCOUNT — do not change this to support email
 const KEEP = ['oseiwusumaroni@gmail.com', 'bhounce1000@gmail.com'];
 
 const DELETE_EMAILS = [

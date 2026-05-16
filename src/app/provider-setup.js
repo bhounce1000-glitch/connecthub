@@ -14,9 +14,8 @@ import useAuthUser from '../hooks/use-auth-user';
 import { useUserProfile } from '../hooks/use-user-profile';
 
 export const SERVICE_CATEGORIES = [
-  'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Painting', 'Moving & Transport',
-  'Gardening & Landscaping', 'Tech & IT Support', 'Tutoring & Teaching', 'Tailoring & Fashion',
-  'Cooking & Catering', 'Security', 'Other',
+  'Cleaning', 'Electrical', 'Plumbing', 'Carpentry', 'Painting', 'Moving',
+  'Beauty', 'Cooking', 'Driving', 'Security', 'Mechanic', 'Other',
 ];
 
 export default function ProviderSetup() {
@@ -207,11 +206,11 @@ export default function ProviderSetup() {
           {SERVICE_CATEGORIES.map((cat) => {
             const active = category === cat;
             return (
-              <TouchableOpacity
+                <TouchableOpacity
                 key={cat}
                 onPress={() => setCategory(cat)}
                 style={{
-                  width: '48%',
+                  width: '31%',
                   paddingVertical: 10,
                   borderRadius: AppRadius.md,
                   backgroundColor: active ? '#2563eb' : '#f8fafc',

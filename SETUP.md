@@ -8,7 +8,7 @@ Set these in both local `.env` and Render dashboard.
 | --- | --- | --- | --- |
 | `PAYSTACK_SECRET` | Yes | `sk_test_xxx` | Paystack secret for payments and transfers |
 | `ENCRYPTION_KEY` | Yes | `2dd37c2fc28ca328d58109beba297b31` | Encrypt/decrypt sensitive fields |
-| `ADMIN_EMAIL` | Yes | `bhounce1000@gmail.com` | Grants admin access in API routes |
+| `ADMIN_EMAIL` | Yes | `connecthub1000@gmail.com` | Grants admin access in API routes |
 | `EMAIL_USER` | Recommended | `noreply@yourdomain.com` | SMTP username for email notifications |
 | `EMAIL_PASS` | Recommended | `app-password` | SMTP password or app password |
 | `EMAIL_FROM` | Recommended | `ConnectHub <noreply@yourdomain.com>` | Sender name/email for system mail |

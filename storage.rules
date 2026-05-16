@@ -3,6 +3,7 @@ service firebase.storage {
   match /b/{bucket}/o {
 
     function isAdmin() {
+      // ADMIN LOGIN ACCOUNT — do not change this to support email
       return request.auth != null
         && request.auth.token.email in ['bhounce1000@gmail.com'];
     }
