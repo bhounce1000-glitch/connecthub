@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 
@@ -269,16 +269,7 @@ export default function ProviderSetup() {
         <Text style={{ color: '#2563eb', fontWeight: '800' }}>Preview Profile</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity onPress={handleSave} disabled={isSaving} style={{ backgroundColor: '#2563eb', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', marginBottom: 10 }}>
-        {isSaving ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <ActivityIndicator color="#fff" size="small" />
-            <Text style={{ color: '#fff', fontWeight: '800', marginLeft: 8 }}>Saving...</Text>
-          </View>
-        ) : (
-          <Text style={{ color: '#fff', fontWeight: '800' }}>Save Provider Profile</Text>
-        )}
-      </TouchableOpacity>
+      <AppButton label="Save Provider Profile" variant="primary" onPress={handleSave} disabled={isSaving} loading={isSaving} loadingLabel="Saving..." style={{ marginBottom: 10 }} />
 
       <AppButton label="← Back" variant="neutral" onPress={() => router.back()} />
     </ScrollView>

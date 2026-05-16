@@ -408,13 +408,13 @@ export default function Profile() {
       <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
         <View style={{ backgroundColor: '#1e3a8a', height: 220, alignItems: 'center', justifyContent: 'center', paddingHorizontal: AppSpace.lg }}>
           <Pressable onPress={handleUploadPicture} disabled={isUploading}>
-            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', opacity: isUploading ? 0.6 : 1 }}>
               {profilePicture ? (
                 <Image source={{ uri: profilePicture }} style={{ width: 80, height: 80, borderRadius: 40 }} />
               ) : (
                 <Text style={{ color: '#1e3a8a', fontSize: 28, fontWeight: '900' }}>{initial}</Text>
               )}
-              <View style={{ position: 'absolute', right: -1, bottom: -1, width: 24, height: 24, borderRadius: 12, backgroundColor: '#2563eb', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
+              <View style={{ position: 'absolute', right: -1, bottom: -1, width: 24, height: 24, borderRadius: 12, backgroundColor: isUploading ? '#cbd5e1' : '#2563eb', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' }}>
                 <Text style={{ color: '#fff', fontSize: 11 }}>📷</Text>
               </View>
             </View>
@@ -522,7 +522,7 @@ export default function Profile() {
             <TouchableOpacity
               onPress={handleUsernameChange}
               disabled={isChangingUsername}
-              style={{ backgroundColor: '#2563eb', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}
+              style={{ backgroundColor: isChangingUsername ? '#cbd5e1' : '#2563eb', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', opacity: isChangingUsername ? 0.6 : 1 }}
             >
               <Text style={{ color: '#fff', fontWeight: '800' }}>{isChangingUsername ? 'Updating...' : 'Update Username'}</Text>
             </TouchableOpacity>
@@ -531,7 +531,7 @@ export default function Profile() {
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Text style={{ color: '#0f172a', fontWeight: '800' }}>Recent Username Security Activity</Text>
                 <TouchableOpacity onPress={loadUsernameAudit} disabled={isLoadingUsernameAudit}>
-                  <Text style={{ color: '#2563eb', fontWeight: '700', fontSize: 12 }}>{isLoadingUsernameAudit ? 'Refreshing...' : 'Refresh'}</Text>
+                  <Text style={{ color: isLoadingUsernameAudit ? '#cbd5e1' : '#2563eb', fontWeight: '700', fontSize: 12, opacity: isLoadingUsernameAudit ? 0.6 : 1 }}>{isLoadingUsernameAudit ? 'Refreshing...' : 'Refresh'}</Text>
                 </TouchableOpacity>
               </View>
               {usernameAuditPreview.length ? (

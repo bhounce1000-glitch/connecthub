@@ -20,28 +20,44 @@ export default function AppButton({
   style = null,
   textStyle = null,
 }) {
+  const baseColor = VARIANT_COLORS[variant] || VARIANT_COLORS.primary;
   const backgroundColor = disabled || loading
-    ? AppColors.disabled
-    : (VARIANT_COLORS[variant] || VARIANT_COLORS.primary);
+    ? '#cbd5e1'
+    : baseColor;
 
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={!disabled && !loading && onPress ? onPress : undefined}
       disabled={disabled || loading}
-      activeOpacity={0.86}
+      activeOpacity={disabled || loading ? 1 : 0.75}
       style={[
         {
           backgroundColor,
           minHeight: 48,
           justifyContent: 'center',
-          paddingVertical: 13,
-          paddingHorizontal: 14,
+          alignItems: 'center',
+          paddingVertical: 14,
+          paddingHorizontal: 16,
           borderRadius: AppRadius.md,
+          opacity: disabled || loading ? 0.6 : 1,
         },
         style,
       ]}
+      accessible={true}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={disabled ? 'This button is disabled' : undefined}
     >
-      <Text style={[{ color: AppColors.white, textAlign: 'center', fontWeight: '700', fontSize: AppType.body, letterSpacing: 0.2 }, textStyle]}>
+      <Text style={[
+        {
+          color: '#ffffff',
+          textAlign: 'center',
+          fontWeight: '700',
+          fontSize: AppType.body,
+          letterSpacing: 0.2,
+        },
+        textStyle
+      ]}>
         {loading ? (loadingLabel || 'Working...') : label}
       </Text>
     </TouchableOpacity>

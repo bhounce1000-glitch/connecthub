@@ -19,6 +19,42 @@ const PLANS = [
   { key: 'premium', name: 'Premium', amount: 99, badge: '#d97706', badgeText: 'BEST VALUE', features: ['✅ Unlimited job accepts', '✅ Premium placement', '✅ Highest visibility'] },
 ];
 
+const PLAN_THEME = {
+  free: {
+    cardBackground: '#f8fafc',
+    cardBorder: '#cbd5e1',
+    titleColor: '#334155',
+    priceColor: '#475569',
+    mutedColor: '#64748b',
+    featureYes: '#166534',
+    featureNo: '#991b1b',
+    currentBackground: '#e2e8f0',
+    currentText: '#334155',
+  },
+  pro: {
+    cardBackground: '#eff6ff',
+    cardBorder: '#60a5fa',
+    titleColor: '#1d4ed8',
+    priceColor: '#1d4ed8',
+    mutedColor: '#475569',
+    featureYes: '#1d4ed8',
+    featureNo: '#b91c1c',
+    currentBackground: '#dbeafe',
+    currentText: '#1e3a8a',
+  },
+  premium: {
+    cardBackground: '#fffbeb',
+    cardBorder: '#f59e0b',
+    titleColor: '#b45309',
+    priceColor: '#b45309',
+    mutedColor: '#78350f',
+    featureYes: '#92400e',
+    featureNo: '#b91c1c',
+    currentBackground: '#fde68a',
+    currentText: '#78350f',
+  },
+};
+
 export default function Subscription() {
   const router = useRouter();
   const { status, plan } = useLocalSearchParams();
@@ -30,6 +66,7 @@ export default function Subscription() {
   const [notice, setNotice] = useState(null);
 
   const currentEmail = String(user?.email || '').trim().toLowerCase();
+  const isAuthenticated = currentEmail.length > 0;
   const resolvedStatus = Array.isArray(status) ? status[0] : status;
   const resolvedPlan = Array.isArray(plan) ? plan[0] : plan;
 
@@ -106,7 +143,10 @@ export default function Subscription() {
   }, [logSubscriptionEvent, resolvedStatus, resolvedPlan]);
 
   const handleUpgrade = async (planKey) => {
-    if (!currentEmail) return;
+    if (!currentEmail) {
+      setNotice({ tone: 'warning', title: 'Sign in required', message: 'Please sign in again before managing subscriptions.' });
+      return;
+    }
     if (planKey === 'free') {
       setNotice({ tone: 'info', title: 'Already available', message: 'Basic plan is free and active by default.' });
       return;
@@ -306,12 +346,10 @@ export default function Subscription() {
 
       {PLANS.map((plan) => {
         const active = currentPlan === plan.key;
+        const actionDisabled = !isAuthenticated || active || pendingPlan.length > 0;
         const annual = plan.amount > 0 ? `GHS ${(plan.amount * 12).toFixed(0)}/yr` : 'Free forever';
-        const cardStyle = plan.key === 'premium'
-          ? { backgroundColor: '#fef3c7', borderColor: '#f59e0b' }
-          : plan.key === 'pro'
-            ? { backgroundColor: '#eff6ff', borderColor: '#60a5fa' }
-            : { backgroundColor: '#fff', borderColor: '#e2e8f0' };
+        const theme = PLAN_THEME[plan.key] || PLAN_THEME.free;
+        const cardStyle = { backgroundColor: theme.cardBackground, borderColor: theme.cardBorder };
         return (
           <AppCard key={plan.key} style={{ marginBottom: 12, borderWidth: 1, ...cardStyle }}>
             {(plan.badgeText || active) ? (
@@ -322,39 +360,55 @@ export default function Subscription() {
                   </View>
                 ) : null}
                 {active ? (
-                  <View style={{ backgroundColor: '#dcfce7', borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
-                    <Text style={{ color: '#166534', fontWeight: '800', fontSize: 11 }}>✅ CURRENT PLAN</Text>
+                  <View style={{ backgroundColor: theme.currentBackground, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+                    <Text style={{ color: theme.currentText, fontWeight: '800', fontSize: 11 }}>✅ CURRENT PLAN</Text>
                   </View>
                 ) : null}
               </View>
             ) : null}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-              <Text style={{ fontWeight: '800', fontSize: 20 }}>{plan.name}</Text>
+              <Text style={{ color: theme.titleColor, fontWeight: '800', fontSize: 20 }}>{plan.name}</Text>
               {plan.amount > 0 ? (
                 <View style={{ alignItems: 'flex-end' }}>
                   <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 2 }}>
-                    <Text style={{ color: plan.badge, fontWeight: '900', fontSize: 26 }}>GHS {plan.amount}</Text>
-                    <Text style={{ color: '#64748b', fontWeight: '600', fontSize: 13 }}>/mo</Text>
+                    <Text style={{ color: theme.priceColor, fontWeight: '900', fontSize: 26 }}>GHS {plan.amount}</Text>
+                    <Text style={{ color: theme.mutedColor, fontWeight: '600', fontSize: 13 }}>/mo</Text>
                   </View>
-                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>{annual}</Text>
+                  <Text style={{ color: theme.mutedColor, fontSize: 11, marginTop: 1 }}>{annual}</Text>
                 </View>
               ) : (
                 <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ color: plan.badge, fontWeight: '900', fontSize: 22 }}>FREE</Text>
-                  <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 1 }}>{annual}</Text>
+                  <Text style={{ color: theme.priceColor, fontWeight: '900', fontSize: 22 }}>FREE</Text>
+                  <Text style={{ color: theme.mutedColor, fontSize: 11, marginTop: 1 }}>{annual}</Text>
                 </View>
               )}
             </View>
             <View style={{ marginTop: 8 }}>
-              {plan.features.map((feature) => <Text key={feature} style={{ color: '#334155', marginBottom: 3 }}>{feature}</Text>)}
+              {plan.features.map((feature) => {
+                const includesFeature = feature.includes('✅');
+                return (
+                  <Text key={feature} style={{ color: includesFeature ? theme.featureYes : theme.featureNo, marginBottom: 3, fontWeight: includesFeature ? '700' : '600' }}>
+                    {feature}
+                  </Text>
+                );
+              })}
             </View>
             <AppButton
-              label={active ? 'Current Plan' : plan.amount > 0 ? `Upgrade to ${plan.name}` : 'Current Plan'}
-              variant={active ? 'neutral' : plan.key === 'premium' ? 'warning' : 'primary'}
+              label={!isAuthenticated ? 'Sign in to manage plans' : active ? 'Current Plan' : plan.amount > 0 ? `Upgrade to ${plan.name}` : 'Downgrade to Free'}
+              variant="primary"
               onPress={() => handleUpgrade(plan.key)}
-              disabled={active || pendingPlan.length > 0}
+              disabled={actionDisabled}
               loading={pendingPlan === plan.key}
-              style={{ marginTop: 12 }}
+              style={{
+                marginTop: 12,
+                backgroundColor: active
+                  ? '#cbd5e1'
+                  : plan.key === 'premium'
+                    ? theme.priceColor
+                    : plan.key === 'pro'
+                      ? theme.priceColor
+                      : '#64748b',
+              }}
             />
           </AppCard>
         );
@@ -366,7 +420,7 @@ export default function Subscription() {
           variant="danger"
           onPress={handleCancelSubscription}
           loading={isCancelling}
-          disabled={isCancelling || pendingPlan.length > 0}
+          disabled={!isAuthenticated || isCancelling || pendingPlan.length > 0}
           style={{ marginBottom: 12 }}
         />
       ) : null}
