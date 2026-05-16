@@ -176,12 +176,13 @@ export default function HelpSupport() {
         onPress={() => router.back()}
       />
 
-      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 14, marginTop: 14 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 24 }}>
         <TouchableOpacity onPress={() => router.push('/terms')}>
-          <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>Terms of Service</Text>
+          <Text style={{ color: '#2563eb', fontSize: 13 }}>Terms of Service</Text>
         </TouchableOpacity>
+        <Text style={{ color: '#cbd5e1', marginHorizontal: 16 }}>•</Text>
         <TouchableOpacity onPress={() => router.push('/privacy-policy')}>
-          <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>Privacy Policy</Text>
+          <Text style={{ color: '#2563eb', fontSize: 13 }}>Privacy Policy</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>

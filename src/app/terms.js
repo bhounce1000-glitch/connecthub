@@ -42,7 +42,7 @@ const sections = [
   },
   {
     title: '10. Contact Information',
-    body: 'For legal, support, or compliance questions, contact ConnectHub support through the in-app Help section or your official support channels.',
+    body: 'For legal, support, or compliance questions, contact ConnectHub support through the in-app Help section or email connecthub1000@gmail.com.',
   },
 ];
 
@@ -52,6 +52,10 @@ export default function Terms() {
   return (
     <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
       <ScrollView contentContainerStyle={{ padding: AppSpace.lg, paddingBottom: 40 }}>
+        <TouchableOpacity onPress={() => router.back()} style={{ marginBottom: 16, alignSelf: 'flex-start' }}>
+          <Text style={{ color: '#2563eb', fontWeight: '600' }}>← Back</Text>
+        </TouchableOpacity>
+
         <Text style={{ fontSize: AppType.heading, fontWeight: '800', color: AppColors.ink900, marginBottom: 6 }}>
           Terms of Service
         </Text>
@@ -70,20 +74,6 @@ export default function Terms() {
           </View>
         ))}
 
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={{
-            alignSelf: 'flex-start',
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: '#cbd5e1',
-            backgroundColor: '#ffffff',
-          }}
-        >
-          <Text style={{ color: '#1d4ed8', fontWeight: '700' }}>Back</Text>
-        </TouchableOpacity>
       </ScrollView>
     </View>
   );

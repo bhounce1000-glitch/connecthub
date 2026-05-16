@@ -77,6 +77,36 @@ function humanizePaymentMethod(value) {
   return method;
 }
 
+function computeStats(txList, userEmail) {
+  let earned = 0;
+  let pending = 0;
+  let withdrawn = 0;
+
+  for (const tx of txList) {
+    const amount = parseFloat(tx.amount || tx.netAmount || 0);
+    const status = String(tx.status || '').toLowerCase();
+    const type = String(tx.type || '').toLowerCase();
+
+    if (type === 'withdrawal' && (status === 'completed' || status === 'success')) {
+      withdrawn += amount;
+      continue;
+    }
+
+    if (status === 'pending' || status === 'pending_admin_approval' || status === 'manual_review' || status === 'processing') {
+      pending += amount;
+      continue;
+    }
+
+    if (type !== 'withdrawal' && (status === 'completed' || status === 'success' || status === 'paid' || status === 'released')) {
+      if (tx.receiverEmail === userEmail || tx.direction === 'received' || (tx.senderEmail !== userEmail && !type.includes('withdraw'))) {
+        earned += amount;
+      }
+    }
+  }
+
+  return { earned, pending, withdrawn };
+}
+
 function transactionCounterparty(row, currentEmail) {
   if (isWithdrawalRow(row)) {
     return `To: ${String(row.accountName || row.provider || 'Your MoMo Wallet').toUpperCase()}`;
@@ -186,6 +216,16 @@ export default function Wallet() {
 
   useEffect(() => {
     if (!currentEmail) return undefined;
+    const unsub = onSnapshot(doc(db, 'users', currentEmail), (snap) => {
+      if (snap.exists()) {
+        setWalletBalance(parseFloat(snap.data()?.walletBalance || 0));
+      }
+    });
+    return unsub;
+  }, [currentEmail]);
+
+  useEffect(() => {
+    if (!currentEmail) return undefined;
 
     const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
     const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
@@ -221,32 +261,7 @@ export default function Wallet() {
     await loadWallet();
   };
 
-  const stats = useMemo(() => {
-    let earned = 0;
-    let pending = 0;
-    let withdrawn = 0;
-
-    transactions.forEach((row) => {
-      const amount = Number(row.amount || 0);
-      const status = normalizeStatus(row.status);
-      const withdrawal = isWithdrawalRow(row);
-      const isCredit = row.direction === 'received' && !withdrawal;
-
-      if (isCredit && (status === 'completed' || status === 'success')) {
-        earned += amount;
-      }
-
-      if (withdrawal && ['pending_admin_approval', 'pending'].includes(status)) {
-        pending += amount;
-      }
-
-      if (withdrawal && status === 'completed') {
-        withdrawn += amount;
-      }
-    });
-
-    return { earned, pending, withdrawn };
-  }, [transactions]);
+  const stats = useMemo(() => computeStats(transactions, currentEmail), [currentEmail, transactions]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((row) => {

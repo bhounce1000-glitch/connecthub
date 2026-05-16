@@ -20,14 +20,14 @@ service cloud.firestore {
     }
 
     function isNotDisposable() {
-      let userEmail = request.auth.token.email;
-      return !userEmail.matches('.*@mailinator\\.com')
-        && !userEmail.matches('.*@guerrillamail\\.com')
-        && !userEmail.matches('.*@tempmail\\.com')
-        && !userEmail.matches('.*@yopmail\\.com')
-        && !userEmail.matches('.*@trashmail\\.com')
-        && !userEmail.matches('.*@example\\.com')
-        && !userEmail.matches('.*@test\\.com');
+      let emailAddress = request.auth.token.email;
+      return !emailAddress.matches('.*@mailinator\\.com')
+        && !emailAddress.matches('.*@guerrillamail\\.com')
+        && !emailAddress.matches('.*@tempmail\\.com')
+        && !emailAddress.matches('.*@yopmail\\.com')
+        && !emailAddress.matches('.*@trashmail\\.com')
+        && !emailAddress.matches('.*@example\\.com')
+        && !emailAddress.matches('.*@test\\.com');
     }
 
     function isNotBanned() {
@@ -57,6 +57,7 @@ service cloud.firestore {
     match /requests/{requestId} {
       allow read: if isSignedIn();
       allow create: if validUser()
+        && isVerified()
         && request.resource.data.keys().hasAll(['title', 'user', 'status', 'createdAt'])
         && (request.resource.data.status == 'OPEN' || request.resource.data.status == 'open')
         && request.resource.data.user == request.auth.token.email
@@ -127,7 +128,7 @@ service cloud.firestore {
         resource.data.email == request.auth.token.email
         || isAdmin()
       );
-      allow create: if validUser() && request.resource.data.email == request.auth.token.email;
+      allow create: if validUser() && isVerified() && request.resource.data.email == request.auth.token.email;
       allow update, delete: if isAdmin();
     }
 

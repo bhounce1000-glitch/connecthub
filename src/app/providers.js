@@ -68,18 +68,23 @@ export default function Providers() {
   }, [isAuthReady, router, user]);
 
   useEffect(() => {
-    const providersQ = query(collection(db, 'providers'), where('isAvailable', '==', true), limit(100));
-    const profilesQ = query(collection(db, 'providerProfiles'), where('isAvailable', '==', true), limit(100));
+    const usersRoleQ = query(collection(db, 'users'), where('role', '==', 'provider'), limit(100));
+    const usersFlagQ = query(collection(db, 'users'), where('isProvider', '==', true), limit(100));
+    const providersQ = query(collection(db, 'providers'), limit(100));
+    const profilesQ = query(collection(db, 'providerProfiles'), limit(100));
 
-    let providersRows = [];
+    let roleRows = [];
+    let flagRows = [];
+    let providerRows = [];
     let profileRows = [];
 
-    const emit = async () => {
+    const mergeRows = async () => {
       const mergedMap = new Map();
-      [...providersRows, ...profileRows].forEach((row) => {
+      [...roleRows, ...flagRows, ...providerRows, ...profileRows].forEach((row) => {
         const email = String(row.email || row.id || '').trim().toLowerCase();
-        if (!email) return;
-        mergedMap.set(email, { ...(mergedMap.get(email) || {}), ...row, email, id: email });
+        if (!email || !isPublicProviderEmail(email)) return;
+        const current = mergedMap.get(email) || {};
+        mergedMap.set(email, { ...current, ...row, email, id: email });
       });
 
       const mergedRows = Array.from(mergedMap.values());
@@ -90,29 +95,53 @@ export default function Providers() {
           return {
             ...row,
             subscriptionPlan: userData.subscriptionPlan || row.subscriptionPlan || 'free',
-            avgRating: row.avgRating || userData.avgRating || 0,
-            jobsCompleted: row.jobsCompleted || userData.jobsCompleted || 0,
+            avgRating: Number(row.avgRating || userData.avgRating || 0),
+            jobsCompleted: Number(row.jobsCompleted || userData.jobsCompleted || 0),
+            category: row.category || userData.category || '',
+            startingPrice: row.startingPrice || userData.startingPrice || '',
+            skills: Array.isArray(row.skills) ? row.skills : (Array.isArray(userData.skills) ? userData.skills : []),
+            bio: row.bio || row.about || userData.bio || userData.about || '',
+            location: row.location || userData.location || '',
           };
         } catch {
           return row;
         }
       }));
 
-      setProviders(enriched.filter((row) => isPublicProviderEmail(row.email || row.id)));
+      enriched.sort((a, b) => {
+        const aProfileScore = Number(Boolean(a.category || a.bio || a.about || a.skills?.length));
+        const bProfileScore = Number(Boolean(b.category || b.bio || b.about || b.skills?.length));
+        if (aProfileScore !== bProfileScore) return bProfileScore - aProfileScore;
+        return Number(b.avgRating || 0) - Number(a.avgRating || 0);
+      });
+
+      setProviders(enriched);
       setIsLoading(false);
     };
 
+    const unsubRole = onSnapshot(usersRoleQ, (snap) => {
+      roleRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      mergeRows();
+    }, () => setIsLoading(false));
+
+    const unsubFlag = onSnapshot(usersFlagQ, (snap) => {
+      flagRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      mergeRows();
+    }, () => setIsLoading(false));
+
     const unsubProviders = onSnapshot(providersQ, (snap) => {
-      providersRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      emit();
+      providerRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      mergeRows();
     }, () => setIsLoading(false));
 
     const unsubProfiles = onSnapshot(profilesQ, (snap) => {
       profileRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      emit();
+      mergeRows();
     }, () => setIsLoading(false));
 
     return () => {
+      unsubRole();
+      unsubFlag();
       unsubProviders();
       unsubProfiles();
     };

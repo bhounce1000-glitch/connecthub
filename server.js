@@ -40,7 +40,7 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
-const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'connecthub1000@gmail.com').trim().toLowerCase();
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || ADMIN_LOGIN_EMAIL).trim().toLowerCase();
 const ADMIN_BOOTSTRAP_SECRET = process.env.ADMIN_BOOTSTRAP_SECRET || '';
 const COMMISSION_RATE = parseFloat(process.env.COMMISSION_RATE || '0.10');
 const REFERRAL_BONUS_AMOUNT = parseMoney(process.env.REFERRAL_BONUS_AMOUNT || 10);
@@ -2277,6 +2277,7 @@ app.post('/auth/send-otp', async (req, res) => {
     }
 
     try {
+      logger.info({ domain: String(email).split('@')[1] || 'unknown' }, 'OTP_EMAIL_DISPATCHED');
       await sendPaymentReceiptEmail(
         email,
         'ConnectHub User',
@@ -6491,8 +6492,8 @@ app.get('/admin/push-token/:email', requireAuth, requireAdmin, async (req, res) 
  */
 app.post('/admin/email-test', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const to = String(req.body?.to || '').trim().toLowerCase();
-    if (!to) return sendError(res, req, 400, 'missing_to', 'Provide a destination email address');
+    const testTo = String(req.body?.to || process.env.SUPPORT_EMAIL || 'connecthub1000@gmail.com').trim().toLowerCase();
+    if (!testTo) return sendError(res, req, 400, 'missing_to', 'Provide a destination email address');
 
     if (!isEmailConfigured()) {
       return sendError(res, req, 503, 'email_not_configured',
@@ -6501,7 +6502,7 @@ app.post('/admin/email-test', requireAuth, requireAdmin, async (req, res) => {
 
     await emailTransporter.sendMail({
       from: emailFrom || 'no-reply@connecthub.app',
-      to,
+      to: testTo,
       subject: 'ConnectHub Email Health Check',
       html: `<h2>Email delivery confirmed ✅</h2>
              <p>This test email was sent from the ConnectHub backend at <b>${new Date().toUTCString()}</b>.</p>
@@ -6512,10 +6513,10 @@ app.post('/admin/email-test', requireAuth, requireAdmin, async (req, res) => {
       actorEmail: req.user?.email || null,
       actorUid: req.user?.uid || null,
       eventType: 'admin_email_test',
-      metadata: { to },
+      metadata: { to: testTo },
     });
 
-    return sendSuccess(res, req, { message: 'Test email sent', to, configured: true });
+    return sendSuccess(res, req, { message: 'Test email sent', to: testTo, configured: true });
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_EMAIL_TEST_ERROR');
     return sendError(res, req, 500, 'email_test_failed',

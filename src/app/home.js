@@ -109,12 +109,15 @@ export default function Home() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const fabScale = useRef(new Animated.Value(1)).current;
-  const currentEmail = user?.email || '';
+  const currentEmail = String(user?.email || '').trim().toLowerCase();
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
   const isProvider = String(userProfiles[currentEmail]?.role || '').toLowerCase() === 'provider';
   const currentPlan = String(userProfiles[currentEmail]?.subscriptionPlan || 'free').toLowerCase();
   const isFreePlan = currentPlan === 'free' || currentPlan === 'basic';
   const FREE_ACCEPT_LIMIT = 5;
+  const [activeJobCount, setActiveJobCount] = useState(0);
+  const [heroWallet, setHeroWallet] = useState(0);
+  const [heroRating, setHeroRating] = useState(null);
 
   const monthlyAcceptsUsed = useMemo(() => {
     if (!currentEmail || !isProvider) return 0;
@@ -192,6 +195,65 @@ export default function Home() {
       unsubUserId();
       unsubRecipient();
       unsubLegacy();
+    };
+  }, [currentEmail]);
+
+  useEffect(() => {
+    if (!currentEmail) return undefined;
+
+    const unsub = onSnapshot(doc(db, 'users', currentEmail), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data() || {};
+      setHeroWallet(parseFloat(data.walletBalance || 0));
+      setHeroRating(data.avgRating || null);
+      setUserProfiles((prev) => ({
+        ...prev,
+        [currentEmail]: {
+          ...(prev[currentEmail] || {}),
+          ...data,
+        },
+      }));
+    });
+
+    return unsub;
+  }, [currentEmail]);
+
+  useEffect(() => {
+    if (!currentEmail) return undefined;
+
+    const qCustomer = query(collection(db, 'requests'), where('userId', '==', currentEmail), limit(50));
+    const qCustomerLegacy = query(collection(db, 'requests'), where('user', '==', currentEmail), limit(50));
+    const qProvider = query(collection(db, 'requests'), where('acceptedBy', '==', currentEmail), limit(50));
+
+    let customerJobs = [];
+    let legacyCustomerJobs = [];
+    let providerJobs = [];
+
+    const recompute = () => {
+      const active = [...customerJobs, ...legacyCustomerJobs, ...providerJobs]
+        .filter((job) => !['PAID', 'CANCELLED'].includes(String(job.status || '').toUpperCase()));
+      setActiveJobCount(new Set(active.map((job) => job.id)).size);
+    };
+
+    const unsubCustomer = onSnapshot(qCustomer, (snap) => {
+      customerJobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      recompute();
+    });
+
+    const unsubCustomerLegacy = onSnapshot(qCustomerLegacy, (snap) => {
+      legacyCustomerJobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      recompute();
+    });
+
+    const unsubProvider = onSnapshot(qProvider, (snap) => {
+      providerJobs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      recompute();
+    });
+
+    return () => {
+      unsubCustomer();
+      unsubCustomerLegacy();
+      unsubProvider();
     };
   }, [currentEmail]);
 
@@ -535,18 +597,12 @@ export default function Home() {
   }, [currentEmail, userProfiles]);
 
   const dashboardStats = useMemo(() => {
-    const activeJobs = requests.filter((item) => {
-      const status = getEffectiveStatus(item);
-      return [REQUEST_STATUS.OPEN, REQUEST_STATUS.ACCEPTED, REQUEST_STATUS.IN_PROGRESS, REQUEST_STATUS.PENDING_CONFIRMATION].includes(status);
-    }).length;
-    const walletValue = Number(userProfiles[currentEmail]?.walletBalance || 0);
-    const ratingValue = Number(userProfiles[currentEmail]?.avgRating || 0);
     return {
-      activeJobs,
-      walletValue,
-      ratingValue,
+      activeJobs: activeJobCount,
+      walletValue: heroWallet,
+      ratingValue: heroRating,
     };
-  }, [currentEmail, requests, userProfiles]);
+  }, [activeJobCount, heroRating, heroWallet]);
 
   const requestSummary = useMemo(() => {
     const summary = {
@@ -602,7 +658,7 @@ export default function Home() {
         <View style={{ marginTop: 14, borderRadius: AppRadius.md, backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
           <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Active Jobs: {dashboardStats.activeJobs}</Text>
           <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Wallet: GHS {dashboardStats.walletValue.toFixed(2)}</Text>
-          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Rating: {dashboardStats.ratingValue ? dashboardStats.ratingValue.toFixed(1) : 'N/A'}</Text>
+          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Rating: {dashboardStats.ratingValue ? `${dashboardStats.ratingValue.toFixed(1)} ⭐` : 'New ⭐'}</Text>
         </View>
       </View>
 

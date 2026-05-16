@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Text, TouchableOpacity, View } from 'react-native';
 
@@ -60,34 +60,34 @@ export default function Notifications() {
   useEffect(() => {
     if (!currentEmail) return undefined;
 
-    const a = onSnapshot(query(collection(db, 'notifications'), where('userId', '==', currentEmail)), (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      rows.sort((x, y) => toMs(y.createdAt) - toMs(x.createdAt));
-      setItems(rows);
+    const q1 = query(collection(db, 'notifications'), where('userId', '==', currentEmail), orderBy('createdAt', 'desc'), limit(50));
+    const q2 = query(collection(db, 'notifications'), where('recipientId', '==', currentEmail), orderBy('createdAt', 'desc'), limit(30));
+    const q3 = query(collection(db, 'notifications'), where('user', '==', currentEmail), orderBy('createdAt', 'desc'), limit(30));
+
+    const mergeSnapshots = (...snapshots) => {
+      const merged = new Map();
+      snapshots.forEach((snap) => {
+        snap.docs.forEach((entry) => merged.set(entry.id, { id: entry.id, ...entry.data() }));
+      });
+      return [...merged.values()].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+    };
+
+    const unsub1 = onSnapshot(q1, (snap) => {
+      setItems((previous) => mergeSnapshots({ docs: previous.map((item) => ({ id: item.id, data: () => item })) }, snap));
     });
 
-    const b = onSnapshot(query(collection(db, 'notifications'), where('recipientId', '==', currentEmail)), (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setItems((previous) => {
-        const merged = new Map();
-        [...previous, ...rows].forEach((entry) => merged.set(entry.id, entry));
-        return [...merged.values()].sort((x, y) => toMs(y.createdAt) - toMs(x.createdAt));
-      });
+    const unsub2 = onSnapshot(q2, (snap) => {
+      setItems((previous) => mergeSnapshots({ docs: previous.map((item) => ({ id: item.id, data: () => item })) }, snap));
     });
 
-    const c = onSnapshot(query(collection(db, 'notifications'), where('user', '==', currentEmail)), (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setItems((previous) => {
-        const merged = new Map();
-        [...previous, ...rows].forEach((entry) => merged.set(entry.id, entry));
-        return [...merged.values()].sort((x, y) => toMs(y.createdAt) - toMs(x.createdAt));
-      });
+    const unsub3 = onSnapshot(q3, (snap) => {
+      setItems((previous) => mergeSnapshots({ docs: previous.map((item) => ({ id: item.id, data: () => item })) }, snap));
     });
 
     return () => {
-      a();
-      b();
-      c();
+      unsub1();
+      unsub2();
+      unsub3();
     };
   }, [currentEmail]);
 
@@ -102,7 +102,13 @@ export default function Notifications() {
   };
 
   const markAllRead = async () => {
-    await Promise.all(items.filter((i) => !i.read).map((item) => updateDoc(doc(db, 'notifications', item.id), { read: true }).catch(() => {})));
+    await Promise.all(items.filter((i) => !i.read).map((item) => {
+      const payload = { read: true };
+      if (item.userId) payload.userId = item.userId;
+      if (item.recipientId) payload.recipientId = item.recipientId;
+      if (item.user) payload.user = item.user;
+      return updateDoc(doc(db, 'notifications', item.id), payload).catch(() => {});
+    }));
   };
 
   return (

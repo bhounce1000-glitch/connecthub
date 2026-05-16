@@ -8,12 +8,28 @@ Set these in both local `.env` and Render dashboard.
 | --- | --- | --- | --- |
 | `PAYSTACK_SECRET` | Yes | `sk_test_xxx` | Paystack secret for payments and transfers |
 | `ENCRYPTION_KEY` | Yes | `2dd37c2fc28ca328d58109beba297b31` | Encrypt/decrypt sensitive fields |
-| `ADMIN_EMAIL` | Yes | `connecthub1000@gmail.com` | Grants admin access in API routes |
+| `ADMIN_EMAIL` | Yes | `bhounce1000@gmail.com` | Grants admin access in API routes |
+| `SUPPORT_EMAIL` | Yes | `connecthub1000@gmail.com` | Public support contact used in user-facing email/help flows |
 | `EMAIL_USER` | Recommended | `noreply@yourdomain.com` | SMTP username for email notifications |
 | `EMAIL_PASS` | Recommended | `app-password` | SMTP password or app password |
 | `EMAIL_FROM` | Recommended | `ConnectHub <noreply@yourdomain.com>` | Sender name/email for system mail |
 | `EXPO_PUBLIC_API_BASE_URL` | Yes (frontend) | `https://connecthub-yrox.onrender.com` | Backend API URL used by app |
 | `EXPO_PUBLIC_WEB_BASE_URL` | Yes (frontend) | `https://connecthub-1873e.web.app` | Public web URL |
+
+## Email Configuration
+
+
+- `ADMIN_EMAIL`: `bhounce1000@gmail.com`
+	This is the admin login account. Do not change.
+	Used for Firebase Auth admin login and the Firestore `isAdmin()` security rule check.
+
+- `SUPPORT_EMAIL`: `connecthub1000@gmail.com`
+	This is the public-facing support email.
+	Used for contact email shown to users, test email sends, and user-facing communications.
+
+## Cloud Functions
+
+Cloud Functions are disabled in this release. Scheduled tasks and operational workflows are handled by `server.js`, so deployment does not require Secret Manager or Cloud Functions setup.
 
 ## Generate Encryption Key
 

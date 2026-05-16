@@ -7,6 +7,7 @@ import {
     doc,
     getDoc,
     getDocs,
+    increment,
     limit,
     onSnapshot,
     orderBy,
@@ -14,19 +15,21 @@ import {
     serverTimestamp,
     setDoc,
     updateDoc,
-    where,
+    where
 } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Image,
     Modal,
     Platform,
     Pressable,
     ScrollView,
     Text,
     TextInput,
-    View,
+    TouchableOpacity,
+    View
 } from 'react-native';
 
 import Avatar from '../components/ui/avatar';
@@ -87,6 +90,36 @@ function firstLetter(value) {
 function safeNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
+}
+
+function extractKycPhotos(row) {
+  const candidates = [
+    row?.photoUrls,
+    row?.documentUrls,
+    row?.images,
+    row?.selfieUrl,
+    row?.idFrontUrl,
+    row?.idBackUrl,
+    row?.imageUrl,
+    row?.selfie,
+    row?.document,
+  ];
+
+  const urls = [];
+  candidates.forEach((value) => {
+    if (Array.isArray(value)) {
+      value.forEach((entry) => {
+        const text = String(entry || '').trim();
+        if (text) urls.push(text);
+      });
+      return;
+    }
+
+    const text = String(value || '').trim();
+    if (text) urls.push(text);
+  });
+
+  return [...new Set(urls)];
 }
 
 function formatMoney(value) {
@@ -226,12 +259,14 @@ export default function Admin() {
     maintenanceMode: false,
     kycAutoNotify: true,
   });
-  const [emailTestTarget, setEmailTestTarget] = useState('');
+  const [emailTestTarget, setEmailTestTarget] = useState('connecthub1000@gmail.com');
   const [emailTestResult, setEmailTestResult] = useState(null);
   const [emailTestLoading, setEmailTestLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedWallet, setSelectedWallet] = useState(null);
   const [selectedUserLoading, setSelectedUserLoading] = useState(false);
+  const [fullscreenPhoto, setFullscreenPhoto] = useState(null);
+  const [expandedKycId, setExpandedKycId] = useState(null);
 
   const isAdmin = Boolean(user && isAdminEmail(user.email));
 
@@ -666,17 +701,17 @@ export default function Admin() {
   };
 
   const handleSendTestEmail = async () => {
-    const to = String(emailTestTarget || '').trim().toLowerCase();
-    if (!to) {
+    const testTo = String(emailTestTarget || process.env.SUPPORT_EMAIL || 'connecthub1000@gmail.com').trim().toLowerCase();
+    if (!testTo) {
       setEmailTestResult({ type: 'error', message: 'Please enter an email address.' });
       return;
     }
 
     setEmailTestLoading(true);
     try {
-      const { response, data } = await apiPost(`${API_BASE_URL}/admin/email-test`, { to }, { requireAuth: true });
+      const { response, data } = await apiPost(`${API_BASE_URL}/admin/email-test`, { to: testTo }, { requireAuth: true });
       assertApiSuccess(response, data, 'Failed to send test email');
-      setEmailTestResult({ type: 'success', message: `Test email sent to ${to}` });
+      setEmailTestResult({ type: 'success', message: `Test email sent to ${testTo}` });
     } catch (error) {
       setEmailTestResult({ type: 'error', message: String(error?.message || 'Failed to send test email') });
     } finally {
@@ -686,27 +721,83 @@ export default function Admin() {
 
   const handleWithdrawalAction = async (row, action) => {
     try {
-      const endpoint = action === 'approve'
-        ? `/admin/withdrawals/${row.id}/complete`
-        : `/admin/withdrawals/${row.id}/reject`;
-      const payload = action === 'approve' ? {} : { reason: 'Rejected by admin desk' };
-      const { response, data } = await apiPost(`${API_BASE_URL}${endpoint}`, payload, { requireAuth: true });
-      assertApiSuccess(response, data, `Failed to ${action} withdrawal`);
+      const adminEmail = String(user?.email || 'bhounce1000@gmail.com').trim().toLowerCase();
+      const withdrawalRef = doc(db, 'withdrawals', row.id);
+      const reference = String(row.reference || row.id).trim();
+      const amount = safeNumber(row.amount || row.netAmount || 0);
+      const provider = String(row.provider || row.network || row.method || 'Mobile Money').trim();
+      const phoneNumber = String(row.phoneNumber || row.phone || row.accountNumber || '').trim();
+      const userEmail = String(row.email || row.userEmail || '').trim().toLowerCase();
+      const reason = String(row.rejectionReason || row.reason || 'Rejected by admin desk').trim();
 
-      const notifyEndpoint = action === 'approve' ? '/admin/notify-withdrawal-paid' : '/admin/notify-withdrawal-rejected';
-      if (row?.email) {
-        await apiPost(
-          `${API_BASE_URL}${notifyEndpoint}`,
-          {
-            email: row.email,
-            amount: row.amount,
-            reference: row.reference || row.id,
-            rejectionReason: action === 'approve' ? '' : 'Rejected by admin desk',
-          },
-          { requireAuth: true }
-        );
+      if (action === 'approve') {
+        await updateDoc(withdrawalRef, {
+          status: 'completed',
+          processedAt: new Date().toISOString(),
+          processedBy: adminEmail,
+        });
+
+        const txSnap = await getDocs(query(collection(db, 'transactions'), where('reference', '==', reference)));
+        await Promise.all(txSnap.docs.map((entry) => updateDoc(entry.ref, { status: 'completed', updatedAt: new Date().toISOString() })));
+
+        await addDoc(collection(db, 'notifications'), {
+          userId: userEmail,
+          recipientId: userEmail,
+          title: '✅ Withdrawal Successful!',
+          body: `GHS ${amount.toFixed(2)} has been sent to your ${provider} account ending in ${phoneNumber ? String(phoneNumber).slice(-4) : '****'}. Check your MoMo wallet now.`,
+          type: 'withdrawal_completed',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+
+        await apiPost(`${API_BASE_URL}/admin/notify-withdrawal-paid`, {
+          email: userEmail,
+          amount,
+          provider,
+          phoneNumber,
+        }, { requireAuth: true });
+
+        if (row.fraudFlagged === true) {
+          await updateDoc(withdrawalRef, {
+            fraudReviewed: true,
+            fraudReviewedAt: new Date().toISOString(),
+            fraudReviewedBy: adminEmail,
+          });
+        }
+      } else {
+        await updateDoc(withdrawalRef, {
+          status: 'rejected',
+          processedAt: new Date().toISOString(),
+          processedBy: adminEmail,
+        });
+
+        await updateDoc(doc(db, 'users', userEmail), {
+          walletBalance: increment(amount),
+        });
+
+        const txSnap = await getDocs(query(collection(db, 'transactions'), where('reference', '==', reference)));
+        await Promise.all(txSnap.docs.map((entry) => updateDoc(entry.ref, { status: 'failed', updatedAt: new Date().toISOString() })));
+
+        await addDoc(collection(db, 'notifications'), {
+          userId: userEmail,
+          recipientId: userEmail,
+          title: '❌ Withdrawal Rejected',
+          body: `Your withdrawal of GHS ${amount.toFixed(2)} was rejected. Reason: ${reason}. Your balance has been restored.`,
+          type: 'withdrawal_rejected',
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+
+        await apiPost(`${API_BASE_URL}/admin/notify-withdrawal-rejected`, {
+          email: userEmail,
+          amount,
+          provider,
+          phoneNumber,
+          reason,
+        }, { requireAuth: true });
       }
-      Alert.alert('Success', `Withdrawal ${action === 'approve' ? 'approved' : 'rejected'} successfully.`);
+
+      Alert.alert('Success', `Withdrawal ${action === 'approve' ? 'marked as paid' : 'rejected'} successfully.`);
     } catch (error) {
       Alert.alert('Error', String(error?.message || `Could not ${action} withdrawal`));
     }
@@ -1313,7 +1404,7 @@ export default function Admin() {
                   </Text>
                   <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Ref: {row.reference || row.id}</Text>
                   <View style={{ flexDirection: 'row', marginTop: 10 }}>
-                    <ActionButton label="Approve" backgroundColor={BADGE_GREEN} onPress={() => handleWithdrawalAction(row, 'approve')} />
+                    <ActionButton label="Mark as Paid" backgroundColor={BADGE_GREEN} onPress={() => handleWithdrawalAction(row, 'approve')} />
                     <ActionButton label="Reject" backgroundColor={BADGE_RED} onPress={() => handleWithdrawalAction(row, 'reject')} />
                   </View>
                 </View>
@@ -1327,18 +1418,56 @@ export default function Admin() {
               <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
                 Pending: {kycRows.filter((row) => String(row.status || '').toLowerCase() === 'pending').length} | Approved: {kycRows.filter((row) => ['approved', 'verified'].includes(String(row.status || '').toLowerCase())).length} | Rejected: {kycRows.filter((row) => String(row.status || '').toLowerCase() === 'rejected').length}
               </Text>
-              {filteredKycRows.map((row) => (
-                <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
-                  <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>{row.email || row.userEmail || row.id}</Text>
-                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
-                    {String(row.status || 'pending').toUpperCase()} • {formatDate(row.submittedAt || row.createdAt)}
-                  </Text>
-                  <View style={{ flexDirection: 'row', marginTop: 10 }}>
-                    <ActionButton label="Approve" backgroundColor={BADGE_GREEN} onPress={() => handleKycAction(row, 'approve')} />
-                    <ActionButton label="Reject" backgroundColor={BADGE_RED} onPress={() => handleKycAction(row, 'reject')} />
+              {filteredKycRows.map((row) => {
+                const photos = extractKycPhotos(row);
+                const expanded = expandedKycId === row.id;
+
+                return (
+                  <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>{row.email || row.userEmail || row.id}</Text>
+                        <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
+                          {String(row.status || 'pending').toUpperCase()} • {formatDate(row.submittedAt || row.createdAt)}
+                        </Text>
+                      </View>
+                      <ActionButton
+                        label={expanded ? 'Hide Details' : 'View Details'}
+                        backgroundColor={ADMIN_ACCENT}
+                        onPress={() => setExpandedKycId(expanded ? null : row.id)}
+                      />
+                    </View>
+
+                    {expanded && photos.length > 0 && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 12 }}>
+                        {photos.map((photoUrl) => (
+                          <TouchableOpacity
+                            key={photoUrl}
+                            onPress={() => setFullscreenPhoto(photoUrl)}
+                            style={{ marginRight: 10, marginBottom: 10 }}
+                          >
+                            <Image
+                              source={{ uri: photoUrl }}
+                              style={{ width: 80, height: 80, borderRadius: 8, backgroundColor: '#e2e8f0' }}
+                            />
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+
+                    {expanded && photos.length === 0 && (
+                      <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 12 }}>No photos attached to this submission.</Text>
+                    )}
+
+                    {expanded && (
+                      <View style={{ flexDirection: 'row', marginTop: 10 }}>
+                        <ActionButton label="Approve" backgroundColor={BADGE_GREEN} onPress={() => handleKycAction(row, 'approve')} />
+                        <ActionButton label="Reject" backgroundColor={BADGE_RED} onPress={() => handleKycAction(row, 'reject')} />
+                      </View>
+                    )}
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
           )}
 
@@ -1599,6 +1728,25 @@ export default function Admin() {
               ) : null}
             </ScrollView>
           </View>
+        </View>
+      </Modal>
+
+      <Modal visible={Boolean(fullscreenPhoto)} transparent animationType="fade" onRequestClose={() => setFullscreenPhoto(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <TouchableOpacity
+            onPress={() => setFullscreenPhoto(null)}
+            style={{ position: 'absolute', top: 50, right: 20, zIndex: 10 }}
+          >
+            <Text style={{ color: '#fff', fontSize: 28, fontWeight: '700' }}>✕</Text>
+          </TouchableOpacity>
+          {fullscreenPhoto && (
+            <Image
+              source={{ uri: fullscreenPhoto }}
+              style={{ width: '95%', height: '70%', borderRadius: 12 }}
+              resizeMode="contain"
+            />
+          )}
+          <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 13 }}>Tap ✕ to close</Text>
         </View>
       </Modal>
     </View>
