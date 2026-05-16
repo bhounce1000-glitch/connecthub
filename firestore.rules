@@ -96,11 +96,27 @@ service cloud.firestore {
     match /notifications/{notifId} {
       allow read: if isSignedIn() && (
         resource.data.userId == request.auth.token.email
+        || resource.data.recipientId == request.auth.token.email
+        || resource.data.user == request.auth.token.email
         || isAdmin()
       );
-      allow create: if isAdmin();
+      allow create: if validUser()
+        && request.resource.data.keys().hasAll(['read'])
+        && request.resource.data.read == false
+        && (
+          request.resource.data.userId == request.auth.token.email
+          || request.resource.data.recipientId == request.auth.token.email
+          || request.resource.data.user == request.auth.token.email
+          || request.resource.data.userId is string
+          || request.resource.data.recipientId is string
+          || request.resource.data.user is string
+        );
       allow update: if isSignedIn()
-        && resource.data.userId == request.auth.token.email
+        && (
+          resource.data.userId == request.auth.token.email
+          || resource.data.recipientId == request.auth.token.email
+          || resource.data.user == request.auth.token.email
+        )
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
       allow delete: if isAdmin();
     }
