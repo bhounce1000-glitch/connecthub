@@ -64,7 +64,7 @@ export default function JobStepper({ request, status }) {
                   width: 18,
                   height: 18,
                   borderRadius: 9,
-                  backgroundColor: (past || active) ? dotColor : '#fff',
+                  backgroundColor: (done || active) ? dotColor : '#fff',
                   borderWidth: 2,
                   borderColor: dotColor,
                   justifyContent: 'center',

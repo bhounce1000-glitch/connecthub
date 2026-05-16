@@ -10,10 +10,10 @@ export default function AppCard({ children, style = null }) {
           backgroundColor: AppColors.white,
           borderRadius: AppRadius.lg,
           borderWidth: 1,
-          borderColor: '#dbe4ef',
+          borderColor: '#e2e8f0',
           padding: 16,
-          boxShadow: '0px 4px 10px rgba(15, 23, 42, 0.06)',
-          elevation: 2,
+          boxShadow: '0px 2px 12px rgba(0,0,0,0.08)',
+          elevation: 4,
         },
         style,
       ]}

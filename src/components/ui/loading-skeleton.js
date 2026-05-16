@@ -10,7 +10,8 @@ export default function LoadingSkeleton({ height = 16, width = '100%', style = n
           height,
           width,
           borderRadius: AppRadius.sm,
-          backgroundColor: '#e2e8f0',
+          backgroundColor: '#e5e7eb',
+          opacity: 0.9,
         },
         style,
       ]}

@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Linking, Platform, Text, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
@@ -32,6 +32,27 @@ export default function Subscription() {
   const currentEmail = String(user?.email || '').trim().toLowerCase();
   const resolvedStatus = Array.isArray(status) ? status[0] : status;
   const resolvedPlan = Array.isArray(plan) ? plan[0] : plan;
+
+  const logSubscriptionEvent = useCallback(async ({ event, planKey, statusText = '', message = '', reference = '', sessionType = '' }) => {
+    if (!currentEmail) return;
+    try {
+      await apiPost(
+        `${API_BASE_URL}/subscription/client-event`,
+        {
+          event,
+          plan: planKey,
+          platform: Platform.OS,
+          status: statusText,
+          message,
+          reference,
+          sessionType,
+        },
+        { requireAuth: true }
+      );
+    } catch {
+      // Diagnostics logging must never break checkout flow.
+    }
+  }, [currentEmail]);
 
   useEffect(() => {
     if (!currentEmail) {
@@ -82,28 +103,7 @@ export default function Subscription() {
         message: 'Payment failed. Please try again.',
       });
     }
-  }, [resolvedStatus, resolvedPlan]);
-
-  const logSubscriptionEvent = async ({ event, planKey, statusText = '', message = '', reference = '', sessionType = '' }) => {
-    if (!currentEmail) return;
-    try {
-      await apiPost(
-        `${API_BASE_URL}/subscription/client-event`,
-        {
-          event,
-          plan: planKey,
-          platform: Platform.OS,
-          status: statusText,
-          message,
-          reference,
-          sessionType,
-        },
-        { requireAuth: true }
-      );
-    } catch {
-      // Diagnostics logging must never break checkout flow.
-    }
-  };
+  }, [logSubscriptionEvent, resolvedStatus, resolvedPlan]);
 
   const handleUpgrade = async (planKey) => {
     if (!currentEmail) return;

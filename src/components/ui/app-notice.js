@@ -4,28 +4,28 @@ import { AppRadius, AppSpace } from '../../constants/design-tokens';
 
 const TONE_STYLES = {
   info: {
-    backgroundColor: '#dbeafe',
-    borderColor: '#93c5fd',
-    titleColor: '#1d4ed8',
-    messageColor: '#1e3a8a',
+    backgroundColor: '#eef2ff',
+    borderColor: '#c7d2fe',
+    titleColor: '#4338ca',
+    messageColor: '#4338ca',
   },
   success: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: '#ecfdf5',
     borderColor: '#86efac',
-    titleColor: '#166534',
-    messageColor: '#166534',
+    titleColor: '#15803d',
+    messageColor: '#15803d',
   },
   warning: {
-    backgroundColor: '#fef3c7',
+    backgroundColor: '#fffbeb',
     borderColor: '#fcd34d',
-    titleColor: '#92400e',
-    messageColor: '#92400e',
+    titleColor: '#b45309',
+    messageColor: '#b45309',
   },
   error: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#fef2f2',
     borderColor: '#fca5a5',
-    titleColor: '#b91c1c',
-    messageColor: '#991b1b',
+    titleColor: '#dc2626',
+    messageColor: '#b91c1c',
   },
 };
 

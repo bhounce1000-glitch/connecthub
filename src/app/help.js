@@ -6,7 +6,7 @@ import AppCard from '../components/ui/app-card';
 import { AppColors, AppRadius, AppSpace } from '../constants/design-tokens';
 import useAuthUser from '../hooks/use-auth-user';
 
-const SUPPORT_EMAIL = 'bhounce1000@gmail.com';
+const SUPPORT_EMAIL = 'support@connecthub.app';
 
 const FAQS = [
   {
@@ -121,7 +121,7 @@ export default function HelpSupport() {
         <Text style={{ fontSize: 13, color: '#93c5fd', letterSpacing: 1, fontWeight: '700' }}>CONNECTHUB</Text>
         <Text style={{ fontSize: 26, fontWeight: '800', color: '#f8fafc', marginTop: 4 }}>Help & Support</Text>
         <Text style={{ color: '#94a3b8', marginTop: 4, fontSize: 13, lineHeight: 18 }}>
-          We're here to help. Find answers below or contact us.
+          We&apos;re here to help. Find answers below or contact us.
         </Text>
       </View>
 

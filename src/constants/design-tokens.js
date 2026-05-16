@@ -5,36 +5,41 @@ export const AppColors = {
   white: '#ffffff',
   slate50: '#f8fafc',
   slate200: '#e2e8f0',
-  blue600: '#2563eb',
-  blue700: '#1d4ed8',
-  green600: '#16a34a',
+  blue600: '#6366f1',
+  blue700: '#4f46e5',
+  green600: '#22c55e',
   emerald700: '#15803d',
-  amber600: '#d97706',
-  red600: '#dc2626',
+  amber600: '#f59e0b',
+  red600: '#ef4444',
   orange50: '#fff7ed',
-  rose700: '#be123c',
-  violet600: '#7c3aed',
-  teal700: '#0f766e',
+  rose700: '#ef4444',
+  violet600: '#6366f1',
+  teal700: '#2dd4bf',
   neutral900: '#111827',
   disabled: '#9ca3af',
+  primary: '#6366f1',
+  primaryAlt: '#2dd4bf',
+  success: '#22c55e',
+  warning: '#f59e0b',
+  error: '#ef4444',
 };
 
 export const AppRadius = {
   sm: 8,
-  md: 12,
-  lg: 12,
+  md: 10,
+  lg: 16,
   xl: 18,
   xxl: 22,
   pill: 20,
 };
 
 export const AppSpace = {
-  xs: 6,
-  sm: 10,
-  md: 14,
-  lg: 18,
-  xl: 22,
-  xxl: 24,
+  xs: 8,
+  sm: 12,
+  md: 16,
+  lg: 24,
+  xl: 32,
+  xxl: 40,
 };
 
 export const AppType = {
@@ -46,7 +51,7 @@ export const AppType = {
 
 export const AppShadow = {
   card: {
-    boxShadow: '0px 4px 12px rgba(15, 23, 42, 0.08)',
-    elevation: 3,
+    boxShadow: '0px 2px 12px rgba(0, 0, 0, 0.08)',
+    elevation: 4,
   },
 };

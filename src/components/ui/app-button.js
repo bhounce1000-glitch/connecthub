@@ -32,9 +32,9 @@ export default function AppButton({
       style={[
         {
           backgroundColor,
-          minHeight: 46,
+          minHeight: 48,
           justifyContent: 'center',
-          paddingVertical: 12,
+          paddingVertical: 13,
           paddingHorizontal: 14,
           borderRadius: AppRadius.md,
         },

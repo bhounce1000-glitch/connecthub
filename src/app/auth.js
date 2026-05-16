@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
@@ -24,7 +24,7 @@ import {
     signInWithPopup,
     signOut,
 } from 'firebase/auth';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
 import { USER_ROLES } from '../constants/access';
 import { auth, db } from '../firebase';
 
@@ -133,6 +133,26 @@ export default function Auth() {
   const [otpCooldown, setOtpCooldown] = useState(0);
   const [otpExpiry, setOtpExpiry] = useState(600);
   const passwordStrength = getPasswordStrength(password);
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const logSignupFailure = useCallback(async (errorType, errorMessage, metadata = {}) => {
+    try {
+      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
+      await fetch(`${apiBase}/auth/signup-error-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          errorType,
+          errorMessage,
+          source: 'client_signup',
+          metadata,
+        }),
+      });
+    } catch {
+      // Never block signup UX on diagnostics logging.
+    }
+  }, [normalizedEmail]);
 
   const [request, response, promptAsync] = Google.useAuthRequest({
     androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
@@ -188,7 +208,8 @@ export default function Auth() {
               referralEarnings: 0,
               referredUsers: [],
               referralRewardEarned: 0,
-              createdAt: new Date().toISOString(),
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
               onboardingDone: false,
             });
             // Link referral if a code was entered
@@ -205,8 +226,6 @@ export default function Auth() {
         .finally(() => setIsSubmitting(false));
     }
   }, [response, role, router, referralInput, logSignupFailure]);
-
-  const normalizedEmail = email.trim().toLowerCase();
 
   useEffect(() => {
     if (otpCooldown <= 0) return undefined;
@@ -297,8 +316,8 @@ export default function Auth() {
         referralCode: existingData.referralCode || makeReferralCode(normalizedUserEmail),
         referredBy: existingData.referredBy || extraFields?.referredBy || null,
         referralRewardEarned: Number(existingData.referralRewardEarned || 0),
-        createdAt: existingData.createdAt || new Date(),
-        updatedAt: new Date(),
+        createdAt: existingData.createdAt || serverTimestamp(),
+        updatedAt: serverTimestamp(),
         referralCount: Number(existingData.referralCount || 0),
         referralEarnings: Number(existingData.referralEarnings || 0),
         referredUsers: Array.isArray(existingData.referredUsers) ? existingData.referredUsers : [],
@@ -317,8 +336,8 @@ export default function Auth() {
         walletBalance: Number(existingData.walletBalance || existingData.balance || 0),
         currency: 'GHS',
         transactions: Array.isArray(existingData.transactions) ? existingData.transactions : [],
-        createdAt: existingData.createdAt || new Date(),
-        updatedAt: new Date(),
+        createdAt: existingData.createdAt || serverTimestamp(),
+        updatedAt: serverTimestamp(),
       },
       { merge: true }
     );
@@ -374,25 +393,6 @@ export default function Auth() {
   };
 
   const getApiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
-
-  async function logSignupFailure(errorType, errorMessage, metadata = {}) {
-    try {
-      const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://connecthub-yrox.onrender.com';
-      await fetch(`${apiBase}/auth/signup-error-log`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: normalizedEmail,
-          errorType,
-          errorMessage,
-          source: 'client_signup',
-          metadata,
-        }),
-      });
-    } catch {
-      // Never block signup UX on diagnostics logging.
-    }
-  }
 
   const mapOtpSendError = (payload = {}, fallbackMessage = '') => {
     const code = String(payload?.code || '').trim().toLowerCase();
@@ -811,6 +811,22 @@ export default function Auth() {
           Use the same credentials across requests, payments, chat, and ratings.
         </Text>
 
+        <View
+          style={{
+            backgroundColor: '#f8fafc',
+            borderWidth: 1,
+            borderColor: '#e2e8f0',
+            borderRadius: AppRadius.md,
+            padding: 10,
+            marginBottom: AppSpace.md,
+          }}
+        >
+          <Text style={{ color: '#0f172a', fontWeight: '800', fontSize: 12, marginBottom: 4 }}>Your account is protected by:</Text>
+          <Text style={{ color: '#475569', fontSize: 12 }}>• OTP verification for new signups</Text>
+          <Text style={{ color: '#475569', fontSize: 12 }}>• Encrypted authentication via Firebase</Text>
+          <Text style={{ color: '#475569', fontSize: 12 }}>• Role-based access and moderation controls</Text>
+        </View>
+
         {!isLogin ? (
           <View style={{ marginBottom: AppSpace.sm }}>
             <Text style={{ color: '#1e293b', fontWeight: '800', fontSize: 13 }}>
@@ -985,12 +1001,12 @@ export default function Auth() {
 
         <AppButton
           label={isLogin ? 'Login' : (signupStep === 1 ? 'Send Code' : 'Verify & Create Account')}
-          variant="neutral"
+          variant="primary"
           onPress={isLogin ? handleLogin : handleSignup}
           disabled={!normalizedEmail || !password}
           loading={isSubmitting}
           loadingLabel={isLogin ? 'Signing in...' : (signupStep === 1 ? 'Sending code...' : 'Creating account...')}
-          style={{ marginBottom: AppSpace.sm, borderRadius: 12 }}
+          style={{ marginBottom: AppSpace.sm, borderRadius: 12, backgroundColor: '#4338ca' }}
         />
 
         {!isLogin ? (

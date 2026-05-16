@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Image, ScrollView, Text, View } from 'react-native';
 
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -15,17 +15,8 @@ export default function PublicPortfolio() {
 
   const [portfolioItems, setPortfolioItems] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [providerName, setProviderName] = useState('');
 
-  useEffect(() => {
-    if (!providerEmail) {
-      router.back();
-      return;
-    }
-    loadPortfolio();
-  }, [providerEmail]);
-
-  const loadPortfolio = async () => {
+  const loadPortfolio = useCallback(async () => {
     setIsLoading(true);
     try {
       // Load portfolio items
@@ -47,7 +38,15 @@ export default function PublicPortfolio() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [providerEmail]);
+
+  useEffect(() => {
+    if (!providerEmail) {
+      router.back();
+      return;
+    }
+    loadPortfolio();
+  }, [loadPortfolio, providerEmail, router]);
 
   return (
     <ScreenShell title="Portfolio" showBackButton>
@@ -62,7 +61,7 @@ export default function PublicPortfolio() {
               <Text style={{ fontSize: 48, marginBottom: 12 }}>📭</Text>
               <Text style={{ fontSize: 16, color: AppColors.ink700, fontWeight: '600', marginBottom: 4 }}>No portfolio items</Text>
               <Text style={{ fontSize: 14, color: AppColors.ink600, textAlign: 'center' }}>
-                This provider hasn't added any portfolio pieces yet
+                This provider hasn&apos;t added any portfolio pieces yet
               </Text>
             </View>
           ) : (

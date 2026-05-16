@@ -38,14 +38,14 @@ export default function AppInput({
         placeholderTextColor="#94a3b8"
         style={[
           {
-            borderWidth: 1,
-            borderColor: error ? '#f87171' : editable ? '#cbd5e1' : '#d1d5db',
+            borderWidth: 1.5,
+            borderColor: error ? '#ef4444' : editable ? '#e2e8f0' : '#d1d5db',
             backgroundColor: editable ? AppColors.white : '#f1f5f9',
             paddingHorizontal: 12,
-            paddingVertical: multiline ? 12 : 11,
-            borderRadius: AppRadius.md,
+            paddingVertical: multiline ? 12 : 13,
+            borderRadius: AppRadius.sm,
             color: AppColors.ink900,
-            minHeight: multiline ? 120 : undefined,
+            minHeight: multiline ? 120 : 48,
             textAlignVertical: multiline ? 'top' : 'center',
           },
           inputStyle,

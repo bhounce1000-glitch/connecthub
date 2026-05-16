@@ -7,7 +7,7 @@ import {
     reauthenticateWithPopup,
     signOut,
 } from 'firebase/auth';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Platform, Pressable, ScrollView, Share, Text, TouchableOpacity, View } from 'react-native';
 
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
@@ -91,13 +91,11 @@ export default function Profile() {
         let jobs = 0;
         let ratingTotal = 0;
         let ratingCount = 0;
-        let earned = 0;
 
         snap.forEach((row) => {
           const data = row.data();
           if (data.paid) {
             jobs += 1;
-            earned += Number(data.price || 0);
           }
           if (data.rating) {
             ratingTotal += Number(data.rating || 0);
@@ -108,14 +106,30 @@ export default function Profile() {
         const userDoc = await getDoc(doc(db, 'users', currentEmail));
         if (userDoc.exists()) setProfilePicture(userDoc.data()?.profilePicture || null);
 
-        setStats({ jobs, rating: ratingCount ? (ratingTotal / ratingCount).toFixed(1) : 'N/A', earned });
+        let totalEarned = 0;
+        if (user?.uid) {
+          const walletByUid = await getDoc(doc(db, 'wallets', String(user.uid)));
+          if (walletByUid.exists()) {
+            const walletData = walletByUid.data() || {};
+            totalEarned = Number(walletData.totalEarned || walletData.earned || 0);
+          }
+        }
+        if (!Number.isFinite(totalEarned) || totalEarned <= 0) {
+          const walletByEmail = await getDoc(doc(db, 'wallets', currentEmail));
+          if (walletByEmail.exists()) {
+            const walletData = walletByEmail.data() || {};
+            totalEarned = Number(walletData.totalEarned || walletData.earned || 0);
+          }
+        }
+
+        setStats({ jobs, rating: ratingCount ? (ratingTotal / ratingCount).toFixed(1) : 'N/A', earned: Number.isFinite(totalEarned) ? totalEarned : 0 });
       } catch {
         // non-blocking
       } finally {
         setIsLoading(false);
       }
     })();
-  }, [currentEmail]);
+  }, [currentEmail, user?.uid]);
 
   const handleUploadPicture = async () => {
     if (Platform.OS === 'web') {
@@ -183,7 +197,9 @@ export default function Profile() {
   const joinedDate = useMemo(() => {
     const raw = profile?.createdAt;
     const date = raw?.seconds ? new Date(raw.seconds * 1000) : new Date(raw || 0);
-    return Number.isNaN(date.getTime()) ? 'N/A' : date.toLocaleDateString();
+    if (Number.isNaN(date.getTime())) return 'Recently joined';
+    if (date.getTime() <= 60 * 60 * 1000) return 'Recently joined';
+    return date.toLocaleDateString();
   }, [profile?.createdAt]);
   const kycStatus = profile?.kycStatus;
   const kycMeta =
@@ -206,7 +222,7 @@ export default function Profile() {
     }
   }, [currentUsername, usernameDraft]);
 
-  const loadUsernameAudit = async () => {
+  const loadUsernameAudit = useCallback(async () => {
     if (!currentEmail) return;
     try {
       setIsLoadingUsernameAudit(true);
@@ -220,7 +236,7 @@ export default function Profile() {
     } finally {
       setIsLoadingUsernameAudit(false);
     }
-  };
+  }, [currentEmail]);
 
   const uploadVerificationId = async () => {
     try {
@@ -267,7 +283,7 @@ export default function Profile() {
   useEffect(() => {
     if (!currentEmail) return;
     loadUsernameAudit();
-  }, [currentEmail]);
+  }, [currentEmail, loadUsernameAudit]);
 
   const handleUsernameChange = async () => {
     const nextUsername = String(usernameDraft || '').trim();

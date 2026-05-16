@@ -1,7 +1,8 @@
 import * as FileSystem from 'expo-file-system';
+import { EncodingType } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -26,15 +27,7 @@ export default function Portfolio() {
 
   const userEmail = user?.email?.toLowerCase()?.trim() || '';
 
-  useEffect(() => {
-    if (!user) {
-      router.replace('/auth');
-      return;
-    }
-    loadPortfolioItems();
-  }, [user]);
-
-  const loadPortfolioItems = async () => {
+  const loadPortfolioItems = useCallback(async () => {
     setIsLoading(true);
     try {
       if (!userEmail) {
@@ -61,7 +54,15 @@ export default function Portfolio() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [userEmail]);
+
+  useEffect(() => {
+    if (!user) {
+      router.replace('/auth');
+      return;
+    }
+    loadPortfolioItems();
+  }, [loadPortfolioItems, router, user]);
 
   const pickImage = async () => {
     try {
@@ -75,7 +76,7 @@ export default function Portfolio() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setSelectedImage(result.assets[0]);
       }
-    } catch (err) {
+    } catch {
       Alert.alert('Error', 'Failed to pick image. Please try again.');
     }
   };
@@ -102,7 +103,7 @@ export default function Portfolio() {
       }
 
       const base64 = await FileSystem.readAsStringAsync(selectedImage.uri, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: EncodingType.Base64,
       });
 
       const mimeType = 'image/jpeg';
@@ -146,7 +147,7 @@ export default function Portfolio() {
               await apiClient.delete(`/portfolio/${itemId}`);
               await loadPortfolioItems();
               setNotice({ tone: 'success', title: 'Deleted', message: 'Portfolio item removed.' });
-            } catch (err) {
+            } catch {
               setNotice({ tone: 'error', title: 'Error', message: 'Failed to delete item.' });
             }
           },
