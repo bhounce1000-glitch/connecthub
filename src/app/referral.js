@@ -1,3 +1,4 @@
+
 import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
@@ -8,6 +9,7 @@ import {
     ScrollView,
     Share,
     Text,
+    ToastAndroid,
     TouchableOpacity,
     View,
 } from 'react-native';
@@ -114,7 +116,12 @@ export default function Referral() {
       } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(referralCode);
       }
-      Alert.alert('Copied!', 'Your referral code has been copied.');
+      // Show toast instead of alert
+      if (ToastAndroid) {
+        ToastAndroid.show('✓ Referral code copied!', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Copied!', 'Your referral code has been copied.');
+      }
     } catch {
       Alert.alert('Copy failed', 'Could not copy your referral code right now.');
     }
@@ -212,7 +219,17 @@ export default function Referral() {
         <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', marginBottom: 10 }}>Referred Users</Text>
 
         {referredUsers.length === 0 ? (
-          <Text style={{ color: '#64748b' }}>No referrals yet. Share your code to get started!</Text>
+          <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+            <Text style={{ fontSize: 40, marginBottom: 8 }}>👥</Text>
+            <Text style={{ color: '#334155', fontWeight: '700', fontSize: 16 }}>No referrals yet</Text>
+            <Text style={{ color: '#64748b', marginTop: 4, textAlign: 'center' }}>Share your code to earn wallet credits together!</Text>
+            <TouchableOpacity
+              onPress={handleShare}
+              style={{ marginTop: 12, backgroundColor: '#2563eb', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16 }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Share Now</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           referredUsers.map((userRow, index) => {
             const referredEmail = String(userRow?.email || '').trim().toLowerCase();
@@ -245,7 +262,7 @@ export default function Referral() {
                   }}
                 >
                   <Text style={{ fontSize: 11, fontWeight: '700', color: completed ? '#166534' : '#854d0e' }}>
-                    {completed ? 'Completed' : 'Pending'}
+                    {completed ? '✓ Earned' : 'Pending'}
                   </Text>
                 </View>
               </View>

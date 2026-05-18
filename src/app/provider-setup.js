@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, Switch, Text, TextInput, ToastAndroid, TouchableOpacity, View } from 'react-native';
 
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 
@@ -92,6 +92,11 @@ export default function ProviderSetup() {
       setNotice({ tone: 'error', title: 'Bio too long', message: 'Keep your bio within 300 characters.' });
       return;
     }
+    const price = parseFloat(startingPrice || 0);
+    if (price > 0 && price < 10) {
+      setNotice({ tone: 'error', title: 'Price too low', message: 'Minimum starting price is GHS 10.' });
+      return;
+    }
 
     setIsSaving(true);
     setNotice(null);
@@ -135,9 +140,15 @@ export default function ProviderSetup() {
         updatedAt: serverTimestamp(),
       }, { merge: true });
 
-      Alert.alert('Profile saved!');
+      // Show success toast
+      if (ToastAndroid) {
+        ToastAndroid.show('✅ Profile saved! You are now visible to clients.', ToastAndroid.LONG);
+      } else {
+        Alert.alert('Profile saved!', 'Your provider profile has been updated.');
+      }
       setNotice({ tone: 'success', title: 'Saved', message: 'Your provider profile has been updated.' });
-      router.back();
+      // Navigate to home to show new listing
+      router.replace('/home');
     } catch {
       setNotice({ tone: 'error', title: 'Save failed', message: 'Could not save profile right now.' });
     } finally {
