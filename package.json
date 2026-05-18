@@ -21,6 +21,8 @@
     "migrate:kyc": "node scripts/sync-kyc-status.js",
     "migrate:kyc:repair:dry": "node scripts/sync-kyc-status.js --dry-run --auto-repair-blank-status --delete-malformed",
     "migrate:kyc:repair": "node scripts/sync-kyc-status.js --auto-repair-blank-status --delete-malformed",
+    "migrate:job-coords:dry": "node scripts/backfill-job-coordinates.js --dry-run",
+    "migrate:job-coords": "node scripts/backfill-job-coordinates.js",
     "check:release": "npm run lint && npm run smoke:api",
     "build:android": "eas build --platform android --profile production",
     "build:ios": "eas build --platform ios --profile production",

@@ -118,12 +118,27 @@ export default function JobDetails() {
   const isDoneLike = statusKey === 'done' || statusKey === 'pending_confirmation';
   const canOpenChat = hasProvider && (isOwner || isAssignedProvider);
   const destinationCoords = useMemo(() => getLocationCoords(job?.location), [job?.location]);
+  const locationLabel = getLocationLabel(job?.location) || job?.locationText || 'Accra, Ghana';
   const canOpenDirections = Boolean(hasProvider && destinationCoords);
+  const showMissingCoordinatesNotice = Boolean(hasProvider && !destinationCoords);
 
   const handleOpenDirections = async () => {
     if (!destinationCoords) {
-      Alert.alert('Missing location', 'This job does not have exact map coordinates yet.');
-      return;
+      try {
+        const query = encodeURIComponent(locationLabel);
+        const googleSearchUrl = `https://www.google.com/maps/search/?api=1&query=${query}`;
+
+        if (Platform.OS === 'ios') {
+          await Linking.openURL(`http://maps.apple.com/?q=${query}`);
+          return;
+        }
+
+        await Linking.openURL(googleSearchUrl);
+        return;
+      } catch {
+        Alert.alert('Missing location', 'This job does not have exact map coordinates yet.');
+        return;
+      }
     }
 
     const { latitude, longitude } = destinationCoords;
@@ -206,9 +221,18 @@ export default function JobDetails() {
       <AppCard style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: '700', color: AppColors.ink900, fontSize: 16, marginBottom: 8 }}>Overview</Text>
         <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{job.description || 'Work details shared in request chat.'}</Text>
-        <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {getLocationLabel(job.location) || job.locationText || 'Accra, Ghana'}</Text>
+        <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {locationLabel}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Amount: GHS {job.price || 0}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Created: {toDisplayDateTime(job.createdAt)}</Text>
+
+        {showMissingCoordinatesNotice ? (
+          <View style={{ marginTop: 10, borderRadius: 10, borderWidth: 1, borderColor: '#fed7aa', backgroundColor: '#fff7ed', padding: 10 }}>
+            <Text style={{ color: '#9a3412', fontWeight: '700' }}>Exact map pin missing for this older job.</Text>
+            <Text style={{ color: '#b45309', fontSize: 12, marginTop: 4 }}>
+              Open Directions will use a location search until coordinates are backfilled.
+            </Text>
+          </View>
+        ) : null}
 
         {destinationCoords ? (
           <View style={{ marginTop: 10 }}>
@@ -291,9 +315,9 @@ export default function JobDetails() {
           />
         ) : null}
 
-        {canOpenDirections ? (
+        {(canOpenDirections || showMissingCoordinatesNotice) ? (
           <AppButton
-            label="Open Directions"
+            label={canOpenDirections ? 'Open Directions' : 'Open Location Search'}
             onPress={handleOpenDirections}
             style={{ marginBottom: 8, backgroundColor: '#0ea5e9' }}
           />
