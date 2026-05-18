@@ -198,7 +198,7 @@ export default function Providers() {
     <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: AppSpace.lg }}>
       <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: 12 }}>
         <Text style={{ color: '#93c5fd', fontSize: 12, fontWeight: '700', letterSpacing: 1 }}>CONNECTHUB</Text>
-        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 4 }}>Browse Providers</Text>
+        <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }}>Browse Providers</Text>
         <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
           <StatBadge label="Total" value={topStats.total} bg="rgba(219,234,254,0.16)" color="#bfdbfe" />
           <StatBadge label="Pro" value={topStats.premium} bg="rgba(236,253,245,0.16)" color="#86efac" />

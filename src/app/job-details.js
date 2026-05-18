@@ -166,7 +166,7 @@ export default function JobDetails() {
       </View>
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 17, marginBottom: 8 }}>Overview</Text>
+        <Text style={{ fontWeight: '700', color: AppColors.ink900, fontSize: 16, marginBottom: 8 }}>Overview</Text>
         <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{job.description || 'Work details shared in request chat.'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {getLocationLabel(job.location) || job.locationText || 'Accra, Ghana'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Amount: GHS {job.price || 0}</Text>
@@ -174,7 +174,7 @@ export default function JobDetails() {
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', marginBottom: 10, color: AppColors.ink900 }}>Progress Timeline</Text>
+        <Text style={{ fontWeight: '700', marginBottom: 10, color: AppColors.ink900, fontSize: 16 }}>Progress Timeline</Text>
         <TimelineRow title="Job posted" value={toDisplayDateTime(job.createdAt)} done isLast={false} />
         <TimelineRow title="Provider accepted" value={job.acceptedAt ? toDisplayDateTime(job.acceptedAt) : 'Waiting for provider'} done={Boolean(job.acceptedAt || job.acceptedBy)} isLast={false} />
         <TimelineRow title="Escrow funded" value={job.payment_received || job.escrowFunded ? 'Payment secured' : 'Pending customer payment'} done={Boolean(job.payment_received || job.escrowFunded)} isLast={false} />
@@ -185,18 +185,18 @@ export default function JobDetails() {
 
       {isDoneLike ? (
         <AppCard style={{ marginBottom: 12 }}>
-          <Text style={{ fontWeight: '800', color: AppColors.ink900 }}>Confirmation Countdown</Text>
+          <Text style={{ fontWeight: '700', color: AppColors.ink900, fontSize: 16 }}>Confirmation Countdown</Text>
           <Text style={{ marginTop: 6, color: '#1e3a8a', fontWeight: '700' }}>{doneCountdown || 'Calculating...'}</Text>
         </AppCard>
       ) : null}
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', marginBottom: 10, color: AppColors.ink900 }}>Payout</Text>
+        <Text style={{ fontWeight: '700', marginBottom: 10, color: AppColors.ink900, fontSize: 16 }}>Payout</Text>
         <TimelineRow title="Payout released" value={job.paidAt ? toDisplayDateTime(job.paidAt) : 'Awaiting payout'} done={Boolean(job.paid || job.paidAt)} isLast={true} />
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', marginBottom: 10, color: AppColors.ink900 }}>People</Text>
+        <Text style={{ fontWeight: '700', marginBottom: 10, color: AppColors.ink900, fontSize: 16 }}>People</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
           <Avatar src={owner?.profilePicture} email={job.user} size={28} />
           <Text style={{ marginLeft: 8, color: AppColors.ink700 }}>Customer: {owner?.name || job.user || 'Unavailable'}</Text>
@@ -208,7 +208,7 @@ export default function JobDetails() {
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', marginBottom: 8, color: AppColors.ink900 }}>Review Summary</Text>
+        <Text style={{ fontWeight: '700', marginBottom: 8, color: AppColors.ink900, fontSize: 16 }}>Review Summary</Text>
         <Text style={{ color: AppColors.ink700 }}>Provider rating: {job.rating ? `${job.rating} ★` : 'Not yet rated'}</Text>
         {job.review ? <Text style={{ color: AppColors.ink500, marginTop: 4 }}>&quot;{job.review}&quot;</Text> : null}
         <Text style={{ color: AppColors.ink700, marginTop: 8 }}>Customer rating: {job.customerRating ? `${job.customerRating} ★` : 'Not yet rated'}</Text>

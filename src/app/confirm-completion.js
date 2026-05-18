@@ -228,7 +228,7 @@ export default function ConfirmCompletion() {
       <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 12 }} />
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', fontSize: 17, color: AppColors.ink900, marginBottom: 4 }}>{item.title}</Text>
+        <Text style={{ fontWeight: '700', fontSize: 16, color: AppColors.ink900, marginBottom: 4 }}>{item.title}</Text>
         <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{item.description || 'Work details shared in request chat.'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Location: {item.location}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Amount: GHS {item.price}</Text>
@@ -242,7 +242,7 @@ export default function ConfirmCompletion() {
             <Text style={{ color: AppColors.ink500, fontSize: 12 }}>{item.acceptedBy || 'Unknown provider'}</Text>
           </View>
         </View>
-        <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 16, lineHeight: 23 }}>
+        <Text style={{ fontWeight: '700', color: AppColors.ink900, fontSize: 16, lineHeight: 23 }}>
           Has {providerName} completed your job to your satisfaction?
         </Text>
       </AppCard>

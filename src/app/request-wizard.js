@@ -137,7 +137,7 @@ export default function RequestWizard() {
     return (
       <View style={{ flex: 1, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center', padding: AppSpace.xl }}>
         <Text style={{ fontSize: 48 }}>🎉</Text>
-        <Text style={{ marginTop: 10, fontSize: 28, fontWeight: '900', color: '#0f172a' }}>Job Posted!</Text>
+        <Text style={{ marginTop: 10, fontSize: 24, fontWeight: '800', color: '#0f172a' }}>Job Posted!</Text>
         <Text style={{ marginTop: 8, color: '#334155', textAlign: 'center' }}>Reference: {successRef}</Text>
         <Text style={{ marginTop: 8, color: '#64748b', textAlign: 'center' }}>Redirecting to My Requests...</Text>
       </View>
@@ -147,7 +147,7 @@ export default function RequestWizard() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#f8fafc' }} contentContainerStyle={{ padding: AppSpace.lg }}>
       <Text style={{ color: '#64748b', fontWeight: '700' }}>STEP {step} OF 4</Text>
-      <Text style={{ color: '#0f172a', fontSize: 26, fontWeight: '900', marginTop: 4 }}>Post a Job</Text>
+      <Text style={{ color: '#0f172a', fontSize: 24, fontWeight: '800', marginTop: 4 }}>Post a Job</Text>
 
       {submitError ? (
         <View style={{ backgroundColor: '#fee2e2', borderRadius: 10, padding: 10, marginTop: 12 }}>

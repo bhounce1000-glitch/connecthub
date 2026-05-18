@@ -82,7 +82,7 @@ function TransactionHistoryScreen() {
               <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 10 }} accessibilityLabel="Go back">
                 <Text style={{ fontSize: 22, color: '#4338ca' }}>←</Text>
               </TouchableOpacity>
-              <Text style={{ fontSize: 25, color: '#1e293b', fontWeight: '800' }}>Transaction History</Text>
+              <Text style={{ fontSize: 24, color: '#1e293b', fontWeight: '800' }}>Transaction History</Text>
             </View>
             <Text style={{ color: '#64748b' }}>All your payments and earnings are shown here for transparency.</Text>
           </View>
@@ -96,7 +96,7 @@ function TransactionHistoryScreen() {
           ) : (
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
               <Text style={{ fontSize: 40, marginBottom: 8 }} role="img" aria-label="No transactions">📂</Text>
-              <Text style={{ color: '#64748b', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>No transactions found</Text>
+              <Text style={{ color: '#64748b', fontSize: 15, fontWeight: '400', marginBottom: 8 }}>No transactions found</Text>
               <Text style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', maxWidth: 320 }}>
                 When you send or receive payments, your full transaction history will appear here. If you think something is missing, try refreshing or contact support.
               </Text>

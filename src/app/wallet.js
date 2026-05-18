@@ -325,7 +325,7 @@ export default function Wallet() {
               <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 10 }}>
                 <Text style={{ fontSize: 22, color: '#1d4ed8' }}>←</Text>
               </TouchableOpacity>
-              <Text style={{ fontWeight: '900', fontSize: 24, color: AppColors.ink900 }}>Wallet</Text>
+              <Text style={{ fontWeight: '800', fontSize: 24, color: AppColors.ink900 }}>Wallet</Text>
             </View>
 
             <View style={{ backgroundColor: '#1e3a8a', borderRadius: AppRadius.lg, padding: 18, marginBottom: 12, ...AppShadow.card }}>

@@ -209,7 +209,7 @@ export default function MyRequests() {
     <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: AppSpace.lg }}>
       <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: AppSpace.md }}>
         <Text style={{ color: '#93c5fd', fontWeight: '700', fontSize: 12, letterSpacing: 1 }}>CONNECTHUB</Text>
-        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginTop: 4 }}>My Requests</Text>
+        <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }}>My Requests</Text>
       </View>
 
       <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderRadius: AppRadius.md, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' }}>

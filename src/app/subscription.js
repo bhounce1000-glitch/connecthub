@@ -339,7 +339,7 @@ export default function Subscription() {
       <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} style={{ marginBottom: 12 }} />
 
       <AppCard style={{ marginBottom: 12 }}>
-        <Text style={{ fontWeight: '800', fontSize: 16 }}>Current Plan: {profile?.subscriptionBadge || 'Basic'}</Text>
+        <Text style={{ fontWeight: '700', fontSize: 16 }}>Current Plan: {profile?.subscriptionBadge || 'Basic'}</Text>
         <Text style={{ color: '#64748b', marginTop: 4 }}>Status: {profile?.subscriptionStatus || 'free'}</Text>
         <Text style={{ color: '#64748b', marginTop: 2 }}>Expiry: {expiryLabel}</Text>
       </AppCard>
