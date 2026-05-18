@@ -24,7 +24,7 @@ const STATUS_THEME = {
   paid: { bg: '#dcfce7', fg: '#166534' },
 };
 
-function TimelineRow({ title, value, done }) {
+function TimelineRow({ title, value, done, isLast }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
       <View
@@ -44,6 +44,16 @@ function TimelineRow({ title, value, done }) {
             backgroundColor: done ? '#16a34a' : '#fff',
           }}
         />
+        {!isLast ? (
+          <View
+            style={{
+              width: 2,
+              height: 24,
+              marginTop: 2,
+              backgroundColor: done ? '#86efac' : '#e2e8f0',
+            }}
+          />
+        ) : null}
       </View>
       <View style={{ flex: 1, marginLeft: 8 }}>
         <Text style={{ color: AppColors.ink900, fontWeight: done ? '800' : '700' }}>{title}</Text>
@@ -66,6 +76,7 @@ export default function JobDetails() {
   const [job, setJob] = useState(null);
   const [owner, setOwner] = useState(null);
   const [provider, setProvider] = useState(null);
+  const [doneCountdown, setDoneCountdown] = useState('');
 
   useEffect(() => {
     const load = async () => {
@@ -88,6 +99,48 @@ export default function JobDetails() {
     load().catch(() => {});
   }, [resolvedRequestId]);
 
+  const statusKey = String(job?.status || '').trim().toLowerCase() || 'open';
+  const tone = STATUS_THEME[statusKey] || STATUS_THEME.open;
+  const isOwner = String(job?.user || '').trim().toLowerCase() === String(user?.email || '').trim().toLowerCase();
+  const isAssignedProvider = String(job?.acceptedBy || '').trim().toLowerCase() === String(user?.email || '').trim().toLowerCase();
+  const hasProvider = Boolean(job?.acceptedBy);
+  const canFundEscrow = isOwner && statusKey === 'accepted' && !job?.escrowFunded && !job?.payment_received;
+  const canConfirm = isOwner && statusKey === 'pending_confirmation';
+  const canRate = isOwner && (statusKey === 'paid' || job?.paid) && !job?.rating;
+  const isDoneLike = statusKey === 'done' || statusKey === 'pending_confirmation';
+  const canOpenChat = hasProvider && (isOwner || isAssignedProvider);
+
+  useEffect(() => {
+    if (!job || !isDoneLike) {
+      setDoneCountdown('');
+      return undefined;
+    }
+
+    const completedMs = job?.completedAt?.seconds
+      ? job.completedAt.seconds * 1000
+      : new Date(job?.completedAt || Date.now()).getTime();
+    if (!Number.isFinite(completedMs) || completedMs <= 0) {
+      setDoneCountdown('Awaiting confirmation window details');
+      return undefined;
+    }
+
+    const endMs = completedMs + (48 * 60 * 60 * 1000);
+    const tick = () => {
+      const remaining = endMs - Date.now();
+      if (remaining <= 0) {
+        setDoneCountdown('Auto-confirm window elapsed');
+        return;
+      }
+      const hours = Math.floor(remaining / (60 * 60 * 1000));
+      const mins = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
+      setDoneCountdown(`${hours}h ${mins}m remaining to confirm`);
+    };
+
+    tick();
+    const interval = setInterval(tick, 60000);
+    return () => clearInterval(interval);
+  }, [isDoneLike, job]);
+
   if (!job) {
     return (
       <View style={{ flex: 1, backgroundColor: '#f8fafc', justifyContent: 'center', alignItems: 'center', padding: AppSpace.lg }}>
@@ -99,14 +152,6 @@ export default function JobDetails() {
       </View>
     );
   }
-
-  const statusKey = String(job.status || '').trim().toLowerCase() || 'open';
-  const tone = STATUS_THEME[statusKey] || STATUS_THEME.open;
-  const isOwner = String(job.user || '').trim().toLowerCase() === String(user?.email || '').trim().toLowerCase();
-  const hasProvider = Boolean(job.acceptedBy);
-  const canFundEscrow = isOwner && statusKey === 'accepted' && !job.escrowFunded && !job.payment_received;
-  const canConfirm = isOwner && statusKey === 'pending_confirmation';
-  const canRate = isOwner && (statusKey === 'paid' || job.paid) && !job.rating;
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#f8fafc' }} contentContainerStyle={{ padding: AppSpace.lg }}>
@@ -130,13 +175,24 @@ export default function JobDetails() {
 
       <AppCard style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: '800', marginBottom: 10, color: AppColors.ink900 }}>Progress Timeline</Text>
-        <TimelineRow title="Job posted" value={toDisplayDateTime(job.createdAt)} done />
-        <TimelineRow title="Provider accepted" value={job.acceptedAt ? toDisplayDateTime(job.acceptedAt) : 'Waiting for provider'} done={Boolean(job.acceptedAt || job.acceptedBy)} />
-        <TimelineRow title="Escrow funded" value={job.payment_received || job.escrowFunded ? 'Payment secured' : 'Pending customer payment'} done={Boolean(job.payment_received || job.escrowFunded)} />
-        <TimelineRow title="Work in progress" value={job.work_started ? 'Provider started work' : 'Not started'} done={Boolean(job.work_started)} />
-        <TimelineRow title="Work completed" value={job.completedAt ? toDisplayDateTime(job.completedAt) : 'Awaiting completion'} done={Boolean(job.work_completed || job.completedAt)} />
-        <TimelineRow title="Customer confirmed" value={job.completionConfirmedAt ? toDisplayDateTime(job.completionConfirmedAt) : 'Awaiting confirmation'} done={Boolean(job.customer_confirmed || job.completionConfirmedAt)} />
-        <TimelineRow title="Payout released" value={job.paidAt ? toDisplayDateTime(job.paidAt) : 'Awaiting payout'} done={Boolean(job.paid || job.paidAt)} />
+        <TimelineRow title="Job posted" value={toDisplayDateTime(job.createdAt)} done isLast={false} />
+        <TimelineRow title="Provider accepted" value={job.acceptedAt ? toDisplayDateTime(job.acceptedAt) : 'Waiting for provider'} done={Boolean(job.acceptedAt || job.acceptedBy)} isLast={false} />
+        <TimelineRow title="Escrow funded" value={job.payment_received || job.escrowFunded ? 'Payment secured' : 'Pending customer payment'} done={Boolean(job.payment_received || job.escrowFunded)} isLast={false} />
+        <TimelineRow title="Work in progress" value={job.work_started ? 'Provider started work' : 'Not started'} done={Boolean(job.work_started)} isLast={false} />
+        <TimelineRow title="Work completed" value={job.completedAt ? toDisplayDateTime(job.completedAt) : 'Awaiting completion'} done={Boolean(job.work_completed || job.completedAt)} isLast={false} />
+        <TimelineRow title="Customer confirmed" value={job.completionConfirmedAt ? toDisplayDateTime(job.completionConfirmedAt) : 'Awaiting confirmation'} done={Boolean(job.customer_confirmed || job.completionConfirmedAt)} isLast={true} />
+      </AppCard>
+
+      {isDoneLike ? (
+        <AppCard style={{ marginBottom: 12 }}>
+          <Text style={{ fontWeight: '800', color: AppColors.ink900 }}>Confirmation Countdown</Text>
+          <Text style={{ marginTop: 6, color: '#1e3a8a', fontWeight: '700' }}>{doneCountdown || 'Calculating...'}</Text>
+        </AppCard>
+      ) : null}
+
+      <AppCard style={{ marginBottom: 12 }}>
+        <Text style={{ fontWeight: '800', marginBottom: 10, color: AppColors.ink900 }}>Payout</Text>
+        <TimelineRow title="Payout released" value={job.paidAt ? toDisplayDateTime(job.paidAt) : 'Awaiting payout'} done={Boolean(job.paid || job.paidAt)} isLast={true} />
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
@@ -160,7 +216,7 @@ export default function JobDetails() {
       </AppCard>
 
       <View style={{ marginBottom: 8 }}>
-        {hasProvider ? (
+        {canOpenChat ? (
           <AppButton
             label="Open Chat"
             onPress={() => router.push({ pathname: '/chat', params: { requestId: job.id } })}

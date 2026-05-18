@@ -159,6 +159,14 @@ function StatCard({ icon, label, value, tone }) {
   );
 }
 
+function csvEscape(value) {
+  const text = String(value ?? '');
+  if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
 function Badge({ label, bg, fg }) {
   return (
     <View
@@ -484,6 +492,30 @@ export default function Admin() {
     ],
     [disputes, fraudPending, jobs.length, kycPending, signupErrors, users.length, withdrawalsPending]
   );
+
+  const exportCsv = (filename, columns, rows) => {
+    try {
+      const header = columns.join(',');
+      const lines = rows.map((row) => columns.map((column) => csvEscape(row?.[column])).join(','));
+      const content = [header, ...lines].join('\n');
+
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } else {
+        Alert.alert('Export ready', 'CSV export is available on web dashboard.');
+      }
+    } catch (error) {
+      Alert.alert('Export failed', String(error?.message || 'Could not export CSV'));
+    }
+  };
 
   const dashboardMetrics = useMemo(() => {
     const providerCount = users.filter((entry) => normalizeRole(entry.role) === 'PROVIDER').length;
@@ -1044,11 +1076,23 @@ export default function Admin() {
               <Text style={{ fontSize: 24, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 20 }}>Dashboard</Text>
 
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -8 }}>
-                {statsCards.map((card) => (
-                  <View key={card.label} style={{ width: Platform.OS === 'web' ? '25%' : '50%', minWidth: 180 }}>
-                    <StatCard {...card} />
-                  </View>
-                ))}
+                {statsCards.map((card) => {
+                  let targetView = 'dashboard';
+                  if (card.label.includes('Jobs')) targetView = 'jobs';
+                  if (card.label.includes('KYC')) targetView = 'kyc';
+                  if (card.label.includes('Disputes')) targetView = 'disputes';
+                  if (card.label.includes('Withdrawals')) targetView = 'withdrawals';
+                  if (card.label.includes('Fraud')) targetView = 'fraud';
+                  if (card.label.includes('Users')) targetView = 'users';
+
+                  return (
+                    <View key={card.label} style={{ width: Platform.OS === 'web' ? '25%' : '50%', minWidth: 180 }}>
+                      <Pressable onPress={() => setActiveView(targetView)}>
+                        <StatCard {...card} />
+                      </Pressable>
+                    </View>
+                  );
+                })}
               </View>
 
               <View
@@ -1219,6 +1263,13 @@ export default function Admin() {
           {activeView === 'users' && (
             <View>
               <Text style={{ fontSize: 24, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 20 }}>Users Management</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <ActionButton
+                  label="Export CSV"
+                  backgroundColor={BADGE_BLUE}
+                  onPress={() => exportCsv('connecthub-users.csv', ['email', 'role', 'kycStatus', 'jobsPosted', 'jobsAccepted', 'walletBalance'], filteredUsers)}
+                />
+              </View>
 
               <View
                 style={{
@@ -1393,6 +1444,13 @@ export default function Admin() {
           {activeView === 'withdrawals' && (
             <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Withdrawals</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <ActionButton
+                  label="Export CSV"
+                  backgroundColor={BADGE_BLUE}
+                  onPress={() => exportCsv('connecthub-withdrawals.csv', ['id', 'email', 'amount', 'status', 'reference'], filteredWithdrawals)}
+                />
+              </View>
               <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
                 Pending: {withdrawalsRows.filter((row) => String(row.status || '').toLowerCase() === 'pending').length} | Completed: {withdrawalsRows.filter((row) => String(row.status || '').toLowerCase() === 'completed').length} | Rejected: {withdrawalsRows.filter((row) => String(row.status || '').toLowerCase() === 'rejected').length}
               </Text>
@@ -1415,6 +1473,13 @@ export default function Admin() {
           {activeView === 'kyc' && (
             <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>KYC Verification</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <ActionButton
+                  label="Export CSV"
+                  backgroundColor={BADGE_BLUE}
+                  onPress={() => exportCsv('connecthub-kyc.csv', ['id', 'email', 'status', 'fullName'], filteredKycRows)}
+                />
+              </View>
               <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
                 Pending: {kycRows.filter((row) => String(row.status || '').toLowerCase() === 'pending').length} | Approved: {kycRows.filter((row) => ['approved', 'verified'].includes(String(row.status || '').toLowerCase())).length} | Rejected: {kycRows.filter((row) => String(row.status || '').toLowerCase() === 'rejected').length}
               </Text>
@@ -1474,6 +1539,13 @@ export default function Admin() {
           {activeView === 'disputes' && (
             <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Disputes</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <ActionButton
+                  label="Export CSV"
+                  backgroundColor={BADGE_BLUE}
+                  onPress={() => exportCsv('connecthub-disputes.csv', ['id', 'requestId', 'status', 'customerEmail', 'providerEmail', 'reason'], filteredDisputes)}
+                />
+              </View>
               <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
                 Open: {disputeRows.filter((row) => !['resolved', 'closed'].includes(String(row.status || '').toLowerCase())).length} | Resolved: {disputeRows.filter((row) => ['resolved', 'closed'].includes(String(row.status || '').toLowerCase())).length}
               </Text>
@@ -1496,6 +1568,13 @@ export default function Admin() {
           {activeView === 'fraud' && (
             <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Fraud Alerts</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <ActionButton
+                  label="Export CSV"
+                  backgroundColor={BADGE_BLUE}
+                  onPress={() => exportCsv('connecthub-fraud.csv', ['id', 'userEmail', 'type', 'reason', 'resolved'], filteredFraudRows)}
+                />
+              </View>
               <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
                 Open: {fraudRows.filter((row) => row.resolved !== true).length} | Resolved: {fraudRows.filter((row) => row.resolved === true).length}
               </Text>
@@ -1520,6 +1599,13 @@ export default function Admin() {
           {activeView === 'jobs' && (
             <View style={{ backgroundColor: ADMIN_CARD_BG, borderRadius: 12, padding: 16 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: ADMIN_TEXT, marginBottom: 10 }}>Jobs</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <ActionButton
+                  label="Export CSV"
+                  backgroundColor={BADGE_BLUE}
+                  onPress={() => exportCsv('connecthub-jobs.csv', ['id', 'title', 'status', 'user', 'acceptedBy', 'category', 'price'], filteredRequests)}
+                />
+              </View>
               <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 12 }}>
                 Total: {requestRows.length} | Open: {requestRows.filter((row) => String(row.status || 'open').toLowerCase() === 'open').length} | In Progress: {requestRows.filter((row) => String(row.status || '').toLowerCase() === 'in_progress').length} | Completed: {requestRows.filter((row) => String(row.status || '').toLowerCase() === 'completed').length}
               </Text>

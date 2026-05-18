@@ -302,6 +302,21 @@ export default function Providers() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                       <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 16 }}>{item.name || item.email}</Text>
                       <SubscriptionBadge plan={item.subscriptionPlan} />
+                      {item.kycVerified === true || String(item.kycStatus || '').toLowerCase() === 'verified' ? (
+                        <View style={{ backgroundColor: '#dcfce7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ color: '#166534', fontSize: 10, fontWeight: '800' }}>✓ VERIFIED</Text>
+                        </View>
+                      ) : null}
+                      {String(item.subscriptionPlan || '').toLowerCase() === 'pro' ? (
+                        <View style={{ backgroundColor: '#dbeafe', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ color: '#1d4ed8', fontSize: 10, fontWeight: '800' }}>PRO</Text>
+                        </View>
+                      ) : null}
+                      {String(item.subscriptionPlan || '').toLowerCase() === 'premium' ? (
+                        <View style={{ backgroundColor: '#fef3c7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ color: '#92400e', fontSize: 10, fontWeight: '800' }}>PREMIUM</Text>
+                        </View>
+                      ) : null}
                     </View>
                     <View style={{ marginTop: 4, alignSelf: 'flex-start', backgroundColor: '#dbeafe', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
                       <Text style={{ color: '#1d4ed8', fontSize: 11, fontWeight: '700' }}>{item.category || 'General'}</Text>
@@ -311,7 +326,7 @@ export default function Providers() {
 
                 <View style={{ marginTop: 10 }}>
                   <Text style={{ color: '#0f172a', fontWeight: '700' }}>{buildStars(item.avgRating)} ({Number(item.avgRating || 0).toFixed(1)}) — {reviews} reviews</Text>
-                  <Text style={{ color: '#64748b', marginTop: 4 }}>📍 {item.location || 'Location not provided'}</Text>
+                  <Text style={{ color: '#64748b', marginTop: 4 }}>📍 {item.location || 'Accra, Ghana'}</Text>
                   <Text style={{ color: '#16a34a', marginTop: 4, fontWeight: '800' }}>From GHS {Number(item.startingPrice || 0).toFixed(2)}</Text>
                   {photoCount > 0 ? <Text style={{ color: '#94a3b8', marginTop: 4 }}>📷 {photoCount} photos</Text> : null}
                 </View>

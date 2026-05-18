@@ -119,6 +119,7 @@ export default function Auth() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [role, setRole] = useState(USER_ROLES.CUSTOMER);
@@ -911,11 +912,20 @@ export default function Auth() {
               placeholder="Password"
               value={password}
               onChangeText={setPassword}
-              secureTextEntry
+              secureTextEntry={!showPassword}
               editable={!isSubmitting}
               error={fieldErrors.password}
               inputStyle={{ backgroundColor: AppColors.slate50, marginBottom: 2 }}
             />
+            <TouchableOpacity
+              onPress={() => setShowPassword((prev) => !prev)}
+              disabled={isSubmitting}
+              style={{ alignSelf: 'flex-end', marginTop: 4, marginBottom: 8 }}
+            >
+              <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '700' }}>
+                {showPassword ? 'Hide password' : 'Show password'}
+              </Text>
+            </TouchableOpacity>
           </>
         ) : null}
 
@@ -956,6 +966,29 @@ export default function Auth() {
               editable={!isSubmitting}
               inputStyle={{ backgroundColor: AppColors.slate50, textAlign: 'center', letterSpacing: 8, fontSize: 26, fontWeight: '700' }}
             />
+            <View style={{ flexDirection: 'row', justifyContent: 'center', marginBottom: 8, marginTop: 2 }}>
+              {[0, 1, 2, 3, 4, 5].map((idx) => {
+                const digit = String(otpCode || '').charAt(idx) || '';
+                return (
+                  <View
+                    key={`otp-box-${idx}`}
+                    style={{
+                      width: 34,
+                      height: 42,
+                      borderRadius: 8,
+                      borderWidth: 1.5,
+                      borderColor: digit ? '#2563eb' : '#cbd5e1',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginHorizontal: 3,
+                      backgroundColor: '#fff',
+                    }}
+                  >
+                    <Text style={{ color: '#0f172a', fontSize: 20, fontWeight: '800' }}>{digit}</Text>
+                  </View>
+                );
+              })}
+            </View>
             <TouchableOpacity
               style={{ alignItems: 'center', paddingVertical: 8 }}
               disabled={isSubmitting || otpCooldown > 0}

@@ -37,6 +37,20 @@ function icon(type) {
   return '🔔';
 }
 
+function bucketForDate(value) {
+  const ms = toMs(value);
+  if (!ms) return 'Older';
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yStart = todayStart - 24 * 60 * 60 * 1000;
+  const weekStart = todayStart - 6 * 24 * 60 * 60 * 1000;
+
+  if (ms >= todayStart) return 'Today';
+  if (ms >= yStart) return 'Yesterday';
+  if (ms >= weekStart) return 'Earlier This Week';
+  return 'Older';
+}
+
 function routeForNotification(n) {
   const type = String(n.type || '').toLowerCase();
   const jobId = String(n.jobId || n.requestId || '').trim();
@@ -93,6 +107,26 @@ export default function Notifications() {
 
   const unreadCount = useMemo(() => items.filter((item) => !item.read).length, [items]);
   const visible = useMemo(() => (tab === 'unread' ? items.filter((i) => !i.read) : items), [items, tab]);
+  const groupedRows = useMemo(() => {
+    const groups = {
+      Today: [],
+      Yesterday: [],
+      'Earlier This Week': [],
+      Older: [],
+    };
+    visible.forEach((row) => {
+      groups[bucketForDate(row.createdAt)].push(row);
+    });
+
+    const ordered = [];
+    Object.keys(groups).forEach((key) => {
+      if (groups[key].length) {
+        ordered.push({ type: 'header', id: `header:${key}`, label: key });
+        groups[key].forEach((item) => ordered.push({ type: 'item', id: item.id, item }));
+      }
+    });
+    return ordered;
+  }, [visible]);
 
   const openNotification = async (item) => {
     if (!item.read) {
@@ -126,39 +160,50 @@ export default function Notifications() {
       </View>
 
       <FlatList
-        data={visible}
-        keyExtractor={(item) => item.id}
+        data={groupedRows}
+        keyExtractor={(row) => row.id}
         ListEmptyComponent={
           <View style={{ alignItems: 'center', marginTop: 60 }}>
             <Text style={{ fontSize: 44 }}>🎉</Text>
             <Text style={{ color: '#0f172a', fontWeight: '900', marginTop: 8 }}>You&apos;re all caught up!</Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => openNotification(item)}
-            style={{
-              backgroundColor: '#fff',
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              borderRadius: 12,
-              padding: 12,
-              marginTop: 10,
-              borderLeftWidth: item.read ? 1 : 4,
-              borderLeftColor: item.read ? '#e2e8f0' : '#2563eb',
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={{ fontSize: 24 }}>{icon(item.type)}</Text>
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={{ color: '#0f172a', fontWeight: item.read ? '700' : '900' }}>{item.title || 'Notification'}</Text>
-                <Text style={{ color: '#475569', marginTop: 2 }} numberOfLines={2}>{item.body || item.text || ''}</Text>
+        renderItem={({ item: row }) => {
+          if (row.type === 'header') {
+            return (
+              <Text style={{ marginTop: 14, marginBottom: 2, color: '#334155', fontSize: 12, fontWeight: '800' }}>
+                {row.label}
+              </Text>
+            );
+          }
+
+          const item = row.item;
+          return (
+            <TouchableOpacity
+              onPress={() => openNotification(item)}
+              style={{
+                backgroundColor: item.read ? '#f8fafc' : '#ffffff',
+                borderWidth: 1,
+                borderColor: item.read ? '#e2e8f0' : '#bfdbfe',
+                borderRadius: 12,
+                padding: 12,
+                marginTop: 10,
+                borderLeftWidth: item.read ? 1 : 4,
+                borderLeftColor: item.read ? '#e2e8f0' : '#2563eb',
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 24 }}>{icon(item.type)}</Text>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: '#0f172a', fontWeight: item.read ? '700' : '900' }}>{item.title || 'Notification'}</Text>
+                  <Text style={{ color: '#475569', marginTop: 2 }} numberOfLines={2}>{item.body || item.text || ''}</Text>
+                </View>
+                {!item.read ? <View style={{ width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#2563eb' }} /> : null}
               </View>
-              {!item.read ? <View style={{ width: 9, height: 9, borderRadius: 4.5, backgroundColor: '#2563eb' }} /> : null}
-            </View>
-            <Text style={{ color: '#94a3b8', marginTop: 6, marginLeft: 34, fontSize: 12 }}>{ago(item.createdAt)}</Text>
-          </TouchableOpacity>
-        )}
+              <Text style={{ color: '#94a3b8', marginTop: 6, marginLeft: 34, fontSize: 12 }}>{ago(item.createdAt)}</Text>
+            </TouchableOpacity>
+          );
+        }}
       />
     </View>
   );
