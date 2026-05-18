@@ -237,7 +237,7 @@ export default function MyRequests() {
           const status = item.status || REQUEST_STATUS.OPEN;
           const style = STATUS_STYLE[status] || STATUS_STYLE[REQUEST_STATUS.OPEN];
           const categoryIcon = CATEGORY_ICONS[item.category] || '✨';
-          const locationLabel = getLocationLabel(item.location) || item.locationText || 'N/A';
+          const locationLabel = getLocationLabel(item.location) || item.locationText || 'Accra, Ghana';
           const providerEmail = item.acceptedBy || '';
           const avatarBg = providerEmail ? AVATAR_COLORS[(providerEmail.charCodeAt(0) || 0) % AVATAR_COLORS.length] : '#dbeafe';
 

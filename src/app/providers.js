@@ -185,7 +185,7 @@ export default function Providers() {
     return {
       total: providers.length,
       premium: premiumCount,
-      avgRating: countWithRating > 0 ? (avg / countWithRating).toFixed(1) : 'N/A',
+      avgRating: countWithRating > 0 ? (avg / countWithRating).toFixed(1) : 'New ⭐',
     };
   }, [providers]);
 

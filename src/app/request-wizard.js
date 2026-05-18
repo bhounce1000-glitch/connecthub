@@ -122,7 +122,7 @@ export default function RequestWizard() {
 
       const { response, data } = await apiPost(`${API_BASE_URL}/api/jobs`, payload, { requireAuth: true });
       assertApiSuccess(response, data, 'Could not post job');
-      setSuccessRef(data?.data?.referenceNumber || data?.data?.jobId || 'N/A');
+      setSuccessRef(data?.data?.referenceNumber || data?.data?.jobId || 'PENDING');
       setTimeout(() => {
         router.replace('/my-requests');
       }, 2500);

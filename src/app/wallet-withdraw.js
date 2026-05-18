@@ -156,7 +156,7 @@ export default function WalletWithdraw() {
       const withdrawnAmount = Number(result?.data?.amount || numericAmount || 0);
       const targetPhone = result?.data?.phoneNumber || phoneNumber.trim();
       const targetProvider = result?.data?.provider || network;
-      const ref = result?.data?.reference || 'N/A';
+      const ref = result?.data?.reference || 'PENDING';
       const isQueued = result?.data?.status === 'queued';
 
       const alertTitle = isQueued ? '✅ Withdrawal Received!' : '✅ Withdrawal Initiated!';

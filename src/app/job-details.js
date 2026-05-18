@@ -167,8 +167,8 @@ export default function JobDetails() {
 
       <AppCard style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: '800', color: AppColors.ink900, fontSize: 17, marginBottom: 8 }}>Overview</Text>
-        <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{job.description || 'No description provided.'}</Text>
-        <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {getLocationLabel(job.location) || job.locationText || 'N/A'}</Text>
+        <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{job.description || 'Work details shared in request chat.'}</Text>
+        <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {getLocationLabel(job.location) || job.locationText || 'Accra, Ghana'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Amount: GHS {job.price || 0}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Created: {toDisplayDateTime(job.createdAt)}</Text>
       </AppCard>

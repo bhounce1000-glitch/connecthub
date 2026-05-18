@@ -324,7 +324,7 @@ export default function Subscription() {
 
   const currentPlan = String(profile?.subscriptionPlan || 'free').toLowerCase();
   const expiry = profile?.subscriptionExpiry ? new Date(profile.subscriptionExpiry) : null;
-  const expiryLabel = expiry && !Number.isNaN(expiry.getTime()) ? expiry.toLocaleDateString() : 'N/A';
+  const expiryLabel = expiry && !Number.isNaN(expiry.getTime()) ? expiry.toLocaleDateString() : 'Recently activated';
   const canManageSubscription = ['pro', 'premium'].includes(currentPlan);
 
   return (

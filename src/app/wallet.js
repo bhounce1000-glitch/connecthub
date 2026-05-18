@@ -70,7 +70,7 @@ function humanizeTransactionStatus(row) {
 
 function humanizePaymentMethod(value) {
   const method = String(value || '').trim();
-  if (!method) return 'N/A';
+  if (!method) return 'Mobile Money';
   if (method.toLowerCase() === 'manual transfer queue') {
     return 'MoMo Transfer (Manual)';
   }

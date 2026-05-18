@@ -229,7 +229,7 @@ export default function ConfirmCompletion() {
 
       <AppCard style={{ marginBottom: 12 }}>
         <Text style={{ fontWeight: '800', fontSize: 17, color: AppColors.ink900, marginBottom: 4 }}>{item.title}</Text>
-        <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{item.description || 'No description provided.'}</Text>
+        <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>{item.description || 'Work details shared in request chat.'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Location: {item.location}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12 }}>Amount: GHS {item.price}</Text>
       </AppCard>

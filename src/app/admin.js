@@ -67,12 +67,12 @@ function normalizeKycStatus(user) {
 }
 
 function formatDate(value) {
-  if (!value) return 'N/A';
+  if (!value) return 'Recently updated';
   if (typeof value?.toDate === 'function') {
     try {
       return value.toDate().toLocaleString();
     } catch {
-      return 'N/A';
+      return 'Recently updated';
     }
   }
   if (typeof value?.seconds === 'number') {
@@ -1330,7 +1330,7 @@ export default function Admin() {
                       <Avatar name={entry.avatarInitial} size={32} />
                     </View>
                     <Text style={{ flex: 2, fontSize: 12, color: ADMIN_TEXT, fontWeight: '600' }}>
-                      {entry.email || 'N/A'}
+                      {entry.email || 'Not available'}
                     </Text>
                     <View style={{ flex: 1 }}>
                       <Badge
@@ -1553,9 +1553,9 @@ export default function Admin() {
                 <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
                   <Text style={{ color: ADMIN_TEXT, fontWeight: '800' }}>Request: {row.requestId || row.id}</Text>
                   <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
-                    {row.customerEmail || row.customer || 'N/A'} vs {row.providerEmail || row.provider || 'N/A'}
+                    {row.customerEmail || row.customer || 'Unknown customer'} vs {row.providerEmail || row.provider || 'Unknown provider'}
                   </Text>
-                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Reason: {row.reason || 'N/A'}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Reason: {row.reason || 'No reason provided'}</Text>
                   <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Status: {String(row.status || 'open').toUpperCase()}</Text>
                   <View style={{ flexDirection: 'row', marginTop: 10 }}>
                     <ActionButton label="Resolve" backgroundColor={BADGE_GREEN} onPress={() => handleResolveDispute(row)} />
@@ -1584,7 +1584,7 @@ export default function Admin() {
                   <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>
                     Type: {row.type || 'behavior'} • Severity: {String(row.severity || 'medium').toUpperCase()}
                   </Text>
-                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Reason: {row.reason || 'N/A'}</Text>
+                  <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Reason: {row.reason || 'No reason provided'}</Text>
                   <Text style={{ color: ADMIN_TEXT_LIGHT, marginTop: 2 }}>Status: {row.resolved ? 'RESOLVED' : 'OPEN'}</Text>
                   {!row.resolved && (
                     <View style={{ flexDirection: 'row', marginTop: 10 }}>
@@ -1737,7 +1737,7 @@ export default function Admin() {
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -8 }}>
                     <View style={{ width: '50%', paddingHorizontal: 8, marginBottom: 16 }}>
                       <Text style={{ color: ADMIN_TEXT_LIGHT, fontSize: 12, marginBottom: 4 }}>Phone Number</Text>
-                      <Text style={{ color: ADMIN_TEXT, fontWeight: '700' }}>{selectedUser.phoneNumber || 'N/A'}</Text>
+                      <Text style={{ color: ADMIN_TEXT, fontWeight: '700' }}>{selectedUser.phoneNumber || 'Not available'}</Text>
                     </View>
                     <View style={{ width: '50%', paddingHorizontal: 8, marginBottom: 16 }}>
                       <Text style={{ color: ADMIN_TEXT_LIGHT, fontSize: 12, marginBottom: 4 }}>Role</Text>

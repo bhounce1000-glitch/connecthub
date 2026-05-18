@@ -66,7 +66,7 @@ export default function Profile() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadNotice, setUploadNotice] = useState(null);
   const [profilePicture, setProfilePicture] = useState(null);
-  const [stats, setStats] = useState({ jobs: 0, rating: 'N/A', earned: 0 });
+  const [stats, setStats] = useState({ jobs: 0, rating: 'New ⭐', earned: 0 });
   const [usernameDraft, setUsernameDraft] = useState('');
   const [usernameVerification, setUsernameVerification] = useState({ fullName: '', dob: '', idNumber: '', idCardUrl: '' });
   const [isChangingUsername, setIsChangingUsername] = useState(false);
@@ -122,7 +122,7 @@ export default function Profile() {
           }
         }
 
-        setStats({ jobs, rating: ratingCount ? (ratingTotal / ratingCount).toFixed(1) : 'N/A', earned: Number.isFinite(totalEarned) ? totalEarned : 0 });
+        setStats({ jobs, rating: ratingCount ? (ratingTotal / ratingCount).toFixed(1) : 'New ⭐', earned: Number.isFinite(totalEarned) ? totalEarned : 0 });
       } catch {
         // non-blocking
       } finally {

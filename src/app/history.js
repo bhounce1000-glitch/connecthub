@@ -27,7 +27,7 @@ function isWithdrawal(item) {
 function paymentMethodLabel(value) {
   const method = String(value || '').trim();
   if (method.toLowerCase() === 'manual transfer queue') return 'MoMo Transfer (Manual)';
-  return method || 'N/A';
+  return method || 'Mobile Money';
 }
 
 function TransactionHistoryScreen() {
