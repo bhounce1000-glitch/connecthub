@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Platform, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -12,7 +12,7 @@ import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-t
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
-import { getLocationLabel } from '../utils/location';
+import { getLocationCoords, getLocationLabel } from '../utils/location';
 
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 
@@ -26,6 +26,14 @@ const STATUS_STYLE = {
   [REQUEST_STATUS.CANCELLED]: { border: '#64748b', badgeBg: '#f1f5f9', badgeText: '#475569', label: 'Cancelled' },
 };
 const AVATAR_COLORS = ['#dbeafe', '#fef3c7', '#dcfce7', '#ede9fe', '#fee2e2', '#e0f2fe'];
+
+let NativeMapView = null;
+let NativeMarker = null;
+if (Platform.OS !== 'web') {
+  const maps = require('react-native-maps');
+  NativeMapView = maps.default;
+  NativeMarker = maps.Marker;
+}
 
 function postedAgo(value) {
   const ms = value?.seconds ? value.seconds * 1000 : new Date(value || 0).getTime();
@@ -240,6 +248,7 @@ export default function MyRequests() {
           const locationLabel = getLocationLabel(item.location) || item.locationText || 'Accra, Ghana';
           const providerEmail = item.acceptedBy || '';
           const avatarBg = providerEmail ? AVATAR_COLORS[(providerEmail.charCodeAt(0) || 0) % AVATAR_COLORS.length] : '#dbeafe';
+          const requestCoords = getLocationCoords(item.location);
 
           return (
             <AppCard style={{ marginBottom: 12, borderLeftWidth: 4, borderLeftColor: style.border, ...AppShadow.card }}>
@@ -257,6 +266,32 @@ export default function MyRequests() {
               </View>
 
               <Text style={{ marginTop: 8, color: '#475569', fontSize: 13 }}>📍 {locationLabel}</Text>
+              {requestCoords ? (
+                <View style={{ marginTop: 8 }}>
+                  {Platform.OS === 'web' || !NativeMapView ? (
+                    <View style={{ borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#f8fafc', padding: 8 }}>
+                      <Text style={{ color: '#64748b', fontSize: 12 }}>
+                        Map preview available in Android/iPhone builds: {requestCoords.latitude.toFixed(5)}, {requestCoords.longitude.toFixed(5)}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ height: 110, borderRadius: 8, overflow: 'hidden' }}>
+                      <NativeMapView
+                        style={{ flex: 1 }}
+                        pointerEvents="none"
+                        initialRegion={{
+                          latitude: requestCoords.latitude,
+                          longitude: requestCoords.longitude,
+                          latitudeDelta: 0.01,
+                          longitudeDelta: 0.01,
+                        }}
+                      >
+                        {NativeMarker ? <NativeMarker coordinate={requestCoords} title="Job location" /> : null}
+                      </NativeMapView>
+                    </View>
+                  )}
+                </View>
+              ) : null}
               <Text style={{ marginTop: 4, color: '#166534', fontWeight: '900', fontSize: 16 }}>GHS {Number(item.price || 0).toFixed(2)}</Text>
               <Text style={{ marginTop: 4, color: '#94a3b8', fontSize: 12 }}>{postedAgo(item.createdAt)}</Text>
 

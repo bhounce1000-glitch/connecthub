@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { doc, getDoc } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Alert, Linking, Platform, ScrollView, Text, View } from 'react-native';
 
 import useAuthUser from '../hooks/use-auth-user';
 
@@ -13,7 +13,15 @@ import { STATUS_LABELS } from '../constants/access';
 import { AppColors, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import { toDisplayDateTime } from '../utils/date-time';
-import { getLocationLabel } from '../utils/location';
+import { getLocationCoords, getLocationLabel } from '../utils/location';
+
+let NativeMapView = null;
+let NativeMarker = null;
+if (Platform.OS !== 'web') {
+  const maps = require('react-native-maps');
+  NativeMapView = maps.default;
+  NativeMarker = maps.Marker;
+}
 
 const STATUS_THEME = {
   open: { bg: '#dbeafe', fg: '#1d4ed8' },
@@ -109,6 +117,36 @@ export default function JobDetails() {
   const canRate = isOwner && (statusKey === 'paid' || job?.paid) && !job?.rating;
   const isDoneLike = statusKey === 'done' || statusKey === 'pending_confirmation';
   const canOpenChat = hasProvider && (isOwner || isAssignedProvider);
+  const destinationCoords = useMemo(() => getLocationCoords(job?.location), [job?.location]);
+  const canOpenDirections = Boolean(hasProvider && destinationCoords);
+
+  const handleOpenDirections = async () => {
+    if (!destinationCoords) {
+      Alert.alert('Missing location', 'This job does not have exact map coordinates yet.');
+      return;
+    }
+
+    const { latitude, longitude } = destinationCoords;
+    const destination = `${latitude},${longitude}`;
+    const googleFallback = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
+
+    try {
+      if (Platform.OS === 'ios') {
+        await Linking.openURL(`http://maps.apple.com/?daddr=${encodeURIComponent(destination)}&dirflg=d`);
+        return;
+      }
+
+      const androidNavigationUrl = `google.navigation:q=${encodeURIComponent(destination)}&mode=d`;
+      const canOpenNavigation = await Linking.canOpenURL(androidNavigationUrl);
+      if (canOpenNavigation) {
+        await Linking.openURL(androidNavigationUrl);
+      } else {
+        await Linking.openURL(googleFallback);
+      }
+    } catch {
+      Alert.alert('Unable to open directions', 'Please try again in a moment.');
+    }
+  };
 
   useEffect(() => {
     if (!job || !isDoneLike) {
@@ -171,6 +209,35 @@ export default function JobDetails() {
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Location: {getLocationLabel(job.location) || job.locationText || 'Accra, Ghana'}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Amount: GHS {job.price || 0}</Text>
         <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 2 }}>Created: {toDisplayDateTime(job.createdAt)}</Text>
+
+        {destinationCoords ? (
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ color: AppColors.ink700, fontWeight: '700', marginBottom: 6 }}>Map Preview</Text>
+            {Platform.OS === 'web' || !NativeMapView ? (
+              <View style={{ borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#f8fafc', padding: 10 }}>
+                <Text style={{ color: AppColors.ink700, fontSize: 12 }}>Map preview is available in Android/iPhone builds.</Text>
+                <Text style={{ color: AppColors.ink500, fontSize: 12, marginTop: 4 }}>
+                  {destinationCoords.latitude.toFixed(6)}, {destinationCoords.longitude.toFixed(6)}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ height: 170, borderRadius: 10, overflow: 'hidden' }}>
+                <NativeMapView
+                  style={{ flex: 1 }}
+                  pointerEvents="none"
+                  initialRegion={{
+                    latitude: destinationCoords.latitude,
+                    longitude: destinationCoords.longitude,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                  }}
+                >
+                  {NativeMarker ? <NativeMarker coordinate={destinationCoords} title="Job location" /> : null}
+                </NativeMapView>
+              </View>
+            )}
+          </View>
+        ) : null}
       </AppCard>
 
       <AppCard style={{ marginBottom: 12 }}>
@@ -221,6 +288,14 @@ export default function JobDetails() {
             label="Open Chat"
             onPress={() => router.push({ pathname: '/chat', params: { requestId: job.id } })}
             style={{ marginBottom: 8 }}
+          />
+        ) : null}
+
+        {canOpenDirections ? (
+          <AppButton
+            label="Open Directions"
+            onPress={handleOpenDirections}
+            style={{ marginBottom: 8, backgroundColor: '#0ea5e9' }}
           />
         ) : null}
 
