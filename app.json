@@ -23,7 +23,8 @@
       "supportsTablet": false,
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "ConnectHub needs access to your photo library to set a profile picture.",
-        "NSCameraUsageDescription": "ConnectHub needs access to your camera to take a profile picture."
+        "NSCameraUsageDescription": "ConnectHub needs access to your camera to take a profile picture.",
+        "NSLocationWhenInUseUsageDescription": "ConnectHub needs your location so you can pin exact job addresses on the map."
       }
     },
     "android": {
@@ -37,7 +38,9 @@
       "permissions": [
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -60,6 +63,12 @@
         "expo-image-picker",
         {
           "photosPermission": "ConnectHub needs access to your photo library to set a profile picture."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "ConnectHub needs your location so you can pin exact job addresses on the map."
         }
       ]
     ],

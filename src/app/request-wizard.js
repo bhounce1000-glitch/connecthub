@@ -1,5 +1,6 @@
-import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import * as Location from 'expo-location';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { API_BASE_URL } from '../constants/api';
@@ -44,6 +45,7 @@ function todayString() {
 
 export default function RequestWizard() {
   const router = useRouter();
+  const params = useLocalSearchParams();
 
   const [step, setStep] = useState(1);
   const [category, setCategory] = useState('');
@@ -54,10 +56,26 @@ export default function RequestWizard() {
   const [urgency, setUrgency] = useState('normal');
   const [area, setArea] = useState('');
   const [fullAddress, setFullAddress] = useState('');
+  const [pickedCoords, setPickedCoords] = useState(null);
   const [specialInstructions, setSpecialInstructions] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [successRef, setSuccessRef] = useState('');
+
+  useEffect(() => {
+    const paramLat = Number(params?.mapLat);
+    const paramLng = Number(params?.mapLng);
+    if (Number.isFinite(paramLat) && Number.isFinite(paramLng)) {
+      setPickedCoords({ latitude: paramLat, longitude: paramLng });
+    }
+    if (typeof params?.mapArea === 'string' && params.mapArea.trim()) {
+      setArea(params.mapArea.trim());
+    }
+    if (typeof params?.mapAddress === 'string' && params.mapAddress.trim()) {
+      setFullAddress(params.mapAddress.trim());
+    }
+  }, [params?.mapAddress, params?.mapArea, params?.mapLat, params?.mapLng]);
 
   const titleError = useMemo(() => {
     const len = title.trim().length;
@@ -95,7 +113,42 @@ export default function RequestWizard() {
 
   const step1Valid = category.length > 0;
   const step2Valid = !titleError && !descriptionError && !budgetError && !dateError;
-  const step3Valid = area.length > 0 && specialInstructions.length <= 200;
+  const hasExactCoords = Number.isFinite(pickedCoords?.latitude) && Number.isFinite(pickedCoords?.longitude);
+  const step3Valid = area.length > 0 && hasExactCoords && specialInstructions.length <= 200;
+
+  const handleUseCurrentLocation = async () => {
+    setSubmitError('');
+    setIsLocating(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setSubmitError('Location permission is required to use current location.');
+        return;
+      }
+
+      const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const latitude = Number(current?.coords?.latitude);
+      const longitude = Number(current?.coords?.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        setSubmitError('Could not determine your current location.');
+        return;
+      }
+
+      setPickedCoords({ latitude, longitude });
+
+      const geocodeRows = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const best = geocodeRows?.[0] || {};
+      const derivedArea = String(best.district || best.subregion || best.city || area || 'Current area').trim();
+      const derivedAddress = [best.name, best.street, best.city].filter(Boolean).join(', ').trim();
+
+      if (derivedArea) setArea(derivedArea);
+      if (derivedAddress) setFullAddress(derivedAddress);
+    } catch {
+      setSubmitError('Could not get your current location right now.');
+    } finally {
+      setIsLocating(false);
+    }
+  };
 
   const handlePost = async () => {
     setSubmitError('');
@@ -117,6 +170,12 @@ export default function RequestWizard() {
           area,
           fullAddress: fullAddress.trim(),
           specialInstructions: specialInstructions.trim(),
+          latitude: pickedCoords.latitude,
+          longitude: pickedCoords.longitude,
+          coordinates: {
+            latitude: pickedCoords.latitude,
+            longitude: pickedCoords.longitude,
+          },
         },
       };
 
@@ -236,6 +295,51 @@ export default function RequestWizard() {
 
       {step === 3 ? (
         <View style={{ marginTop: 14 }}>
+          <Text style={{ color: '#0f172a', fontWeight: '700', marginBottom: 8 }}>Exact Job Pin</Text>
+          <View style={{ flexDirection: 'row', marginBottom: 10 }}>
+            <TouchableOpacity
+              onPress={() => router.push({
+                pathname: '/map-picker',
+                params: {
+                  latitude: pickedCoords?.latitude ? String(pickedCoords.latitude) : '',
+                  longitude: pickedCoords?.longitude ? String(pickedCoords.longitude) : '',
+                  area,
+                  fullAddress,
+                },
+              })}
+              style={{
+                flex: 1,
+                marginRight: 8,
+                borderRadius: 10,
+                paddingVertical: 12,
+                alignItems: 'center',
+                backgroundColor: '#2563eb',
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800' }}>{hasExactCoords ? 'Update Pin on Map' : 'Pick on Map'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleUseCurrentLocation}
+              disabled={isLocating}
+              style={{
+                flex: 1,
+                borderRadius: 10,
+                paddingVertical: 12,
+                alignItems: 'center',
+                borderWidth: 1,
+                borderColor: '#93c5fd',
+                backgroundColor: isLocating ? '#dbeafe' : '#eff6ff',
+              }}
+            >
+              <Text style={{ color: '#1d4ed8', fontWeight: '800' }}>{isLocating ? 'Locating...' : 'Use Current Location'}</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={{ color: hasExactCoords ? '#166534' : '#b91c1c', fontSize: 12, marginBottom: 8 }}>
+            {hasExactCoords
+              ? `Pinned at ${pickedCoords.latitude.toFixed(6)}, ${pickedCoords.longitude.toFixed(6)}`
+              : 'Select an exact map location before continuing.'}
+          </Text>
+
           <Text style={{ color: '#0f172a', fontWeight: '700', marginBottom: 8 }}>Area / Neighbourhood</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {AREAS.map((value) => {
@@ -261,6 +365,7 @@ export default function RequestWizard() {
             })}
           </View>
           {!area ? <ErrorText text="Please select an area" /> : null}
+          {!hasExactCoords ? <ErrorText text="Please pin exact location on map" /> : null}
 
           <Field label="Full Address (optional)" value={fullAddress} onChangeText={setFullAddress} placeholder="House number / landmark" />
           <Field
@@ -282,7 +387,11 @@ export default function RequestWizard() {
           <ReviewRow label="Description" value={description} onEdit={() => setStep(2)} />
           <ReviewRow label="Budget" value={`GHS ${Number(budget || 0).toFixed(2)}`} onEdit={() => setStep(2)} />
           <ReviewRow label="Date" value={preferredDate} onEdit={() => setStep(2)} />
-          <ReviewRow label="Location" value={area} onEdit={() => setStep(3)} />
+          <ReviewRow
+            label="Location"
+            value={`${area}${pickedCoords ? ` (${pickedCoords.latitude.toFixed(5)}, ${pickedCoords.longitude.toFixed(5)})` : ''}`}
+            onEdit={() => setStep(3)}
+          />
           <Text style={{ marginTop: 10, color: '#334155', fontWeight: '700' }}>ConnectHub charges 10% on completed jobs</Text>
 
           <TouchableOpacity

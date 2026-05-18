@@ -4784,6 +4784,8 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
     const area = String(location.area || payload.area || '').trim();
     const fullAddress = String(location.fullAddress || payload.fullAddress || '').trim();
     const specialInstructions = String(location.specialInstructions || payload.specialInstructions || '').trim();
+    const latitude = Number(location.latitude ?? location.coordinates?.latitude ?? payload.latitude);
+    const longitude = Number(location.longitude ?? location.coordinates?.longitude ?? payload.longitude);
     const urgency = String(payload.urgency || 'normal').trim().toLowerCase() === 'urgent' ? 'urgent' : 'normal';
     const preferredDate = String(payload.preferredDate || '').trim();
     const budget = parseMoney(payload.budget || payload.price || 0);
@@ -4793,6 +4795,9 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
     if (description.length < 20 || description.length > 500) return sendError(res, req, 400, 'invalid_description', 'Description must be between 20 and 500 characters');
     if (!Number.isFinite(budget) || budget < 10) return sendError(res, req, 400, 'invalid_budget', 'Budget must be at least GHS 10');
     if (!area) return sendError(res, req, 400, 'invalid_area', 'Area is required');
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+      return sendError(res, req, 400, 'invalid_location_coords', 'Exact map coordinates are required');
+    }
     if (specialInstructions.length > 200) return sendError(res, req, 400, 'invalid_special_instructions', 'Special instructions cannot exceed 200 characters');
 
     const preferredDateMs = preferredDate ? new Date(preferredDate).getTime() : Date.now();
@@ -4819,6 +4824,12 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
         area,
         fullAddress,
         specialInstructions,
+        latitude,
+        longitude,
+        coordinates: {
+          latitude,
+          longitude,
+        },
         label: locationLabel,
       },
       locationText: locationLabel,
