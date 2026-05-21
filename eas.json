@@ -11,9 +11,7 @@
         "EXPO_PUBLIC_API_BASE_URL": "https://connecthub-yrox.onrender.com",
         "EXPO_PUBLIC_WEB_BASE_URL": "https://connecthub-1873e.web.app",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "202550618623-bruo07fv2ab6gf9f17t03sm7ocqeraoq.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyBBliWRHPpEbb1DiDfWHBammPxnzpevzn8",
-        "ENCRYPTION_KEY": "2dd37c2fc28ca328d58109beba297b31"
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "202550618623-bruo07fv2ab6gf9f17t03sm7ocqeraoq.apps.googleusercontent.com"
       },
       "android": {
         "buildType": "apk"
@@ -25,9 +23,7 @@
         "EXPO_PUBLIC_API_BASE_URL": "https://connecthub-yrox.onrender.com",
         "EXPO_PUBLIC_WEB_BASE_URL": "https://connecthub-1873e.web.app",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "202550618623-bruo07fv2ab6gf9f17t03sm7ocqeraoq.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyBBliWRHPpEbb1DiDfWHBammPxnzpevzn8",
-        "ENCRYPTION_KEY": "2dd37c2fc28ca328d58109beba297b31"
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "202550618623-bruo07fv2ab6gf9f17t03sm7ocqeraoq.apps.googleusercontent.com"
       },
       "android": {
         "buildType": "apk"
@@ -44,9 +40,7 @@
         "ADMIN_EMAIL": "bhounce1000@gmail.com",
         "SUPPORT_EMAIL": "connecthub1000@gmail.com",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "AIzaSyBBliWRHPpEbb1DiDfWHBammPxnzpevzn8",
-        "ENCRYPTION_KEY": "2dd37c2fc28ca328d58109beba297b31"
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "202550618623-1q3fsq9h9fpk18h33a81amcu0pc5beti.apps.googleusercontent.com"
       },
       "android": {
         "buildType": "app-bundle"
