@@ -1,4 +1,3 @@
-import * as Linking from 'expo-linking';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -67,6 +66,10 @@ export default function LiveMapScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isTracking, setIsTracking] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const [providerArrived, setProviderArrived] = useState(false);
+  const hasNotifiedArrival = useRef(false);
+  // If route has only 2 points it is a straight-line fallback (no API key or error).
+  const isFallbackRoute = routeCoords.length === 2;
 
   // Fetch route and update distance/ETA whenever origin changes.
   const updateRoute = useCallback(
@@ -156,6 +159,35 @@ export default function LiveMapScreen() {
         };
         setProviderLocation(loc);
         updateRoute(loc).catch(() => {});
+
+        // Geofencing: notify customer when provider is within 200 m.
+        if (
+          Number.isFinite(customerLatNum) &&
+          Number.isFinite(customerLonNum) &&
+          !hasNotifiedArrival.current
+        ) {
+          const distToJob = calculateDistance(
+            data.latitude,
+            data.longitude,
+            customerLatNum,
+            customerLonNum
+          );
+          if (distToJob < 0.2) {
+            hasNotifiedArrival.current = true;
+            setProviderArrived(true);
+            addDoc(collection(db, 'notifications'), {
+              userId: auth.currentUser?.email,
+              recipientId: auth.currentUser?.email,
+              user: auth.currentUser?.email,
+              title: '\uD83D\uDEE0\uFE0F Provider Has Arrived!',
+              body: 'Your provider is at your location. Please let them in.',
+              type: 'provider_arrived',
+              jobId,
+              read: false,
+              createdAt: serverTimestamp(),
+            }).catch(() => {});
+          }
+        }
       },
       (err) => {
         console.error('liveLocations snapshot error:', err.message);
@@ -228,28 +260,62 @@ export default function LiveMapScreen() {
 
   // Web fallback — react-native-maps does not support web.
   if (Platform.OS === 'web' || !MapView) {
+    const webDistanceKm =
+      Number.isFinite(customerLatNum) && Number.isFinite(customerLonNum) && myLocation
+        ? calculateDistance(
+            myLocation.latitude,
+            myLocation.longitude,
+            customerLatNum,
+            customerLonNum
+          )
+        : null;
+
     return (
       <View style={styles.webFallback}>
         <Text style={styles.webFallbackIcon}>🗺️</Text>
         <Text style={styles.webFallbackTitle}>Live Map</Text>
         <Text style={styles.webFallbackText}>
-          Live navigation is available on the mobile app (Android &amp; iOS).
+          Live tracking is available on the mobile app. Use the navigation button below to open Google Maps.
         </Text>
-        {Number.isFinite(customerLatNum) && Number.isFinite(customerLonNum) && (
-          <TouchableOpacity
-            style={styles.openMapsButton}
-            onPress={() => {
-              const url = `https://www.google.com/maps/dir/?api=1&destination=${customerLatNum},${customerLonNum}&travelmode=driving`;
-              Linking.openURL(url).catch(() => {});
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.openMapsButtonText}>🗺️  Open in Google Maps</Text>
-          </TouchableOpacity>
+
+        {webDistanceKm !== null && (
+          <View style={{ flexDirection: 'row', gap: 12, justifyContent: 'center', marginBottom: 12 }}>
+            <View style={styles.statChip}>
+              <Text style={styles.statIcon}>📍</Text>
+              <Text style={styles.statText}>{formatDistance(webDistanceKm)}</Text>
+            </View>
+            <View style={styles.statChip}>
+              <Text style={styles.statIcon}>⏱️</Text>
+              <Text style={styles.statText}>{estimateTravelTime(webDistanceKm)}</Text>
+            </View>
+          </View>
         )}
+
+        {Number.isFinite(customerLatNum) && Number.isFinite(customerLonNum) && (
+          <MapPreview
+            latitude={customerLatNum}
+            longitude={customerLonNum}
+            label={customerAddress || 'Job Location'}
+            height={140}
+            showNavigateButton={false}
+          />
+        )}
+
+        {Number.isFinite(customerLatNum) && Number.isFinite(customerLonNum) && (
+          <NavigateButton
+            destLat={customerLatNum}
+            destLon={customerLonNum}
+            destLabel={customerAddress || 'Job Location'}
+            providerLat={myLocation?.latitude}
+            providerLon={myLocation?.longitude}
+            style={{ marginTop: 12 }}
+          />
+        )}
+
         <TouchableOpacity
           style={styles.backButtonWeb}
           onPress={() => router.back()}
+          accessibilityLabel="Go back"
           activeOpacity={0.8}
         >
           <Text style={styles.backButtonWebText}>← Go Back</Text>
@@ -318,33 +384,49 @@ export default function LiveMapScreen() {
           </Marker>
         )}
 
-        {/* Route polyline */}
+        {/* Route polyline — dashed when using fallback straight-line */}
         {routeCoords.length > 1 && (
           <Polyline
             coordinates={routeCoords}
-            strokeColor="#1d4ed8"
-            strokeWidth={4}
+            strokeColor={isFallbackRoute ? '#94a3b8' : '#1d4ed8'}
+            strokeWidth={isFallbackRoute ? 2 : 4}
+            lineDashPattern={isFallbackRoute ? [8, 6] : []}
           />
         )}
       </MapView>
 
-      {/* BACK BUTTON */}
+      {/* Back button */}
       <TouchableOpacity
         style={styles.backBtn}
         onPress={() => router.back()}
+        accessibilityLabel="Go back"
         activeOpacity={0.8}
       >
-        <Text style={styles.backBtnText}>←</Text>
+        <Text style={styles.backBtnText}>\u2190</Text>
       </TouchableOpacity>
 
-      {/* RE-CENTER BUTTON */}
+      {/* Re-center button */}
       <TouchableOpacity
         style={styles.recenterBtn}
         onPress={fitMapToMarkers}
+        accessibilityLabel="Re-center map"
         activeOpacity={0.8}
       >
-        <Text style={styles.recenterBtnText}>⊕</Text>
+        <Text style={styles.recenterBtnText}>\u2295</Text>
       </TouchableOpacity>
+
+      {/* Provider arrived banner — customer view only */}
+      {providerArrived && !isProviderView ? (
+        <View style={styles.arrivedBanner}>
+          <Text style={{ fontSize: 24, marginBottom: 4 }}>\uD83C\uDF89</Text>
+          <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>
+            Provider Has Arrived!
+          </Text>
+          <Text style={{ color: '#a7f3d0', fontSize: 13, marginTop: 4 }}>
+            Your provider is at your location
+          </Text>
+        </View>
+      ) : null}
 
       {/* BOTTOM INFO PANEL */}
       <View style={styles.bottomPanel}>
@@ -388,6 +470,15 @@ export default function LiveMapScreen() {
           </View>
         ) : null}
 
+        {/* Fallback route notice */}
+        {isFallbackRoute && routeCoords.length > 0 && (
+          <View style={styles.fallbackNotice}>
+            <Text style={styles.fallbackNoticeText}>
+              Approximate route — add Google Maps API key for exact directions
+            </Text>
+          </View>
+        )}
+
         {/* Provider view — tracking status */}
         {isProviderView ? (
           <View style={styles.statusRow}>
@@ -411,8 +502,7 @@ export default function LiveMapScreen() {
                 customerLonNum,
                 customerAddress || 'Job Location'
               )
-            }
-            activeOpacity={0.8}
+            }            accessibilityLabel="Start turn-by-turn navigation"            activeOpacity={0.8}
           >
             <Text style={styles.navButtonText}>
               🗺️  Start Turn-by-Turn Navigation
@@ -459,6 +549,34 @@ const styles = StyleSheet.create({
     color: '#64748b',
     textAlign: 'center',
     lineHeight: 22,
+  },
+  arrivedBanner: {
+    position: 'absolute',
+    top: 60,
+    left: 16,
+    right: 16,
+    backgroundColor: '#059669',
+    borderRadius: 14,
+    padding: 16,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  fallbackNotice: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 2,
+    marginBottom: 0,
+  },
+  fallbackNoticeText: {
+    fontSize: 12,
+    color: '#92400e',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   openMapsButton: {
     backgroundColor: '#1d4ed8',

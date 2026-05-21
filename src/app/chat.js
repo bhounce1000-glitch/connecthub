@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { Alert, FlatList, Text, TouchableOpacity, View } from 'react-native';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -13,10 +13,11 @@ import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
 
 // Firebase
-import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost } from '../utils/api-client';
+import { getCurrentLocation, openBestNavigation, reverseGeocode } from '../utils/location';
 
 const QUICK_REPLIES = [
   'I am on my way.',
@@ -232,6 +233,43 @@ export default function Chat() {
     setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
   };
 
+  const shareLocationInChat = async () => {
+    if (!resolvedRequestId) return;
+    try {
+      const pos = await getCurrentLocation();
+      if (!pos) {
+        Alert.alert('Location Error', 'Could not get your current location. Please try again.');
+        return;
+      }
+      const address = await reverseGeocode(pos.latitude, pos.longitude);
+      await addDoc(collection(db, 'chats', resolvedRequestId, 'messages'), {
+        senderEmail: auth.currentUser?.email,
+        user: auth.currentUser?.email,
+        type: 'location',
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+        address: address || `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`,
+        text: '',
+        timestamp: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        read: false,
+      });
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch (error) {
+      Alert.alert('Could not share location', error.message || 'Please try again.');
+    }
+  };
+
+  const handleAttachPress = () => {
+    Alert.alert('Share', 'What would you like to share?', [
+      {
+        text: '\uD83D\uDCCD Share My Location',
+        onPress: shareLocationInChat,
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const MessageBubble = ({ item }) => {
     const sender = item.senderEmail || item.user;
     const isMe = sender === auth.currentUser?.email;
@@ -249,6 +287,71 @@ export default function Chat() {
       } catch {
         sentAtLabel = '';
       }
+    }
+
+    // Location message bubble
+    if (item.type === 'location') {
+      return (
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: isMe ? 'flex-end' : 'flex-start',
+            marginVertical: 8,
+            alignItems: 'flex-end',
+          }}
+        >
+          {!isMe && (
+            <Avatar
+              src={userProfile?.profilePicture}
+              email={item.user}
+              size={32}
+              style={{ marginRight: 8 }}
+            />
+          )}
+          <TouchableOpacity
+            onPress={() =>
+              openBestNavigation(
+                Number(item.latitude),
+                Number(item.longitude),
+                item.address || 'Shared Location'
+              )
+            }
+            activeOpacity={0.8}
+            accessibilityLabel="Open shared location in Maps"
+            style={{
+              backgroundColor: isMe ? '#1d4ed8' : '#e5e7eb',
+              padding: 12,
+              borderRadius: 14,
+              maxWidth: '75%',
+              borderWidth: 1,
+              borderColor: isMe ? '#3b82f6' : '#d1d5db',
+            }}
+          >
+            {!isMe && (
+              <Text style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>
+                {sender?.split('@')[0]}
+              </Text>
+            )}
+            <Text style={{ fontSize: 18, marginBottom: 4 }}>\uD83D\uDCCD</Text>
+            <Text style={{ color: isMe ? '#fff' : '#111827', fontWeight: '700', fontSize: 13 }}>
+              Shared Location
+            </Text>
+            {item.address ? (
+              <Text style={{ color: isMe ? '#bfdbfe' : '#374151', fontSize: 12, marginTop: 2 }}>
+                {item.address}
+              </Text>
+            ) : null}
+            <Text style={{ color: isMe ? '#93c5fd' : '#6b7280', fontSize: 11, marginTop: 6 }}>
+              Tap to open in Maps
+            </Text>
+            {sentAtLabel ? (
+              <Text style={{ color: isMe ? '#bfdbfe' : '#6b7280', fontSize: 10, marginTop: 4, textAlign: isMe ? 'right' : 'left' }}>
+                {sentAtLabel}
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+        </View>
+      );
     }
 
     return (
@@ -377,7 +480,26 @@ export default function Chat() {
           </View>
         ) : null}
 
-        <View style={{ flexDirection: 'row', marginTop: 14 }}>
+        <View style={{ flexDirection: 'row', marginTop: 14, alignItems: 'center' }}>
+          <TouchableOpacity
+            onPress={handleAttachPress}
+            disabled={!resolvedRequestId}
+            accessibilityLabel="Attach location"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              backgroundColor: '#f1f5f9',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 8,
+              borderWidth: 1,
+              borderColor: '#e2e8f0',
+            }}
+          >
+            <Text style={{ fontSize: 18 }}>\uD83D\uDCCE</Text>
+          </TouchableOpacity>
+
           <AppInput
             value={text}
             onChangeText={setText}

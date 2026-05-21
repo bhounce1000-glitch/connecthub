@@ -10,6 +10,7 @@ import SubscriptionBadge from '../components/ui/subscription-badge';
 import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-tokens';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
+import { calculateDistance, formatDistance, getCurrentLocation, getLocationCoords } from '../utils/location';
 
 const ALL = 'All';
 const FILTER_CATEGORIES = [
@@ -62,10 +63,19 @@ export default function Providers() {
   const [searchText, setSearchText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(ALL);
   const [sortBy, setSortBy] = useState('rating');
+  const [myLocation, setMyLocation] = useState(null);
+  const [viewMode, setViewMode] = useState('list');
+  const [nearbyFilter, setNearbyFilter] = useState('any');
 
   useEffect(() => {
     if (isAuthReady && !user) router.replace('/auth');
   }, [isAuthReady, router, user]);
+
+  useEffect(() => {
+    getCurrentLocation().then((loc) => {
+      if (loc) setMyLocation(loc);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const usersRoleQ = query(collection(db, 'users'), where('role', '==', 'provider'), limit(100));
@@ -149,7 +159,7 @@ export default function Providers() {
 
   const filtered = useMemo(() => {
     const q = searchText.trim().toLowerCase();
-    const rows = providers.filter((p) => {
+    let rows = providers.filter((p) => {
       const categoryMatch = selectedCategory === ALL || String(p.category || '').toLowerCase().includes(selectedCategory.toLowerCase());
       if (!categoryMatch) return false;
       if (!q) return true;
@@ -157,14 +167,43 @@ export default function Providers() {
       return hay.includes(q);
     });
 
-    rows.sort((a, b) => {
-      if (sortBy === 'price') return Number(a.startingPrice || 0) - Number(b.startingPrice || 0);
-      if (sortBy === 'experience') return Number(b.experience || 0) - Number(a.experience || 0);
-      return Number(b.avgRating || 0) - Number(a.avgRating || 0);
-    });
+    if (viewMode === 'nearby' && myLocation) {
+      // Only include providers that have coordinates.
+      rows = rows.filter((p) => {
+        const coords =
+          getLocationCoords(p.location) ||
+          (Number.isFinite(Number(p.latitude)) && Number.isFinite(Number(p.longitude))
+            ? { latitude: Number(p.latitude), longitude: Number(p.longitude) }
+            : null);
+        if (!coords) return false;
+        if (nearbyFilter === 'any') return true;
+        const km = calculateDistance(myLocation.latitude, myLocation.longitude, coords.latitude, coords.longitude);
+        return km <= Number(nearbyFilter);
+      });
+
+      // Sort closest first.
+      rows.sort((a, b) => {
+        const toCoords = (p) =>
+          getLocationCoords(p.location) ||
+          (Number.isFinite(Number(p.latitude)) && Number.isFinite(Number(p.longitude))
+            ? { latitude: Number(p.latitude), longitude: Number(p.longitude) }
+            : null);
+        const aC = toCoords(a);
+        const bC = toCoords(b);
+        const aDist = aC ? calculateDistance(myLocation.latitude, myLocation.longitude, aC.latitude, aC.longitude) : Infinity;
+        const bDist = bC ? calculateDistance(myLocation.latitude, myLocation.longitude, bC.latitude, bC.longitude) : Infinity;
+        return aDist - bDist;
+      });
+    } else {
+      rows.sort((a, b) => {
+        if (sortBy === 'price') return Number(a.startingPrice || 0) - Number(b.startingPrice || 0);
+        if (sortBy === 'experience') return Number(b.experience || 0) - Number(a.experience || 0);
+        return Number(b.avgRating || 0) - Number(a.avgRating || 0);
+      });
+    }
 
     return rows;
-  }, [providers, searchText, selectedCategory, sortBy]);
+  }, [providers, searchText, selectedCategory, sortBy, viewMode, nearbyFilter, myLocation]);
 
   const topStats = useMemo(() => {
     let premiumCount = 0;
@@ -264,6 +303,73 @@ export default function Providers() {
         })}
       </View>
 
+      {/* View mode toggle: List vs Nearby */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+        <TouchableOpacity
+          onPress={() => setViewMode('list')}
+          style={{
+            flex: 1,
+            marginRight: 6,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: viewMode === 'list' ? '#2563eb' : '#cbd5e1',
+            backgroundColor: viewMode === 'list' ? '#eff6ff' : '#fff',
+            paddingVertical: 8,
+            alignItems: 'center',
+          }}
+        >
+          <Text style={{ color: viewMode === 'list' ? '#2563eb' : '#64748b', fontWeight: '800', fontSize: 12 }}>\uD83D\uDCCB List</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {
+            setViewMode('nearby');
+            if (!myLocation) {
+              getCurrentLocation()
+                .then((loc) => { if (loc) setMyLocation(loc); })
+                .catch(() => {});
+            }
+          }}
+          style={{
+            flex: 1,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: viewMode === 'nearby' ? '#0891b2' : '#cbd5e1',
+            backgroundColor: viewMode === 'nearby' ? '#e0f2fe' : '#fff',
+            paddingVertical: 8,
+            alignItems: 'center',
+          }}
+        >
+          <Text style={{ color: viewMode === 'nearby' ? '#0891b2' : '#64748b', fontWeight: '800', fontSize: 12 }}>\uD83D\uDCCD Nearby</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Distance filter chips — only visible in nearby mode */}
+      {viewMode === 'nearby' ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+          {['5', '10', '20', 'any'].map((km) => {
+            const active = nearbyFilter === km;
+            const label = km === 'any' ? 'Any distance' : `Within ${km}km`;
+            return (
+              <TouchableOpacity
+                key={km}
+                onPress={() => setNearbyFilter(km)}
+                style={{
+                  marginRight: 8,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: active ? '#0891b2' : '#cbd5e1',
+                  backgroundColor: active ? '#e0f2fe' : '#fff',
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                }}
+              >
+                <Text style={{ color: active ? '#0891b2' : '#64748b', fontWeight: '800', fontSize: 12 }}>{label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
       {isLoading ? (
         <View>
           {[1, 2, 3].map((n) => (
@@ -327,6 +433,19 @@ export default function Providers() {
                 <View style={{ marginTop: 10 }}>
                   <Text style={{ color: '#0f172a', fontWeight: '700' }}>{buildStars(item.avgRating)} ({Number(item.avgRating || 0).toFixed(1)}) — {reviews} reviews</Text>
                   <Text style={{ color: '#64748b', marginTop: 4 }}>📍 {item.location || 'Accra, Ghana'}</Text>
+                  {myLocation ? (() => {
+                    const providerCoords = getLocationCoords(item.location) || (
+                      Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude))
+                        ? { latitude: Number(item.latitude), longitude: Number(item.longitude) }
+                        : null
+                    );
+                    if (!providerCoords) return null;
+                    return (
+                    <Text style={{ color: '#1d4ed8', marginTop: 4, fontWeight: '700' }}>
+                      📍 {formatDistance(calculateDistance(myLocation.latitude, myLocation.longitude, providerCoords.latitude, providerCoords.longitude))}
+                    </Text>
+                    );
+                  })() : null}
                   <Text style={{ color: '#16a34a', marginTop: 4, fontWeight: '800' }}>From GHS {Number(item.startingPrice || 0).toFixed(2)}</Text>
                   {photoCount > 0 ? <Text style={{ color: '#94a3b8', marginTop: 4 }}>📷 {photoCount} photos</Text> : null}
                 </View>

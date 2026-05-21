@@ -887,6 +887,22 @@ export default function Auth() {
           </View>
         )}
 
+        {!isLogin && signupStep === 1 ? (
+          <View style={{
+            backgroundColor: '#eff6ff',
+            borderRadius: 10,
+            padding: 14,
+            marginTop: 8,
+          }}>
+            <Text style={{ fontSize: 13, color: '#1d4ed8', fontWeight: '600', marginBottom: 4 }}>
+              📍 Location Access
+            </Text>
+            <Text style={{ fontSize: 12, color: '#475569', lineHeight: 18 }}>
+              ConnectHub uses your location to help providers navigate to job sites, show distance to nearby jobs, and improve matching accuracy. Location is only used while using the app and is never shared publicly.
+            </Text>
+          </View>
+        ) : null}
+
         <AppNotice
           tone={notice?.tone}
           title={notice?.title}

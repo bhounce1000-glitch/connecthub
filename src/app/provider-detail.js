@@ -15,6 +15,7 @@ import { API_BASE_URL } from '../constants/api';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
+import { getCurrentLocation } from '../utils/location';
 
 function StatBox({ label, value }) {
   return (
@@ -164,6 +165,13 @@ export default function ProviderDetail() {
   const [reviewerProfiles, setReviewerProfiles] = useState({});
   const [myVotes, setMyVotes] = useState({});   // requestId -> 'like'|'dislike'
   const [votingId, setVotingId] = useState(null);
+  const [myLocation, setMyLocation] = useState(null);
+
+  useEffect(() => {
+    getCurrentLocation()
+      .then((loc) => { if (loc) setMyLocation(loc); })
+      .catch(() => {});
+  }, []);
 
   const currentEmail = user?.email || '';
 
@@ -478,6 +486,42 @@ export default function ProviderDetail() {
             </View>
           ) : null}
         </AppCard>
+
+        {/* Service area with navigation */}
+        {Number.isFinite(Number(provider?.latitude)) && Number.isFinite(Number(provider?.longitude)) ? (
+          <AppCard style={{ marginBottom: AppSpace.md }}>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: AppColors.ink500, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              📍 Service Area
+            </Text>
+            {provider.locationArea ? (
+              <Text style={{ color: AppColors.ink700, marginBottom: 8 }}>
+                Based in: <Text style={{ fontWeight: '700' }}>{provider.locationArea}</Text>
+              </Text>
+            ) : null}
+            {myLocation ? (
+              <Text style={{ color: AppColors.ink500, fontSize: 13, marginBottom: 8 }}>
+                Distance from you:{' '}
+                <Text style={{ fontWeight: '700', color: '#1d4ed8' }}>
+                  {formatDistance(
+                    calculateDistance(
+                      myLocation.latitude,
+                      myLocation.longitude,
+                      Number(provider.latitude),
+                      Number(provider.longitude)
+                    )
+                  )}
+                </Text>
+              </Text>
+            ) : null}
+            <NavigateButton
+              destLat={Number(provider.latitude)}
+              destLon={Number(provider.longitude)}
+              destLabel={provider.name || provider.email}
+              providerLat={myLocation?.latitude}
+              providerLon={myLocation?.longitude}
+            />
+          </AppCard>
+        ) : null}
 
         {portfolioPhotos.length > 0 ? (
           <AppCard style={{ marginBottom: AppSpace.md }}>

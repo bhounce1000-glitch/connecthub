@@ -980,6 +980,18 @@ export default function Home() {
                 ) : null}
 
                 <Text style={{ color: '#334155', fontSize: 13 }}>📍 <Text style={{ fontWeight: '800', color: AppColors.ink900 }}>{areaName}</Text>{parts.length > 1 ? `, ${parts.slice(1).join(', ')}` : ''}</Text>
+                    {currentCoords ? (() => {
+                      const targetCoords = getLocationCoords(item.location);
+                      const km = distanceKm(currentCoords, targetCoords);
+                      if (km == null) return null;
+                      return (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                          <Text style={{ fontSize: 12, color: '#1d4ed8', fontWeight: '600' }}>📍 {km < 1 ? `${Math.round(km * 1000)}m away` : `${km.toFixed(1)}km away`}</Text>
+                          <Text style={{ fontSize: 12, color: '#94a3b8' }}>•</Text>
+                          <Text style={{ fontSize: 12, color: '#64748b' }}>{locationLabel}</Text>
+                        </View>
+                      );
+                    })() : null}
                 <View style={{ alignSelf: 'flex-start', backgroundColor: '#dcfce7', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 4, marginTop: 4 }}>
                   <Text style={{ color: '#166534', fontWeight: '800', fontSize: 12 }}>GHS {item.price}</Text>
                 </View>

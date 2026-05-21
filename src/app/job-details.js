@@ -164,13 +164,18 @@ export default function JobDetails() {
   };
 
   // Clean up live location document when job reaches a terminal state.
+  // Only the assigned provider or the job owner should trigger this deletion.
   useEffect(() => {
     const terminalStatuses = ['done', 'confirmed', 'paid', 'completed', 'cancelled'];
     const currentStatus = String(job?.status || '').trim().toLowerCase();
-    if (terminalStatuses.includes(currentStatus) && resolvedRequestId) {
+    if (
+      terminalStatuses.includes(currentStatus) &&
+      resolvedRequestId &&
+      (isAssignedProvider || isOwner)
+    ) {
       deleteDoc(doc(db, 'liveLocations', resolvedRequestId)).catch(() => {});
     }
-  }, [job?.status, resolvedRequestId]);
+  }, [job?.status, resolvedRequestId, isAssignedProvider, isOwner]);
 
   useEffect(() => {
     if (!job || !isDoneLike) {

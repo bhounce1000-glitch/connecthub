@@ -1,8 +1,10 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import LocationPicker from '../components/LocationPicker';
 import { API_BASE_URL } from '../constants/api';
 import { AppRadius, AppSpace } from '../constants/design-tokens';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
@@ -62,6 +64,19 @@ export default function RequestWizard() {
   const [isLocating, setIsLocating] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [successRef, setSuccessRef] = useState('');
+  const [recentLocations, setRecentLocations] = useState([]);
+  const [gpsSuggestions, setGpsSuggestions] = useState([]);
+
+  // Load recently used locations from local storage.
+  useEffect(() => {
+    AsyncStorage.getItem('connecthub_recent_locations')
+      .then((raw) => {
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setRecentLocations(parsed.slice(0, 5));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const paramLat = Number(params?.mapLat);
@@ -143,6 +158,23 @@ export default function RequestWizard() {
 
       if (derivedArea) setArea(derivedArea);
       if (derivedAddress) setFullAddress(derivedAddress);
+
+      // Build nearby area suggestions from all geocode rows.
+      const suggestions = [
+        ...new Set(
+          geocodeRows
+            .flatMap((row) => [row.district, row.subregion, row.city, row.region])
+            .map((s) => String(s || '').trim())
+            .filter(Boolean)
+        ),
+      ].slice(0, 6);
+      setGpsSuggestions(suggestions);
+
+      // Persist this location to recent history.
+      const entry = { area: derivedArea, fullAddress: derivedAddress, latitude, longitude };
+      const updated = [entry, ...recentLocations.filter((r) => r.area !== derivedArea)].slice(0, 5);
+      setRecentLocations(updated);
+      AsyncStorage.setItem('connecthub_recent_locations', JSON.stringify(updated)).catch(() => {});
     } catch {
       setSubmitError('Could not get your current location right now.');
     } finally {
@@ -166,6 +198,11 @@ export default function RequestWizard() {
         budget: Number(budget),
         preferredDate,
         urgency,
+        latitude: pickedCoords?.latitude || null,
+        longitude: pickedCoords?.longitude || null,
+        address: fullAddress || area || '',
+        locationArea: area || '',
+        hasGpsLocation: Boolean(pickedCoords?.latitude && pickedCoords?.longitude),
         location: {
           area,
           fullAddress: fullAddress.trim(),
@@ -295,6 +332,25 @@ export default function RequestWizard() {
 
       {step === 3 ? (
         <View style={{ marginTop: 14 }}>
+          <LocationPicker
+            value={{
+              latitude: pickedCoords?.latitude,
+              longitude: pickedCoords?.longitude,
+              address: fullAddress,
+              area,
+            }}
+            onChange={(loc) => {
+              setFullAddress(loc.address || '');
+              if (loc.area) setArea(loc.area);
+              if (Number.isFinite(Number(loc.latitude)) && Number.isFinite(Number(loc.longitude))) {
+                setPickedCoords({ latitude: Number(loc.latitude), longitude: Number(loc.longitude) });
+              } else if (!loc.latitude || !loc.longitude) {
+                setPickedCoords(null);
+              }
+            }}
+            placeholder="Where do you need the service done?"
+          />
+
           <Text style={{ color: '#0f172a', fontWeight: '700', marginBottom: 8 }}>Exact Job Pin</Text>
           <View style={{ flexDirection: 'row', marginBottom: 10 }}>
             <TouchableOpacity
@@ -341,6 +397,66 @@ export default function RequestWizard() {
           </Text>
 
           <Text style={{ color: '#0f172a', fontWeight: '700', marginBottom: 8 }}>Area / Neighbourhood</Text>
+
+          {/* Recent locations */}
+          {recentLocations.length > 0 ? (
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ color: '#64748b', fontSize: 12, fontWeight: '700', marginBottom: 6 }}>\uD83D\uDD52 Recent</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                {recentLocations.map((loc) => (
+                  <TouchableOpacity
+                    key={`recent-${loc.area}`}
+                    onPress={() => {
+                      setArea(loc.area);
+                      if (loc.fullAddress) setFullAddress(loc.fullAddress);
+                      if (Number.isFinite(loc.latitude) && Number.isFinite(loc.longitude)) {
+                        setPickedCoords({ latitude: loc.latitude, longitude: loc.longitude });
+                      }
+                    }}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: '#0891b2',
+                      backgroundColor: '#e0f2fe',
+                      borderRadius: 999,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      marginRight: 8,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <Text style={{ color: '#0e7490', fontWeight: '700', fontSize: 12 }}>{loc.area}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {/* GPS-derived area suggestions */}
+          {gpsSuggestions.length > 0 ? (
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ color: '#64748b', fontSize: 12, fontWeight: '700', marginBottom: 6 }}>\uD83D\uDCCD Nearby areas</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                {gpsSuggestions.map((s) => (
+                  <TouchableOpacity
+                    key={`sug-${s}`}
+                    onPress={() => setArea(s)}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: '#a78bfa',
+                      backgroundColor: '#ede9fe',
+                      borderRadius: 999,
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      marginRight: 8,
+                      marginBottom: 6,
+                    }}
+                  >
+                    <Text style={{ color: '#6d28d9', fontWeight: '700', fontSize: 12 }}>{s}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ) : null}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {AREAS.map((value) => {
               const selected = area === value;

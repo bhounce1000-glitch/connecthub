@@ -261,7 +261,10 @@ export async function getDirectionsRoute(originLat, originLon, destLat, destLon)
     { latitude: destLat, longitude: destLon },
   ];
 
-  if (!apiKey) return fallback;
+  if (!apiKey) {
+    console.warn('[ConnectHub] EXPO_PUBLIC_GOOGLE_MAPS_API_KEY is not set — using straight-line route fallback.');
+    return fallback;
+  }
 
   try {
     const url =

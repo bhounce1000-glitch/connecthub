@@ -24,11 +24,17 @@
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "ConnectHub needs access to your photo library to set a profile picture.",
         "NSCameraUsageDescription": "ConnectHub needs access to your camera to take a profile picture.",
-        "NSLocationWhenInUseUsageDescription": "ConnectHub needs your location so you can pin exact job addresses on the map."
+        "NSLocationWhenInUseUsageDescription": "ConnectHub needs your location so you can pin exact job addresses on the map.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.bhounceconnecthub",
+      "config": {
+        "googleMaps": {
+          "apiKey": "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY"
+        }
+      },
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -40,7 +46,8 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.INTERNET",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {

@@ -4820,6 +4820,11 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
       budget,
       urgency,
       preferredDate,
+      latitude,
+      longitude,
+      address: fullAddress || locationLabel,
+      locationArea: area,
+      hasGpsLocation: Number.isFinite(latitude) && Number.isFinite(longitude),
       location: {
         area,
         fullAddress,
