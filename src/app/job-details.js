@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, getDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Linking, Platform, ScrollView, Text, View } from 'react-native';
+import { Alert, Linking, Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
 import useAuthUser from '../hooks/use-auth-user';
 
@@ -163,6 +163,15 @@ export default function JobDetails() {
     }
   };
 
+  // Clean up live location document when job reaches a terminal state.
+  useEffect(() => {
+    const terminalStatuses = ['done', 'confirmed', 'paid', 'completed', 'cancelled'];
+    const currentStatus = String(job?.status || '').trim().toLowerCase();
+    if (terminalStatuses.includes(currentStatus) && resolvedRequestId) {
+      deleteDoc(doc(db, 'liveLocations', resolvedRequestId)).catch(() => {});
+    }
+  }, [job?.status, resolvedRequestId]);
+
   useEffect(() => {
     if (!job || !isDoneLike) {
       setDoneCountdown('');
@@ -321,6 +330,90 @@ export default function JobDetails() {
             onPress={handleOpenDirections}
             style={{ marginBottom: 8, backgroundColor: '#0ea5e9' }}
           />
+        ) : null}
+
+        {/* Live Map — provider view: share location and see route to job site */}
+        {isAssignedProvider &&
+          (statusKey === 'accepted' || statusKey === 'in_progress') &&
+          destinationCoords ? (
+          <TouchableOpacity
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#1d4ed8',
+              borderRadius: 12,
+              paddingVertical: 16,
+              paddingHorizontal: 20,
+              gap: 14,
+              marginBottom: 8,
+            }}
+            onPress={() =>
+              router.push({
+                pathname: '/live-map',
+                params: {
+                  jobId: job.id,
+                  jobTitle: job.title || job.category || 'Job',
+                  customerLat: String(destinationCoords.latitude),
+                  customerLon: String(destinationCoords.longitude),
+                  customerAddress: locationLabel,
+                  isProvider: 'true',
+                },
+              })
+            }
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 24 }}>🗺️</Text>
+            <View>
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                Open Live Map
+              </Text>
+              <Text style={{ color: '#bfdbfe', fontSize: 12, marginTop: 2 }}>
+                Track your route and share location with customer
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
+        {/* Live Map — customer view: watch provider moving in real-time */}
+        {isOwner &&
+          (statusKey === 'accepted' || statusKey === 'in_progress') &&
+          destinationCoords ? (
+          <TouchableOpacity
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#059669',
+              borderRadius: 12,
+              paddingVertical: 16,
+              paddingHorizontal: 20,
+              gap: 14,
+              marginBottom: 8,
+            }}
+            onPress={() =>
+              router.push({
+                pathname: '/live-map',
+                params: {
+                  jobId: job.id,
+                  jobTitle: job.title || job.category || 'Job',
+                  customerLat: String(destinationCoords.latitude),
+                  customerLon: String(destinationCoords.longitude),
+                  customerAddress: locationLabel,
+                  isProvider: 'false',
+                },
+              })
+            }
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 24 }}>📡</Text>
+            <View>
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                Track Provider Live
+              </Text>
+              <Text style={{ color: '#a7f3d0', fontSize: 12, marginTop: 2 }}>
+                See provider moving on the map in real-time
+              </Text>
+            </View>
+          </TouchableOpacity>
         ) : null}
 
         {canFundEscrow ? (
