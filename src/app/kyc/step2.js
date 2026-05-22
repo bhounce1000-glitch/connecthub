@@ -19,7 +19,7 @@ import useAuthUser from '../../hooks/use-auth-user';
 const ID_TYPES = ["National ID", "Passport", "Driver's License", "Voter's ID"];
 
 const ID_TYPE_HINTS = {
-  'National ID': 'e.g. GHA-12345678-0',
+  'National ID': 'e.g. GHA-123456789-0',
   Passport: 'e.g. A1234567',
   "Driver's License": 'e.g. D-1234-567890',
   "Voter's ID": 'e.g. VOT-123456789',
@@ -53,6 +53,29 @@ function normalizeIdNumber(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
+// Auto-format a Ghana Card number on blur.
+// Input variants accepted: raw digits, GHA digits, GHA-...-. etc.
+function formatGhanaCard(raw) {
+  const upper = String(raw || '').toUpperCase().replace(/\s/g, '');
+  // Already correct format — leave it alone.
+  if (/^GHA-\d{7,10}-\d$/.test(upper)) return upper;
+  // Strip GHA prefix (with or without hyphen), then grab only digits.
+  const stripped = upper.replace(/^GHA-?/, '');
+  const digits = stripped.replace(/\D/g, '');
+  if (digits.length < 2) return upper; // Not enough to format — return as-is.
+  const middle = digits.slice(0, digits.length - 1);
+  const check = digits.slice(-1);
+  return `GHA-${middle}-${check}`;
+}
+
+// Normalise Ghana phone numbers: +233XXXXXXXXX → 0XXXXXXXXX.
+function normalizeGhanaPhone(value) {
+  const v = String(value || '').trim().replace(/\s/g, '');
+  if (v.startsWith('+233') && v.length > 4) return '0' + v.slice(4);
+  if (v.startsWith('233') && v.length > 3) return '0' + v.slice(3);
+  return v;
+}
+
 function validateIdNumberByType(idType, rawValue) {
   const value = normalizeIdNumber(rawValue);
   if (!value) {
@@ -60,14 +83,15 @@ function validateIdNumberByType(idType, rawValue) {
   }
 
   const rules = {
-    'National ID': /^GHA-\d{8}-\d$/,
+    // GHA-<7-10 digits>-<1 check digit>  — real cards use 9 middle digits
+    'National ID': /^GHA-\d{7,10}-\d$/,
     Passport: /^[A-Z][0-9]{7,8}$/,
     "Driver's License": /^[A-Z]-\d{4}-\d{6}$/,
     "Voter's ID": /^VOT-\d{9}$/,
   };
 
   const samples = {
-    'National ID': 'GHA-12345678-0',
+    'National ID': 'GHA-123456789-0',
     Passport: 'A1234567',
     "Driver's License": 'D-1234-567890',
     "Voter's ID": 'VOT-123456789',
@@ -221,6 +245,40 @@ export default function KycStep2() {
     setErrors((prev) => ({ ...prev, [field]: undefined }));
   };
 
+  // Auto-format Ghana Card as the user types; uppercase everything else.
+  const handleIdNumberChange = (raw) => {
+    if (form.idType !== 'National ID') {
+      set('idNumber', raw.toUpperCase().trimStart());
+      return;
+    }
+    const upper = raw.toUpperCase().replace(/\s/g, '');
+    // User is typing manually with hyphens — let them lead, just uppercase.
+    if (upper.includes('-')) {
+      set('idNumber', upper);
+      return;
+    }
+    // Digit-only (or GHA prefix without hyphens) — auto-insert separators.
+    const withoutGha = upper.startsWith('GHA') ? upper.slice(3) : upper;
+    const digits = withoutGha.replace(/\D/g, '');
+    if (digits.length === 0) { set('idNumber', upper.startsWith('GHA') ? 'GHA-' : ''); return; }
+    if (digits.length < 10) {
+      set('idNumber', `GHA-${digits}`);
+    } else {
+      set('idNumber', `GHA-${digits.slice(0, -1)}-${digits.slice(-1)}`);
+    }
+  };
+
+  // On blur, apply full Ghana Card formatting and phone normalisation.
+  const handleIdNumberBlur = () => {
+    if (form.idType === 'National ID' && form.idNumber) {
+      set('idNumber', formatGhanaCard(form.idNumber));
+    }
+  };
+
+  const handlePhoneBlur = () => {
+    if (form.phone) set('phone', normalizeGhanaPhone(form.phone));
+  };
+
   const handleUpload = async (side) => {
     setUploading((prev) => ({ ...prev, [side]: true }));
     setErrors((prev) => ({ ...prev, [`id${side === 'front' ? 'Front' : 'Back'}Url`]: undefined }));
@@ -317,9 +375,10 @@ export default function KycStep2() {
 
           <AppInput
             label="Primary Phone Number"
-            placeholder="+233 20 000 0000"
+            placeholder="0553 000 000"
             value={form.phone}
             onChangeText={(v) => set('phone', v)}
+            onBlur={handlePhoneBlur}
             error={errors.phone}
             keyboardType="phone-pad"
             labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}
@@ -367,7 +426,8 @@ export default function KycStep2() {
             label="ID Number"
             placeholder={ID_TYPE_HINTS[form.idType] || 'As shown on your document'}
             value={form.idNumber}
-            onChangeText={(v) => set('idNumber', v)}
+            onChangeText={handleIdNumberChange}
+            onBlur={handleIdNumberBlur}
             error={errors.idNumber}
             autoCapitalize="characters"
             labelStyle={{ color: '#6366f1', fontWeight: '700', fontSize: 15 }}

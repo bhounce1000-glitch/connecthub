@@ -38,6 +38,31 @@ const SOCIAL_AUTH_ENABLED = {
 const SIGNUP_ATTEMPTS_KEY = 'connecthub_signup_attempts';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Common email domain typos → correct spellings.
+const EMAIL_DOMAIN_CORRECTIONS = {
+  'gmal.com': 'gmail.com', 'gmial.com': 'gmail.com', 'gmaill.com': 'gmail.com',
+  'gnail.com': 'gmail.com', 'gamil.com': 'gmail.com', 'gimail.com': 'gmail.com',
+  'gmai.com': 'gmail.com', 'gmail.co': 'gmail.com', 'gmail.cm': 'gmail.com',
+  'gmail.con': 'gmail.com', 'gmaim.com': 'gmail.com',
+  'yahooo.com': 'yahoo.com', 'yaho.com': 'yahoo.com', 'yahoo.co': 'yahoo.com',
+  'yhaoo.com': 'yahoo.com', 'yahho.com': 'yahoo.com',
+  'hotmial.com': 'hotmail.com', 'hotmai.com': 'hotmail.com', 'homail.com': 'hotmail.com',
+  'hotmail.co': 'hotmail.com', 'hotmal.com': 'hotmail.com',
+  'outlok.com': 'outlook.com', 'outook.com': 'outlook.com', 'outlook.co': 'outlook.com',
+  'iclod.com': 'icloud.com', 'icloud.co': 'icloud.com',
+};
+
+function detectEmailTypo(emailValue) {
+  const trimmed = String(emailValue || '').trim().toLowerCase();
+  if (!trimmed.includes('@')) return null;
+  const atIdx = trimmed.lastIndexOf('@');
+  const local = trimmed.slice(0, atIdx);
+  const domain = trimmed.slice(atIdx + 1);
+  const correction = EMAIL_DOMAIN_CORRECTIONS[domain];
+  if (!correction) return null;
+  return `${local}@${correction}`;
+}
+
 function validateUsername(value) {
   const v = String(value || '').trim();
   if (!v) return 'Username is required.';
@@ -133,8 +158,13 @@ export default function Auth() {
   const [otpSent, setOtpSent] = useState(false);
   const [otpCooldown, setOtpCooldown] = useState(0);
   const [otpExpiry, setOtpExpiry] = useState(600);
+  const [emailSuggestion, setEmailSuggestion] = useState(null);
   const passwordStrength = getPasswordStrength(password);
   const normalizedEmail = email.trim().toLowerCase();
+
+  const handleEmailBlur = () => {
+    setEmailSuggestion(detectEmailTypo(email));
+  };
 
   const logSignupFailure = useCallback(async (errorType, errorMessage, metadata = {}) => {
     try {
@@ -915,13 +945,26 @@ export default function Auth() {
               label="Email"
               placeholder="Email"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(v) => { setEmail(v); setEmailSuggestion(null); }}
+              onBlur={handleEmailBlur}
               autoCapitalize="none"
               keyboardType="email-address"
               editable={!isSubmitting}
               error={fieldErrors.email}
               inputStyle={{ backgroundColor: AppColors.slate50 }}
             />
+            {emailSuggestion ? (
+              <TouchableOpacity
+                onPress={() => { setEmail(emailSuggestion); setEmailSuggestion(null); }}
+                style={{ backgroundColor: '#fef3c7', borderRadius: 8, padding: 10, marginTop: -6, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }}
+              >
+                <Text style={{ color: '#92400e', fontSize: 13 }}>
+                  Did you mean{' '}
+                  <Text style={{ fontWeight: '800' }}>{emailSuggestion}</Text>?
+                  {'  '}Tap to fix.
+                </Text>
+              </TouchableOpacity>
+            ) : null}
 
             <AppInput
               label="Password"
