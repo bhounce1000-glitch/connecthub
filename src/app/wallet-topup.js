@@ -38,7 +38,14 @@ export default function WalletTopup() {
         await Linking.openURL(authorizationUrl);
       }
     } catch (error) {
-      setNotice({ tone: 'error', title: 'Top up failed', message: error.message || 'Could not initialize top up checkout.' });
+      const isNetworkError = error.message === 'Failed to fetch' || error.message?.includes('network') || error.message?.includes('fetch');
+      setNotice({
+        tone: 'error',
+        title: 'Top up failed',
+        message: isNetworkError
+          ? 'Could not reach the payment server. Check your internet connection and try again.'
+          : (error.message || 'Could not initialize top up checkout.'),
+      });
     } finally {
       setIsSubmitting(false);
     }

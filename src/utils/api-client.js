@@ -28,7 +28,7 @@ export async function apiFetch(url, options = {}) {
   };
 
   if (requireAuth) {
-    const token = await auth.currentUser?.getIdToken(true);
+    const token = await auth.currentUser?.getIdToken();
     if (!token) {
       throw new Error('You are not authenticated');
     }

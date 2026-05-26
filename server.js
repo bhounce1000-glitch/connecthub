@@ -7704,23 +7704,31 @@ app.post('/wallet/topup/init', payInitLimiter, requireAuth, async (req, res) => 
 
     const callbackUrl = `${NORMALIZED_CALLBACK_BASE_URL}/wallet-topup-return`;
 
-    const response = await fetch('https://api.paystack.co/transaction/initialize', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${paystackSecret}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: actorEmail,
-        amount: Math.round(amount * 100),
-        callback_url: callbackUrl,
-        metadata: {
-          type: 'wallet_topup',
-          ownerEmail: actorEmail,
-          requestId: null,
+    const paystackController = new AbortController();
+    const paystackTimeout = setTimeout(() => paystackController.abort(), 10000);
+    let response;
+    try {
+      response = await fetch('https://api.paystack.co/transaction/initialize', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${paystackSecret}`,
+          'Content-Type': 'application/json',
         },
-      }),
-    });
+        body: JSON.stringify({
+          email: actorEmail,
+          amount: Math.round(amount * 100),
+          callback_url: callbackUrl,
+          metadata: {
+            type: 'wallet_topup',
+            ownerEmail: actorEmail,
+            requestId: null,
+          },
+        }),
+        signal: paystackController.signal,
+      });
+    } finally {
+      clearTimeout(paystackTimeout);
+    }
 
     const data = await response.json();
 
