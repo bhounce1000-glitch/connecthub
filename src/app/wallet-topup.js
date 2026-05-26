@@ -43,7 +43,7 @@ export default function WalletTopup() {
         tone: 'error',
         title: 'Top up failed',
         message: isNetworkError
-          ? 'Could not reach the payment server. Check your internet connection and try again.'
+          ? `Could not reach the payment server. [${error.name}: ${error.message}] — Check your internet connection and try again.`
           : (error.message || 'Could not initialize top up checkout.'),
       });
     } finally {
