@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { addDoc, collection, doc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -11,6 +11,8 @@ import {
     View,
 } from 'react-native';
 
+import MapPreview from '../components/MapPreview';
+import NavigateButton from '../components/NavigateButton';
 import { auth, db } from '../firebase';
 import {
     calculateDistance,

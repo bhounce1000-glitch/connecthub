@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { AppButton } from '../components/ui/app-button';
+import AppButton from '../components/ui/app-button';
 
 export default function NotFound() {
   const router = useRouter();
@@ -8,7 +8,7 @@ export default function NotFound() {
     <View style={styles.container}>
       <Text style={styles.title}>404 - Page Not Found</Text>
       <Text style={styles.subtitle}>Sorry, the page you requested does not exist.</Text>
-      <AppButton title="Go Home" onPress={() => router.replace('/home')} />
+      <AppButton label="Go Home" onPress={() => router.replace('/home')} />
     </View>
   );
 }

@@ -11,6 +11,7 @@ import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-t
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { calculateDistance, formatDistance, getCurrentLocation, getLocationCoords } from '../utils/location';
+import { getProviderBadge } from '../utils/provider-badges';
 
 const ALL = 'All';
 const FILTER_CATEGORIES = [
@@ -234,20 +235,21 @@ export default function Providers() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: AppSpace.lg }}>
-      <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: 12 }}>
+    <View style={{ flex: 1, backgroundColor: '#f3f6fb', padding: AppSpace.lg }}>
+      <View style={{ backgroundColor: AppColors.brandNavy, borderRadius: AppRadius.xl, padding: AppSpace.xl, marginBottom: 12, borderWidth: 1, borderColor: '#1e293b', ...AppShadow.lg }}>
         <Text style={{ color: '#93c5fd', fontSize: 12, fontWeight: '700', letterSpacing: 1 }}>CONNECTHUB</Text>
         <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }}>Browse Providers</Text>
-        <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
+        <Text style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 19, marginTop: 6 }}>Discover verified workers by skill, location, rating, and readiness to work.</Text>
+        <View style={{ flexDirection: 'row', marginTop: 12, gap: 8 }}>
           <StatBadge label="Total" value={topStats.total} bg="rgba(219,234,254,0.16)" color="#bfdbfe" />
           <StatBadge label="Pro" value={topStats.premium} bg="rgba(236,253,245,0.16)" color="#86efac" />
           <StatBadge label="Avg" value={topStats.avgRating} bg="rgba(254,249,195,0.16)" color="#fde68a" />
         </View>
       </View>
 
-      <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10 }}>
+      <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, borderWidth: 1, borderColor: '#dbeafe', paddingHorizontal: 14, paddingVertical: 12, marginBottom: 10, ...AppShadow.card }}>
         <TextInput
-          placeholder="Search by name, skill, or location"
+          placeholder="Search providers by name, service, skill, or location"
           value={searchText}
           onChangeText={setSearchText}
           placeholderTextColor="#94a3b8"
@@ -398,6 +400,7 @@ export default function Providers() {
             const avatarBg = AVATAR_COLORS[index % AVATAR_COLORS.length];
             const reviews = Number(item.jobsCompleted || item.reviewCount || 0);
             const photoCount = Array.isArray(item.portfolioPhotos) ? item.portfolioPhotos.length : 0;
+            const providerBadge = getProviderBadge(item);
             return (
               <AppCard style={{ marginBottom: 12, borderRadius: 12, ...AppShadow.card }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -424,8 +427,15 @@ export default function Providers() {
                         </View>
                       ) : null}
                     </View>
-                    <View style={{ marginTop: 4, alignSelf: 'flex-start', backgroundColor: '#dbeafe', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                      <Text style={{ color: '#1d4ed8', fontSize: 11, fontWeight: '700' }}>{item.category || 'General'}</Text>
+                    <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <View style={{ alignSelf: 'flex-start', backgroundColor: '#dbeafe', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                        <Text style={{ color: '#1d4ed8', fontSize: 11, fontWeight: '700' }}>{item.category || 'General'}</Text>
+                      </View>
+                      {providerBadge ? (
+                        <View style={{ alignSelf: 'flex-start', backgroundColor: providerBadge.bg, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
+                          <Text style={{ color: providerBadge.color, fontSize: 11, fontWeight: '700' }}>{providerBadge.label}</Text>
+                        </View>
+                      ) : null}
                     </View>
                   </View>
                 </View>

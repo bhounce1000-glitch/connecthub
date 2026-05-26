@@ -11,11 +11,13 @@ import { AppColors, AppRadius, AppSpace, AppType } from '../constants/design-tok
 
 // Firebase
 import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import NavigateButton from '../components/NavigateButton';
 import { API_BASE_URL } from '../constants/api';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
-import { getCurrentLocation } from '../utils/location';
+import { calculateDistance, formatDistance, getCurrentLocation } from '../utils/location';
+import { getProviderBadge } from '../utils/provider-badges';
 
 function StatBox({ label, value }) {
   return (
@@ -394,6 +396,22 @@ export default function ProviderDetail() {
             <SubscriptionBadge plan={provider.subscriptionPlan} />
           </View>
           <Text style={{ fontSize: 14, color: AppColors.ink500, marginTop: 4 }}>{provider.email}</Text>
+
+          {(() => {
+            const badge = getProviderBadge(provider);
+            return badge ? (
+              <View style={{
+                alignSelf: 'center',
+                backgroundColor: badge.bg,
+                borderRadius: 20,
+                paddingVertical: 5,
+                paddingHorizontal: 14,
+                marginTop: 8,
+              }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: badge.color }}>{badge.label}</Text>
+              </View>
+            ) : null;
+          })()}
 
           <View style={{ flexDirection: 'row', marginTop: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
             {provider.isAvailable ? (

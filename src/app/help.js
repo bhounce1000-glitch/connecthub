@@ -116,6 +116,51 @@ export default function HelpSupport() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: '#f8fafc' }} contentContainerStyle={{ padding: AppSpace.lg, paddingBottom: 40 }}>
 
+      {/* Prominent "Need Help?" support card */}
+      <View style={{
+        marginBottom: 16,
+        backgroundColor: '#1d4ed8',
+        borderRadius: 16,
+        padding: 20,
+        alignItems: 'center',
+        gap: 8,
+      }}>
+        <Text style={{ fontSize: 36 }}>🎧</Text>
+        <Text style={{ fontSize: 20, fontWeight: '800', color: '#fff' }}>Need Help?</Text>
+        <Text style={{ fontSize: 14, color: '#bfdbfe', textAlign: 'center' }}>
+          Our team is ready to assist you with any issue
+        </Text>
+        <TouchableOpacity
+          style={{
+            backgroundColor: '#fff',
+            borderRadius: 25,
+            paddingVertical: 12,
+            paddingHorizontal: 28,
+            marginTop: 8,
+          }}
+          onPress={() => openEmailSupport('Support Request')}
+          activeOpacity={0.85}
+        >
+          <Text style={{ color: '#1d4ed8', fontWeight: '700', fontSize: 15 }}>
+            📧 connecthub1000@gmail.com
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={{
+            backgroundColor: 'rgba(255,255,255,0.15)',
+            borderRadius: 25,
+            paddingVertical: 10,
+            paddingHorizontal: 28,
+          }}
+          onPress={() => Linking.openURL('https://wa.me/233200000000')}
+          activeOpacity={0.85}
+        >
+          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+            💬 WhatsApp Support
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Header */}
       <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: AppSpace.lg }}>
         <Text style={{ fontSize: 13, color: '#93c5fd', letterSpacing: 1, fontWeight: '700' }}>CONNECTHUB</Text>
@@ -175,6 +220,49 @@ export default function HelpSupport() {
         variant="neutral"
         onPress={() => router.back()}
       />
+
+      {/* Footer */}
+      <View style={{
+        marginTop: 24,
+        backgroundColor: '#0f172a',
+        borderRadius: 16,
+        padding: 24,
+        alignItems: 'center',
+        gap: 12,
+      }}>
+        <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff' }}>ConnectHub</Text>
+        <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>
+          Ghana&apos;s trusted marketplace for local services
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#1d4ed8',
+              borderRadius: 10,
+              paddingVertical: 10,
+              paddingHorizontal: 18,
+            }}
+            onPress={() => Linking.openURL('https://connecthub-1873e.web.app')}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🌐 Open Web App</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
+          © 2026 ConnectHub. All rights reserved.
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 20, marginTop: 4 }}>
+          <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7}>
+            <Text style={{ fontSize: 12, color: '#64748b' }}>Terms</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/privacy-policy')} activeOpacity={0.7}>
+            <Text style={{ fontSize: 12, color: '#64748b' }}>Privacy</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/help')} activeOpacity={0.7}>
+            <Text style={{ fontSize: 12, color: '#64748b' }}>Help</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 24 }}>
         <TouchableOpacity onPress={() => router.push('/terms')}>

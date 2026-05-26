@@ -46,6 +46,33 @@ export default function Root({ children }: PropsWithChildren) {
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="ConnectHub" />
 
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                var originalDefineProperty = Object.defineProperty;
+                Object.defineProperty = function (target, property, descriptor) {
+                  try {
+                    return originalDefineProperty(target, property, descriptor);
+                  } catch (error) {
+                    var isEthereumCollision =
+                      target === window &&
+                      property === 'ethereum' &&
+                      error &&
+                      /Cannot redefine property: ethereum/i.test(String(error.message || error));
+
+                    if (isEthereumCollision) {
+                      return target;
+                    }
+
+                    throw error;
+                  }
+                };
+              })();
+            `,
+          }}
+        />
+
         {/*
          * Expo Router's ScrollViewStyleReset prevents layout shifts on web by
          * resetting body/html default overflow styles.

@@ -3,8 +3,10 @@ import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { collection, doc, getDoc, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
+import HeroBanner from '../components/HeroBanner';
+import PromotionalTicker from '../components/PromotionalTicker';
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
 import AppNotice from '../components/ui/app-notice';
@@ -19,6 +21,7 @@ import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
 import { distanceKm, getLocationCity, getLocationCoords, getLocationLabel } from '../utils/location';
+import { getProviderBadge } from '../utils/provider-badges';
 
 const BLOCKED_PROVIDER_EMAIL_PARTS = ['test', 'gmx.dev', 'mailinator', 'example.com', 'local'];
 
@@ -70,6 +73,51 @@ const STATUS_META = {
   [REQUEST_STATUS.PAID]: { border: '#166534', pillBg: '#dcfce7', pillText: '#166534', label: 'Paid' },
 };
 
+const SERVICE_CATEGORIES = [
+  { icon: '🧹', label: 'Cleaning', value: 'Cleaning' },
+  { icon: '🔧', label: 'Plumbing', value: 'Plumbing' },
+  { icon: '⚡', label: 'Electrical', value: 'Electrical' },
+  { icon: '🚗', label: 'Driving', value: 'Driving' },
+  { icon: '🍳', label: 'Cooking', value: 'Cooking' },
+  { icon: '💇', label: 'Beauty', value: 'Beauty' },
+  { icon: '🏗️', label: 'Construction', value: 'Construction' },
+  { icon: '📦', label: 'Moving', value: 'Moving' },
+  { icon: '💻', label: 'Tech Support', value: 'Tech' },
+  { icon: '🌿', label: 'Gardening', value: 'Gardening' },
+  { icon: '🔒', label: 'Security', value: 'Security' },
+  { icon: '📚', label: 'Tutoring', value: 'Tutoring' },
+];
+
+const AVATAR_BG_COLORS = ['#dbeafe', '#fef3c7', '#dcfce7', '#ede9fe', '#fee2e2', '#e0f2fe', '#fce7f3'];
+function getAvatarColor(email) {
+  if (!email) return AVATAR_BG_COLORS[0];
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) { hash = email.charCodeAt(i) + ((hash << 5) - hash); }
+  return AVATAR_BG_COLORS[Math.abs(hash) % AVATAR_BG_COLORS.length];
+}
+
+const PROMOTION_MESSAGES = [
+  { text: 'Free provider spotlight for verified workers this week', route: '/subscription' },
+  { text: 'Post a service request and match with nearby trusted providers', route: '/request-wizard' },
+  { text: 'Escrow-backed jobs help protect customers and workers', route: '/help' },
+  { text: 'Upgrade your provider profile for better job visibility', route: '/provider-setup' },
+  { text: 'Explore verified local services across Ghana', route: '/providers' },
+];
+
+const SERVICE_MARKETPLACE_SECTIONS = [
+  { title: 'Featured Providers', subtitle: 'Verified workers with stronger profiles', route: '/providers', accent: '#4f46e5' },
+  { title: 'Local Services', subtitle: 'Cleaning, repairs, driving, catering and more', route: '/providers', accent: '#0f766e' },
+  { title: 'Top Job Requests', subtitle: 'Open paid jobs providers can accept now', route: '/request-wizard', accent: '#d97706' },
+  { title: 'Provider Boost', subtitle: 'Get more visibility with a serious profile', route: '/subscription', accent: '#be123c' },
+];
+
+const TRUST_SIGNALS = [
+  { label: 'Verified IDs', value: 'KYC' },
+  { label: 'Safe Payments', value: 'Escrow' },
+  { label: 'Live Routing', value: 'GPS' },
+  { label: 'Rated Providers', value: 'Reviews' },
+];
+
 function formatRelativeTime(value) {
   let postedMs = 0;
   if (value?.seconds) {
@@ -118,6 +166,7 @@ export default function Home() {
   const [activeJobCount, setActiveJobCount] = useState(0);
   const [heroWallet, setHeroWallet] = useState(0);
   const [heroRating, setHeroRating] = useState(null);
+  const [recentProviders, setRecentProviders] = useState([]);
 
   const monthlyAcceptsUsed = useMemo(() => {
     if (!currentEmail || !isProvider) return 0;
@@ -266,6 +315,26 @@ export default function Home() {
         .slice(0, 8);
       setProviders(rows);
     }, () => setProviders([]));
+  }, []);
+
+  useEffect(() => {
+    const recentQuery = query(
+      collection(db, 'users'),
+      where('role', '==', 'provider'),
+      limit(30),
+    );
+    return onSnapshot(recentQuery, (snapshot) => {
+      const rows = snapshot.docs
+        .map((d) => ({ id: d.id, email: d.id, ...d.data() }))
+        .filter((row) => isPublicProviderEmail(row.email || row.id))
+        .sort((a, b) => {
+          const aTs = a.createdAt?.seconds || 0;
+          const bTs = b.createdAt?.seconds || 0;
+          return bTs - aTs;
+        })
+        .slice(0, 8);
+      setRecentProviders(rows);
+    }, () => setRecentProviders([]));
   }, []);
 
   useEffect(() => {
@@ -625,15 +694,32 @@ export default function Home() {
     return summary;
   }, [requests]);
 
+  const topRatedProviders = useMemo(() => {
+    return [...providers]
+      .filter((p) => Number(p.avgRating || 0) > 0)
+      .sort((a, b) => Number(b.avgRating || 0) - Number(a.avgRating || 0))
+      .slice(0, 8);
+  }, [providers]);
+
   const renderListHeader = () => (
     <View>
+      {/* Promotional Ticker — full-width, negative margins counteract parent padding */}
+      <View style={{ marginHorizontal: -16, marginTop: -16 }}>
+        <PromotionalTicker />
+      </View>
+
+      {/* Hero Banner Carousel */}
+      <View style={{ marginHorizontal: -16, marginBottom: 12 }}>
+        <HeroBanner />
+      </View>
+
       {/* Hero header */}
-      <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.lg, marginBottom: AppSpace.md }}>
+      <View style={{ backgroundColor: AppColors.brandNavy, borderRadius: AppRadius.xl, padding: AppSpace.xl, marginBottom: AppSpace.md, borderWidth: 1, borderColor: '#1e293b', ...AppShadow.lg }}>
         <Text style={{ fontSize: 13, color: '#93c5fd', letterSpacing: 1, fontWeight: '700' }}>CONNECTHUB</Text>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 24, fontWeight: '800', color: '#f8fafc' }}>{greetingText}, {firstName} 👋</Text>
-            <Text style={{ color: '#94a3b8', marginTop: 2, fontSize: 13 }}>{currentEmail || 'Guest'}</Text>
+            <Text style={{ color: '#cbd5e1', marginTop: 4, fontSize: 13, lineHeight: 19 }}>Find verified local service providers, secure escrow payments, and track real work from request to payout.</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <TouchableOpacity
@@ -655,34 +741,172 @@ export default function Home() {
           </View>
         </View>
 
-        <View style={{ marginTop: 14, borderRadius: AppRadius.md, backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Active Jobs: {dashboardStats.activeJobs}</Text>
-          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Wallet: GHS {dashboardStats.walletValue.toFixed(2)}</Text>
-          <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '700' }}>Rating: {dashboardStats.ratingValue ? `${dashboardStats.ratingValue.toFixed(1)} ⭐` : 'New ⭐'}</Text>
+        <View style={{ marginTop: 16, flexDirection: 'row', gap: 8 }}>
+          <HeroMetric label="Active Jobs" value={dashboardStats.activeJobs} />
+          <HeroMetric label="Wallet" value={`GHS ${dashboardStats.walletValue.toFixed(2)}`} />
+          <HeroMetric label="Rating" value={dashboardStats.ratingValue ? dashboardStats.ratingValue.toFixed(1) : 'New'} />
         </View>
       </View>
 
       {/* Search bar */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 10, marginBottom: AppSpace.md, ...AppShadow.card }}>
-        <Text style={{ marginRight: 8, fontSize: 16 }}>🔍</Text>
-        <TextInput
-          placeholder="Search jobs, services, providers..."
-          placeholderTextColor="#94a3b8"
-          value={searchText}
-          onChangeText={setSearchText}
-          style={{ flex: 1, fontSize: 14, color: AppColors.ink900 }}
-        />
-        <TouchableOpacity onPress={openStatusFilterPicker} style={{ marginLeft: 6, backgroundColor: '#eff6ff', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 6 }}>
-          <Text style={{ color: '#1d4ed8', fontWeight: '700' }}>≡</Text>
+      <View style={{
+        margin: 0,
+        marginBottom: 12,
+        flexDirection: 'row',
+        gap: 10,
+        alignItems: 'center',
+      }}>
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#fff',
+            borderRadius: 12,
+            borderWidth: 1.5,
+            borderColor: '#e2e8f0',
+            paddingHorizontal: 14,
+            height: 50,
+            gap: 10,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.06,
+            shadowRadius: 4,
+            elevation: 2,
+          }}
+          onPress={() => router.push('/providers')}
+          activeOpacity={0.8}
+        >
+          <Text style={{ fontSize: 18 }}>🔍</Text>
+          <Text style={{ fontSize: 15, color: '#94a3b8', flex: 1 }}>
+            Search services, providers...
+          </Text>
         </TouchableOpacity>
-        {searchText.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchText('')}>
-            <Text style={{ color: '#94a3b8', fontSize: 16, paddingLeft: 8 }}>✕</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={{
+            width: 50,
+            height: 50,
+            backgroundColor: '#1d4ed8',
+            borderRadius: 12,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onPress={openStatusFilterPicker}
+          activeOpacity={0.8}
+        >
+          <Text style={{ fontSize: 20 }}>⚙️</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Quick actions */}
+      <View style={{ backgroundColor: '#111827', borderRadius: AppRadius.md, paddingVertical: 10, paddingHorizontal: 12, marginBottom: AppSpace.md, overflow: 'hidden' }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {PROMOTION_MESSAGES.map((item, index) => (
+            <TouchableOpacity
+              key={item.text}
+              activeOpacity={0.8}
+              onPress={() => router.push(item.route)}
+              style={{ flexDirection: 'row', alignItems: 'center', marginRight: 20 }}
+            >
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: index % 2 === 0 ? '#22c55e' : '#f59e0b', marginRight: 8 }} />
+              <Text style={{ color: '#f8fafc', fontWeight: '800', fontSize: 12 }}>{item.text}</Text>
+              <Text style={{ color: '#64748b', fontSize: 12, marginLeft: 4 }}>›</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      <View style={{ marginBottom: AppSpace.md }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>Explore ConnectHub</Text>
+          <TouchableOpacity onPress={() => router.push('/providers')}>
+            <Text style={{ color: '#4f46e5', fontWeight: '700', fontSize: 13 }}>Browse all</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+          {SERVICE_MARKETPLACE_SECTIONS.map((section) => (
+            <TouchableOpacity
+              key={section.title}
+              onPress={() => router.push(section.route)}
+              activeOpacity={0.86}
+              style={{ flexBasis: '47%', flexGrow: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, ...AppShadow.card }}
+            >
+              <View style={{ width: 30, height: 4, borderRadius: 2, backgroundColor: section.accent, marginBottom: 10 }} />
+              <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 14 }}>{section.title}</Text>
+              <Text style={{ color: '#64748b', fontSize: 12, marginTop: 4, lineHeight: 16 }} numberOfLines={2}>{section.subtitle}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      <View style={{ backgroundColor: '#ecfdf5', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#bbf7d0', padding: 12, marginBottom: AppSpace.md }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+          {TRUST_SIGNALS.map((signal) => (
+            <View key={signal.label} style={{ flex: 1, alignItems: 'center' }}>
+              <Text style={{ color: '#047857', fontWeight: '900', fontSize: 13 }}>{signal.value}</Text>
+              <Text style={{ color: '#475569', fontWeight: '700', fontSize: 11, marginTop: 2, textAlign: 'center' }}>{signal.label}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* Browse by Category — horizontal icon scroll */}
+      <View style={{ marginBottom: AppSpace.md }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f172a' }}>Browse by Category</Text>
+          <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
+            <Text style={{ fontSize: 13, color: '#1d4ed8', fontWeight: '600' }}>See All →</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
+          {SERVICE_CATEGORIES.map((cat) => (
+            <TouchableOpacity
+              key={cat.value}
+              onPress={() => router.push({ pathname: '/providers', params: { category: cat.value } })}
+              style={{
+                alignItems: 'center',
+                backgroundColor: '#fff',
+                borderRadius: 14,
+                padding: 14,
+                width: 80,
+                borderWidth: 1,
+                borderColor: '#e2e8f0',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.05,
+                shadowRadius: 4,
+                elevation: 2,
+              }}
+              activeOpacity={0.75}
+            >
+              <Text style={{ fontSize: 26, marginBottom: 6 }}>{cat.icon}</Text>
+              <Text style={{ fontSize: 11, color: '#334155', fontWeight: '600', textAlign: 'center' }}>{cat.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Stats Banner — social proof */}
+      <View style={{
+        marginBottom: 16,
+        backgroundColor: '#0f172a',
+        borderRadius: 14,
+        padding: 16,
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+      }}>
+        {[
+          { number: '500+', label: 'Jobs Posted' },
+          { number: '200+', label: 'Providers' },
+          { number: '4.8★', label: 'Avg Rating' },
+          { number: 'GHS', label: 'Safe Escrow' },
+        ].map((stat, i) => (
+          <View key={i} style={{ alignItems: 'center' }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#ffffff' }}>{stat.number}</Text>
+            <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{stat.label}</Text>
+          </View>
+        ))}
+      </View>
+
       <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
         <TouchableOpacity onPress={() => router.push('/request-wizard')} style={{ flex: 1, backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center' }}>
           <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>＋ Post a Job</Text>
@@ -740,6 +964,20 @@ export default function Home() {
         )}
       </View>
 
+      <TouchableOpacity
+        onPress={() => router.push('/help')}
+        activeOpacity={0.86}
+        style={{ backgroundColor: '#fff', borderRadius: AppRadius.md, borderWidth: 1, borderColor: '#dbeafe', padding: 12, marginBottom: AppSpace.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', ...AppShadow.card }}
+      >
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={{ color: AppColors.ink900, fontWeight: '900', fontSize: 14 }}>Customer Support</Text>
+          <Text style={{ color: '#64748b', fontSize: 12, marginTop: 3 }}>Need help with a provider, escrow payment, location, or account verification?</Text>
+        </View>
+        <View style={{ backgroundColor: '#eff6ff', borderRadius: AppRadius.md, paddingHorizontal: 12, paddingVertical: 8 }}>
+          <Text style={{ color: '#1d4ed8', fontWeight: '900', fontSize: 12 }}>Get Help</Text>
+        </View>
+      </TouchableOpacity>
+
       {isAdmin && (
         <TouchableOpacity onPress={handleLogout} style={{ backgroundColor: '#fff0f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', marginBottom: AppSpace.md }}>
           <Text style={{ color: '#be123c', fontWeight: '700' }}>Logout</Text>
@@ -786,31 +1024,218 @@ export default function Home() {
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {providers.map((p) => (
-              <TouchableOpacity
-                key={p.id}
-                onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
-                style={{ width: 170, marginRight: 12 }}
-              >
-                <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, padding: 14, borderWidth: 1, borderColor: '#e2e8f0' }}>
-                  <Avatar src={p.profilePicture} email={p.email} size={48} />
-                  <Text style={{ fontWeight: '700', fontSize: 14, color: AppColors.ink900, marginTop: 8 }} numberOfLines={1}>
-                    {p.name || p.email}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: '#4f46e5', fontWeight: '600', marginTop: 2 }} numberOfLines={1}>
-                    {p.category || 'Provider'}
-                  </Text>
-                  {p.avgRating ? (
-                    <Text style={{ fontSize: 12, color: AppColors.ink500, marginTop: 4 }}>⭐ {Number(p.avgRating).toFixed(1)}</Text>
-                  ) : (
-                    <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>New provider</Text>
-                  )}
-                  {p.startingPrice ? (
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#059669', marginTop: 4 }}>From GHS {p.startingPrice}</Text>
-                  ) : null}
-                </View>
-              </TouchableOpacity>
-            ))}
+            {providers.map((p) => {
+              const providerCity = getLocationCity(p.location) || getLocationCity(p.city) || null;
+              const badge = getProviderBadge(p);
+              const avatarBg = getAvatarColor(p.email);
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
+                  style={{
+                    width: 160,
+                    marginRight: 12,
+                    backgroundColor: '#fff',
+                    borderRadius: 14,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: '#e2e8f0',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.07,
+                    shadowRadius: 6,
+                    elevation: 3,
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ height: 80, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 32, fontWeight: '800', color: '#1e3a8a' }}>
+                      {(p.name || p.email || '?').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ padding: 10, gap: 4 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }} numberOfLines={1}>
+                      {p.name || p.email}
+                    </Text>
+                    {p.category ? (
+                      <Text style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '600' }}>{p.category}</Text>
+                    ) : null}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                      <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '600' }}>
+                        ⭐ {p.avgRating ? Number(p.avgRating).toFixed(1) : 'New'}
+                      </Text>
+                      {p.startingPrice ? (
+                        <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
+                          GHS {p.startingPrice}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {providerCity ? (
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
+                    ) : null}
+                    {badge ? (
+                      <View style={{
+                        alignSelf: 'flex-start',
+                        backgroundColor: badge.bg,
+                        borderRadius: 20,
+                        paddingVertical: 3,
+                        paddingHorizontal: 8,
+                        marginTop: 4,
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: badge.color }}>{badge.label}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Top Rated This Week */}
+      {topRatedProviders.length > 0 && (
+        <View style={{ marginBottom: AppSpace.md }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>🔥 Top Rated This Week</Text>
+            <TouchableOpacity onPress={() => router.push('/providers')}>
+              <Text style={{ color: '#4f46e5', fontWeight: '600', fontSize: 13 }}>See all →</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {topRatedProviders.map((p) => {
+              const providerCity = getLocationCity(p.location) || null;
+              const badge = getProviderBadge(p);
+              const avatarBg = getAvatarColor(p.email);
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
+                  style={{
+                    width: 160,
+                    marginRight: 12,
+                    backgroundColor: '#fff',
+                    borderRadius: 14,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: '#e2e8f0',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.07,
+                    shadowRadius: 6,
+                    elevation: 3,
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ height: 80, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 32, fontWeight: '800', color: '#1e3a8a' }}>
+                      {(p.name || p.email || '?').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ padding: 10, gap: 4 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }} numberOfLines={1}>
+                      {p.name || p.email}
+                    </Text>
+                    {p.category ? (
+                      <Text style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '600' }}>{p.category}</Text>
+                    ) : null}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
+                      <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '700' }}>
+                        ⭐ {Number(p.avgRating).toFixed(1)}
+                      </Text>
+                      {p.startingPrice ? (
+                        <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
+                          GHS {p.startingPrice}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {providerCity ? (
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
+                    ) : null}
+                    {badge ? (
+                      <View style={{
+                        alignSelf: 'flex-start',
+                        backgroundColor: badge.bg,
+                        borderRadius: 20,
+                        paddingVertical: 3,
+                        paddingHorizontal: 8,
+                        marginTop: 4,
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: badge.color }}>{badge.label}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Recently Joined Providers */}
+      {recentProviders.length > 0 && (
+        <View style={{ marginBottom: AppSpace.md }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: AppColors.ink900 }}>🆕 Recently Joined Providers</Text>
+            <TouchableOpacity onPress={() => router.push('/providers')}>
+              <Text style={{ color: '#4f46e5', fontWeight: '600', fontSize: 13 }}>See all →</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {recentProviders.map((p) => {
+              const providerCity = getLocationCity(p.location) || null;
+              const avatarBg = getAvatarColor(p.email);
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
+                  style={{
+                    width: 160,
+                    marginRight: 12,
+                    backgroundColor: '#fff',
+                    borderRadius: 14,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: '#e2e8f0',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.07,
+                    shadowRadius: 6,
+                    elevation: 3,
+                  }}
+                  activeOpacity={0.8}
+                >
+                  {/* NEW badge ribbon */}
+                  <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 1, backgroundColor: '#7c3aed', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+                    <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>NEW</Text>
+                  </View>
+                  <View style={{ height: 80, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontSize: 32, fontWeight: '800', color: '#1e3a8a' }}>
+                      {(p.name || p.email || '?').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ padding: 10, gap: 4 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }} numberOfLines={1}>
+                      {p.name || p.email}
+                    </Text>
+                    {p.category ? (
+                      <Text style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '600' }}>{p.category}</Text>
+                    ) : null}
+                    <Text style={{ fontSize: 11, color: '#7c3aed', fontWeight: '600', marginTop: 2 }}>
+                      Akwaaba! 🎉
+                    </Text>
+                    {providerCity ? (
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
+                    ) : null}
+                    {p.startingPrice ? (
+                      <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700', marginTop: 2 }}>
+                        GHS {p.startingPrice}
+                      </Text>
+                    ) : null}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
       )}
@@ -926,6 +1351,50 @@ export default function Home() {
           data={visibleRequests}
           keyExtractor={(item) => item.id}
           ListHeaderComponent={renderListHeader}
+          ListFooterComponent={() => (
+            <View style={{
+              margin: 0,
+              marginTop: 16,
+              marginHorizontal: -16,
+              backgroundColor: '#0f172a',
+              padding: 24,
+              alignItems: 'center',
+              gap: 12,
+            }}>
+              <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff' }}>ConnectHub</Text>
+              <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>
+                Ghana&apos;s trusted marketplace for local services
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#1d4ed8',
+                    borderRadius: 10,
+                    paddingVertical: 10,
+                    paddingHorizontal: 18,
+                  }}
+                  onPress={() => router.push('/providers')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🌐 Browse Providers</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
+                © 2026 ConnectHub. All rights reserved.
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 20, marginTop: 4 }}>
+                <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7}>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Terms</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/privacy-policy')} activeOpacity={0.7}>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Privacy</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/help')} activeOpacity={0.7}>
+                  <Text style={{ fontSize: 12, color: '#64748b' }}>Help</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
@@ -1112,6 +1581,15 @@ export default function Home() {
           <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700', marginTop: -2 }}>+</Text>
         </TouchableOpacity>
       </Animated.View>
+    </View>
+  );
+}
+
+function HeroMetric({ label, value }) {
+  return (
+    <View style={{ flex: 1, borderRadius: AppRadius.md, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', paddingVertical: 10, paddingHorizontal: 10 }}>
+      <Text style={{ color: '#94a3b8', fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>{label}</Text>
+      <Text style={{ color: '#f8fafc', fontSize: 13, fontWeight: '900', marginTop: 3 }} numberOfLines={1}>{value}</Text>
     </View>
   );
 }

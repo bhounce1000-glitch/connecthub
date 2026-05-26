@@ -8,7 +8,7 @@ export default function ScreenShell({
   subtitle,
   accentColor = AppColors.ink900,
   accentTextColor = AppColors.white,
-  backgroundColor = AppColors.slate50,
+  backgroundColor = '#f3f6fb',
   scroll = false,
   contentContainerStyle = null,
   children,
@@ -25,8 +25,10 @@ export default function ScreenShell({
           style={{
             backgroundColor: accentColor,
             borderRadius: AppRadius.xl,
-            padding: AppSpace.lg,
+            padding: AppSpace.xl,
             marginBottom: AppSpace.lg,
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.08)',
           }}
         >
           {eyebrow ? (

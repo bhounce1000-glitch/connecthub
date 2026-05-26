@@ -58,7 +58,7 @@ function normalizeIdNumber(value) {
 function formatGhanaCard(raw) {
   const upper = String(raw || '').toUpperCase().replace(/\s/g, '');
   // Already correct format — leave it alone.
-  if (/^GHA-\d{7,10}-\d$/.test(upper)) return upper;
+  if (/^GHA-\d{9}-\d$/.test(upper)) return upper;
   // Strip GHA prefix (with or without hyphen), then grab only digits.
   const stripped = upper.replace(/^GHA-?/, '');
   const digits = stripped.replace(/\D/g, '');
@@ -84,7 +84,7 @@ function validateIdNumberByType(idType, rawValue) {
 
   const rules = {
     // GHA-<7-10 digits>-<1 check digit>  — real cards use 9 middle digits
-    'National ID': /^GHA-\d{7,10}-\d$/,
+    'National ID': /^GHA-\d{9}-\d$/,
     Passport: /^[A-Z][0-9]{7,8}$/,
     "Driver's License": /^[A-Z]-\d{4}-\d{6}$/,
     "Voter's ID": /^VOT-\d{9}$/,

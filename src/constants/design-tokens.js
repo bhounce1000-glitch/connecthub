@@ -9,6 +9,10 @@ export const Colors = {
   primaryDark: '#1e3a8a',    // Deep navy for headers
   primaryLight: '#3b82f6',   // Lighter blue for accents
   primarySurface: '#eff6ff', // Very light blue background
+  brandNavy: '#08111f',
+  brandInk: '#101828',
+  brandGold: '#f59e0b',
+  brandTeal: '#0f766e',
   
   // Semantic Colors
   success: '#059669',        // Professional green
@@ -32,6 +36,33 @@ export const Colors = {
   ink100: '#f1f5f9',         // Light surfaces
   ink50:  '#f8fafc',         // Page background
   white:  '#ffffff',
+
+  // Compatibility aliases used across existing screens
+  slate50: '#f8fafc',
+  slate100: '#f1f5f9',
+  slate200: '#e2e8f0',
+  slate300: '#cbd5e1',
+  slate500: '#64748b',
+  slate700: '#334155',
+  slate900: '#0f172a',
+  neutral900: '#111827',
+  blue50: '#eff6ff',
+  blue100: '#dbeafe',
+  blue600: '#2563eb',
+  blue700: '#1d4ed8',
+  indigo50: '#eef2ff',
+  indigo600: '#4f46e5',
+  green50: '#f0fdf4',
+  green100: '#dcfce7',
+  green600: '#16a34a',
+  green700: '#15803d',
+  teal50: '#f0fdfa',
+  teal700: '#0f766e',
+  amber50: '#fffbeb',
+  amber100: '#fef3c7',
+  amber600: '#d97706',
+  rose50: '#fff1f2',
+  rose700: '#be123c',
   
   // Status badges - Semantic job states
   statusOpen: '#2563eb',
@@ -94,11 +125,14 @@ export const Spacing = {
 };
 
 export const Radius = {
+  xs: 4,
   sm: 6,
-  md: 10,
-  lg: 14,
-  xl: 18,
+  md: 8,
+  lg: 12,
+  xl: 16,
   '2xl': 24,
+  xxl: 24,
+  pill: 9999,
   full: 9999
 };
 

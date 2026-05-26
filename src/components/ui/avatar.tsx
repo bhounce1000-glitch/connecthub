@@ -36,7 +36,7 @@ export default function Avatar({
           alignItems: 'center',
           overflow: 'hidden',
           borderWidth: 2,
-          borderColor: AppColors.slate200,
+          borderColor: AppColors.ink200,
         },
         style,
       ]}

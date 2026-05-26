@@ -817,19 +817,61 @@ export default function Auth() {
       eyebrow="CONNECTHUB"
       title={isLogin ? 'Welcome Back' : 'Create Account'}
       subtitle={isLogin
-        ? 'Log in to manage requests, payments, and ratings.'
+        ? "Ghana's trusted local services marketplace. Find verified workers near you."
         : 'Join now and start offering or requesting services. Password must be 8+ characters with an uppercase letter and a number.'}
-      accentColor="#4338ca"
-      accentTextColor="#c7d2fe"
-      backgroundColor="#eef2ff"
+      accentColor={AppColors.brandNavy}
+      accentTextColor="#cbd5e1"
+      backgroundColor="#f3f6fb"
       cardStyle={{
         borderRadius: AppRadius.xxl,
         padding: AppSpace.xl,
         borderColor: '#dbeafe',
-        boxShadow: '0px 6px 18px rgba(30, 58, 138, 0.12)',
+        boxShadow: '0px 14px 38px rgba(15, 23, 42, 0.12)',
         elevation: 6,
       }}
     >
+        {isLogin ? (
+          <View style={{ marginBottom: AppSpace.lg }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: AppColors.ink900, marginBottom: 6 }}>
+              Find verified local service providers across Ghana
+            </Text>
+            <View style={{
+              backgroundColor: '#f1f5f9',
+              borderRadius: AppRadius.md,
+              borderWidth: 1,
+              borderColor: '#e2e8f0',
+              paddingHorizontal: 14,
+              paddingVertical: 11,
+              marginBottom: AppSpace.md,
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}>
+              <Text style={{ fontSize: 15, marginRight: 8 }}>🔍</Text>
+              <Text style={{ color: '#94a3b8', fontSize: 14 }}>What service do you need?</Text>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: AppSpace.md }}>
+              {['🔧 Plumbing', '⚡ Electrical', '🧹 Cleaning', '🚛 Moving', '💻 Tech Support', '🍳 Catering'].map((chip) => (
+                <View key={chip} style={{ backgroundColor: '#ede9fe', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 5 }}>
+                  <Text style={{ color: '#4f46e5', fontWeight: '700', fontSize: 12 }}>{chip}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {[
+                { icon: '✅', text: 'KYC-verified workers' },
+                { icon: '🔐', text: 'Escrow payments' },
+                { icon: '📍', text: 'GPS job matching' },
+                { icon: '⭐', text: 'Ratings & reviews' },
+              ].map((bullet) => (
+                <View key={bullet.text} style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f0fdf4', borderRadius: AppRadius.pill, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: '#bbf7d0' }}>
+                  <Text style={{ fontSize: 12 }}>{bullet.icon}</Text>
+                  <Text style={{ color: '#15803d', fontWeight: '700', fontSize: 11 }}>{bullet.text}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         <Text style={{ fontSize: AppType.overline, color: '#4338ca', fontWeight: '700', marginBottom: AppSpace.xs, fontFamily: 'serif' }}>
           {isLogin ? 'LOGIN' : 'SIGN UP'}
         </Text>

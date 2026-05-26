@@ -40,6 +40,11 @@ export default function AppButton({
           paddingHorizontal: 16,
           borderRadius: AppRadius.md,
           opacity: disabled || loading ? 0.6 : 1,
+          shadowColor: disabled || loading ? 'transparent' : baseColor,
+          shadowOffset: { width: 0, height: 5 },
+          shadowOpacity: disabled || loading ? 0 : 0.18,
+          shadowRadius: 12,
+          elevation: disabled || loading ? 0 : 3,
         },
         style,
       ]}
