@@ -146,20 +146,44 @@ export default function Notifications() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f8fafc', padding: 16 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text style={{ color: '#0f172a', fontWeight: '900', fontSize: 26 }}>Notifications</Text>
-        <TouchableOpacity onPress={markAllRead}>
-          <Text style={{ color: '#2563eb', fontWeight: '800' }}>Mark all as read</Text>
-        </TouchableOpacity>
+    <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+      {/* Header */}
+      <View style={{ backgroundColor: '#1e3a8a', paddingHorizontal: 16, paddingTop: 20, paddingBottom: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginTop: -1 }}>←</Text>
+          </TouchableOpacity>
+          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 22, flex: 1 }}>Notifications</Text>
+          {unreadCount > 0 ? (
+            <TouchableOpacity
+              onPress={markAllRead}
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 }}
+              activeOpacity={0.8}
+            >
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>Mark all read</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {unreadCount > 0 ? (
+          <Text style={{ color: '#93c5fd', fontSize: 12, marginTop: 6, marginLeft: 48 }}>
+            {unreadCount} unread notification{unreadCount > 1 ? 's' : ''}
+          </Text>
+        ) : (
+          <Text style={{ color: '#93c5fd', fontSize: 12, marginTop: 6, marginLeft: 48 }}>All caught up</Text>
+        )}
       </View>
 
-      <View style={{ flexDirection: 'row', marginTop: 10 }}>
+      <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingTop: 12 }}>
         <Tab text="All" active={tab === 'all'} onPress={() => setTab('all')} />
         <Tab text={`Unread (${unreadCount})`} active={tab === 'unread'} onPress={() => setTab('unread')} />
       </View>
 
       <FlatList
+        style={{ flex: 1, paddingHorizontal: 16 }}
         data={groupedRows}
         keyExtractor={(row) => row.id}
         ListEmptyComponent={

@@ -907,62 +907,87 @@ export default function Home() {
         ))}
       </View>
 
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
-        <TouchableOpacity onPress={() => router.push('/request-wizard')} style={{ flex: 1, backgroundColor: '#4f46e5', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>＋ Post a Job</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push(isProvider ? '/active-jobs' : '/my-requests')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
-          <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 13 }}>My Jobs</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={openWallet} activeOpacity={0.8} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
-          <Text style={{ color: AppColors.ink900, fontWeight: '700', fontSize: 13 }}>💰 Wallet</Text>
-        </TouchableOpacity>
-      </View>
+      {/* ── Quick Actions ─────────────────────────────── */}
+      <TouchableOpacity
+        onPress={() => router.push('/request-wizard')}
+        activeOpacity={0.88}
+        style={{
+          backgroundColor: '#4f46e5',
+          borderRadius: AppRadius.lg,
+          paddingVertical: 17,
+          marginBottom: AppSpace.md,
+          flexDirection: 'row',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: 12,
+          shadowColor: '#4f46e5',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 10,
+          elevation: 6,
+        }}
+      >
+        <Text style={{ fontSize: 22 }}>＋</Text>
+        <View>
+          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>Post a New Job</Text>
+          <Text style={{ color: '#c7d2fe', fontSize: 11, marginTop: 1 }}>Connect with a verified local provider</Text>
+        </View>
+      </TouchableOpacity>
 
-      {/* More navigation */}
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
-        <TouchableOpacity onPress={() => router.push('/providers')} style={{ flex: 1, backgroundColor: '#ede9fe', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
-          <Text style={{ color: '#4f46e5', fontWeight: '700', fontSize: 12 }}>🔎 Browse Providers</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/provider-setup')} style={{ flex: 1, backgroundColor: '#ecfdf5', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
-          <Text style={{ color: '#059669', fontWeight: '700', fontSize: 12 }}>🛠 Offer Services</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/notifications')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', position: 'relative' }}>
-          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🔔 Alerts</Text>
-          {unreadCount > 0 ? (
-            <View style={{ position: 'absolute', top: 6, right: 8, backgroundColor: '#dc2626', borderRadius: 9, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
-      </View>
-
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.sm }}>
-        <TouchableOpacity onPress={() => router.push('/profile')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
-          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>👤 Profile</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/subscription')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
-          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🚀 Subscription</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/referral')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
-          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>🎁 Referral</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={{ flexDirection: 'row', gap: 8, marginBottom: AppSpace.md }}>
-        <TouchableOpacity onPress={() => router.push('/payments')} style={{ flex: 1, backgroundColor: '#fff', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' }}>
-          <Text style={{ color: AppColors.ink700, fontWeight: '700', fontSize: 12 }}>💳 Payments</Text>
-        </TouchableOpacity>
-        {isAdmin ? (
-          <TouchableOpacity onPress={() => router.push('/admin')} style={{ flex: 1, backgroundColor: '#fef3c7', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
-            <Text style={{ color: '#92400e', fontWeight: '700', fontSize: 12 }}>⚙ Admin</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: AppSpace.md }}>
+        {[
+          { icon: '📋', label: 'My Jobs', onPress: () => router.push(isProvider ? '/active-jobs' : '/my-requests') },
+          { icon: '💰', label: 'Wallet', onPress: openWallet },
+          { icon: '🔔', label: 'Alerts', onPress: () => router.push('/notifications'), badge: unreadCount > 0 ? (unreadCount > 9 ? '9+' : String(unreadCount)) : null },
+          { icon: '🔎', label: 'Providers', onPress: () => router.push('/providers') },
+          { icon: '🛠', label: 'Offer Services', onPress: () => router.push('/provider-setup') },
+          { icon: '👤', label: 'Profile', onPress: () => router.push('/profile') },
+          { icon: '🚀', label: 'Subscription', onPress: () => router.push('/subscription') },
+          { icon: '🎁', label: 'Referral', onPress: () => router.push('/referral') },
+          isAdmin
+            ? { icon: '⚙️', label: 'Admin', onPress: () => router.push('/admin'), bg: '#fefce8', border: '#fde68a' }
+            : { icon: '💳', label: 'Payments', onPress: () => router.push('/payments') },
+        ].map((action) => (
+          <TouchableOpacity
+            key={action.label}
+            onPress={action.onPress}
+            activeOpacity={0.78}
+            style={{
+              width: '31%',
+              backgroundColor: action.bg || '#fff',
+              borderRadius: AppRadius.md,
+              paddingVertical: 14,
+              paddingHorizontal: 4,
+              alignItems: 'center',
+              borderWidth: 1,
+              borderColor: action.border || '#e2e8f0',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 1 },
+              shadowOpacity: 0.05,
+              shadowRadius: 3,
+              elevation: 1,
+              minHeight: 76,
+              justifyContent: 'center',
+            }}
+          >
+            <Text style={{ fontSize: 24, marginBottom: 6 }}>{action.icon}</Text>
+            <Text style={{ fontSize: 11, color: '#334155', fontWeight: '700', textAlign: 'center', lineHeight: 14 }}>{action.label}</Text>
+            {action.badge ? (
+              <View style={{ position: 'absolute', top: 8, right: 12, backgroundColor: '#dc2626', borderRadius: 9, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>{action.badge}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
-        ) : (
-          <TouchableOpacity onPress={handleLogout} style={{ flex: 1, backgroundColor: '#fff0f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center' }}>
-            <Text style={{ color: '#be123c', fontWeight: '700', fontSize: 12 }}>⬠ Logout</Text>
-          </TouchableOpacity>
-        )}
+        ))}
       </View>
+
+      <TouchableOpacity
+        onPress={handleLogout}
+        activeOpacity={0.7}
+        style={{ alignSelf: 'center', marginBottom: AppSpace.md, paddingVertical: 6, paddingHorizontal: 16 }}
+      >
+        <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '600' }}>Sign out of account</Text>
+      </TouchableOpacity>
 
       <TouchableOpacity
         onPress={() => router.push('/help')}
@@ -977,12 +1002,6 @@ export default function Home() {
           <Text style={{ color: '#1d4ed8', fontWeight: '900', fontSize: 12 }}>Get Help</Text>
         </View>
       </TouchableOpacity>
-
-      {isAdmin && (
-        <TouchableOpacity onPress={handleLogout} style={{ backgroundColor: '#fff0f0', borderRadius: AppRadius.md, paddingVertical: 12, alignItems: 'center', marginBottom: AppSpace.md }}>
-          <Text style={{ color: '#be123c', fontWeight: '700' }}>Logout</Text>
-        </TouchableOpacity>
-      )}
 
       <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
 

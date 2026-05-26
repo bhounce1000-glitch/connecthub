@@ -41,6 +41,7 @@ function QuickAction({ label, onPress }) {
   return (
     <TouchableOpacity
       onPress={onPress}
+      activeOpacity={0.78}
       style={{
         width: '48%',
         backgroundColor: '#fff',
@@ -48,10 +49,19 @@ function QuickAction({ label, onPress }) {
         borderColor: '#e2e8f0',
         borderRadius: AppRadius.md,
         paddingVertical: 14,
+        paddingHorizontal: 14,
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'space-between',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 3,
+        elevation: 1,
       }}
     >
-      <Text style={{ color: AppColors.ink900, fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 13 }}>{label}</Text>
+      <Text style={{ color: '#cbd5e1', fontSize: 16 }}>›</Text>
     </TouchableOpacity>
   );
 }
