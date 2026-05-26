@@ -1,4 +1,4 @@
-﻿import { useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -29,14 +29,14 @@ function isPublicProviderEmail(email) {
 
 function buildStars(rating) {
   const n = Math.max(0, Math.min(5, Math.round(Number(rating || 0))));
-  return `${'â˜…'.repeat(n)}${'â˜†'.repeat(5 - n)}`;
+  return `${'★'.repeat(n)}${'☆'.repeat(5 - n)}`;
 }
 
 function EmptyState({ category, onBrowseAll, onBecomeProvider, onPostRequest }) {
   const title = category && category !== ALL ? `No ${category} providers found` : 'No providers available right now';
   return (
     <View style={{ alignItems: 'center', paddingVertical: 52, paddingHorizontal: 12 }}>
-      <Text style={{ fontSize: 56 }}>ðŸ”</Text>
+      <Text style={{ fontSize: 56 }}>🔍</Text>
       <Text style={{ marginTop: 10, color: AppColors.ink900, fontWeight: '800', fontSize: 18, textAlign: 'center' }}>{title}</Text>
       <Text style={{ marginTop: 6, color: '#94a3b8', textAlign: 'center' }}>Check back later, browse all categories, or post your request now.</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 14, gap: 8 }}>
@@ -225,7 +225,7 @@ export default function Providers() {
     return {
       total: providers.length,
       premium: premiumCount,
-      avgRating: countWithRating > 0 ? (avg / countWithRating).toFixed(1) : 'New â­',
+      avgRating: countWithRating > 0 ? (avg / countWithRating).toFixed(1) : 'New ⭐',
     };
   }, [providers]);
 
@@ -343,7 +343,7 @@ export default function Providers() {
         </TouchableOpacity>
       </View>
 
-      {/* Distance filter chips â€” only visible in nearby mode */}
+      {/* Distance filter chips — only visible in nearby mode */}
       {viewMode === 'nearby' ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
           {['5', '10', '20', 'any'].map((km) => {
@@ -412,7 +412,7 @@ export default function Providers() {
                       <SubscriptionBadge plan={item.subscriptionPlan} />
                       {item.kycVerified === true || String(item.kycStatus || '').toLowerCase() === 'verified' ? (
                         <View style={{ backgroundColor: '#dcfce7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: '#166534', fontSize: 10, fontWeight: '800' }}>âœ“ VERIFIED</Text>
+                          <Text style={{ color: '#166534', fontSize: 10, fontWeight: '800' }}>✓ VERIFIED</Text>
                         </View>
                       ) : null}
                       {String(item.subscriptionPlan || '').toLowerCase() === 'pro' ? (
@@ -440,8 +440,8 @@ export default function Providers() {
                 </View>
 
                 <View style={{ marginTop: 10 }}>
-                  <Text style={{ color: '#0f172a', fontWeight: '700' }}>{buildStars(item.avgRating)} ({Number(item.avgRating || 0).toFixed(1)}) â€” {reviews} reviews</Text>
-                  <Text style={{ color: '#64748b', marginTop: 4 }}>ðŸ“ {item.location || 'Accra, Ghana'}</Text>
+                  <Text style={{ color: '#0f172a', fontWeight: '700' }}>{buildStars(item.avgRating)} ({Number(item.avgRating || 0).toFixed(1)}) — {reviews} reviews</Text>
+                  <Text style={{ color: '#64748b', marginTop: 4 }}>📍 {item.location || 'Accra, Ghana'}</Text>
                   {myLocation ? (() => {
                     const providerCoords = getLocationCoords(item.location) || (
                       Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude))
@@ -451,16 +451,16 @@ export default function Providers() {
                     if (!providerCoords) return null;
                     return (
                     <Text style={{ color: '#1d4ed8', marginTop: 4, fontWeight: '700' }}>
-                      ðŸ“ {formatDistance(calculateDistance(myLocation.latitude, myLocation.longitude, providerCoords.latitude, providerCoords.longitude))}
+                      📍 {formatDistance(calculateDistance(myLocation.latitude, myLocation.longitude, providerCoords.latitude, providerCoords.longitude))}
                     </Text>
                     );
                   })() : null}
                   <Text style={{ color: '#16a34a', marginTop: 4, fontWeight: '800' }}>From GHS {Number(item.startingPrice || 0).toFixed(2)}</Text>
-                  {photoCount > 0 ? <Text style={{ color: '#94a3b8', marginTop: 4 }}>ðŸ“· {photoCount} photos</Text> : null}
+                  {photoCount > 0 ? <Text style={{ color: '#94a3b8', marginTop: 4 }}>📷 {photoCount} photos</Text> : null}
                 </View>
 
                 <AppButton
-                  label="View Profile â†’"
+                  label="View Profile →"
                   onPress={() => router.push({ pathname: '/provider-detail', params: { email: item.email } })}
                   style={{ marginTop: 10, backgroundColor: '#1d4ed8' }}
                 />
@@ -470,7 +470,7 @@ export default function Providers() {
         />
       )}
 
-      <AppButton label="â† Back to Home" variant="neutral" onPress={() => router.replace('/home')} style={{ marginTop: 8 }} />
+      <AppButton label="← Back to Home" variant="neutral" onPress={() => router.replace('/home')} style={{ marginTop: 8 }} />
     </View>
   );
 }

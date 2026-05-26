@@ -1,4 +1,4 @@
-﻿import * as Location from 'expo-location';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { collection, doc, getDoc, limit, onSnapshot, query, where } from 'firebase/firestore';
@@ -73,18 +73,18 @@ const STATUS_META = {
 };
 
 const SERVICE_CATEGORIES = [
-  { icon: 'ðŸ§¹', label: 'Cleaning', value: 'Cleaning' },
-  { icon: 'ðŸ”§', label: 'Plumbing', value: 'Plumbing' },
-  { icon: 'âš¡', label: 'Electrical', value: 'Electrical' },
-  { icon: 'ðŸš—', label: 'Driving', value: 'Driving' },
-  { icon: 'ðŸ³', label: 'Cooking', value: 'Cooking' },
-  { icon: 'ðŸ’‡', label: 'Beauty', value: 'Beauty' },
-  { icon: 'ðŸ—ï¸', label: 'Construction', value: 'Construction' },
-  { icon: 'ðŸ“¦', label: 'Moving', value: 'Moving' },
-  { icon: 'ðŸ’»', label: 'Tech Support', value: 'Tech' },
-  { icon: 'ðŸŒ¿', label: 'Gardening', value: 'Gardening' },
-  { icon: 'ðŸ”’', label: 'Security', value: 'Security' },
-  { icon: 'ðŸ“š', label: 'Tutoring', value: 'Tutoring' },
+  { icon: '🧹', label: 'Cleaning', value: 'Cleaning' },
+  { icon: '🔧', label: 'Plumbing', value: 'Plumbing' },
+  { icon: '⚡', label: 'Electrical', value: 'Electrical' },
+  { icon: '🚗', label: 'Driving', value: 'Driving' },
+  { icon: '🍳', label: 'Cooking', value: 'Cooking' },
+  { icon: '💇', label: 'Beauty', value: 'Beauty' },
+  { icon: '🏗️', label: 'Construction', value: 'Construction' },
+  { icon: '📦', label: 'Moving', value: 'Moving' },
+  { icon: '💻', label: 'Tech Support', value: 'Tech' },
+  { icon: '🌿', label: 'Gardening', value: 'Gardening' },
+  { icon: '🔒', label: 'Security', value: 'Security' },
+  { icon: '📚', label: 'Tutoring', value: 'Tutoring' },
 ];
 
 const AVATAR_BG_COLORS = ['#dbeafe', '#fef3c7', '#dcfce7', '#ede9fe', '#fee2e2', '#e0f2fe', '#fce7f3'];
@@ -702,10 +702,10 @@ export default function Home() {
 
   const renderListHeader = () => (
     <View style={{ backgroundColor: '#f8fafc' }}>
-      {/* â”€â”€ Promotional Ticker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Promotional Ticker ─────────────────── */}
       <PromotionalTicker />
 
-      {/* â”€â”€ Header Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Header Bar ────────────────────────── */}
       <View style={{
         backgroundColor: '#ffffff',
         paddingHorizontal: 16,
@@ -718,7 +718,7 @@ export default function Home() {
       }}>
         <View>
           <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '500' }}>{greetingText},</Text>
-          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }} numberOfLines={1}>{firstName} ðŸ‘‹</Text>
+          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }} numberOfLines={1}>{firstName} 👋</Text>
         </View>
         <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
           <TouchableOpacity
@@ -726,7 +726,7 @@ export default function Home() {
             style={{ position: 'relative', padding: 4 }}
             activeOpacity={0.7}
           >
-            <Text style={{ fontSize: 22 }}>ðŸ””</Text>
+            <Text style={{ fontSize: 22 }}>🔔</Text>
             {unreadCount > 0 && (
               <View style={{
                 position: 'absolute', top: 0, right: 0,
@@ -755,10 +755,10 @@ export default function Home() {
         </View>
       </View>
 
-      {/* â”€â”€ Hero Banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Hero Banner ────────────────────────── */}
       <HeroBanner />
 
-      {/* â”€â”€ Search Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Search Bar ─────────────────────────── */}
       <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
         <TouchableOpacity
           style={{
@@ -780,7 +780,7 @@ export default function Home() {
           onPress={() => router.push('/providers')}
           activeOpacity={0.85}
         >
-          <Text style={{ fontSize: 17 }}>ðŸ”</Text>
+          <Text style={{ fontSize: 17 }}>🔍</Text>
           <Text style={{ fontSize: 14, color: '#94a3b8', flex: 1 }}>
             Search services or providers...
           </Text>
@@ -790,7 +790,7 @@ export default function Home() {
         </TouchableOpacity>
       </View>
 
-      {/* â”€â”€ Stats Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Stats Bar ──────────────────────────── */}
       <View style={{
         marginHorizontal: 16,
         marginBottom: 20,
@@ -802,10 +802,10 @@ export default function Home() {
         alignItems: 'center',
       }}>
         {[
-          { emoji: 'ðŸ“‹', number: String(dashboardStats.activeJobs || '0'), label: 'My Jobs' },
-          { emoji: 'ðŸ’°', number: `GHS ${Number(dashboardStats.walletValue || 0).toFixed(0)}`, label: 'Wallet' },
-          { emoji: 'â­', number: dashboardStats.ratingValue ? Number(dashboardStats.ratingValue).toFixed(1) : 'â€”', label: 'Rating' },
-          { emoji: 'ðŸ›¡ï¸', number: '100%', label: 'Safe Pay' },
+          { emoji: '📋', number: String(dashboardStats.activeJobs || '0'), label: 'My Jobs' },
+          { emoji: '💰', number: `GHS ${Number(dashboardStats.walletValue || 0).toFixed(0)}`, label: 'Wallet' },
+          { emoji: '⭐', number: dashboardStats.ratingValue ? Number(dashboardStats.ratingValue).toFixed(1) : '—', label: 'Rating' },
+          { emoji: '🛡️', number: '100%', label: 'Safe Pay' },
         ].map((s, i) => (
           <View key={i} style={{ alignItems: 'center', gap: 2 }}>
             <Text style={{ fontSize: 18 }}>{s.emoji}</Text>
@@ -815,11 +815,11 @@ export default function Home() {
         ))}
       </View>
 
-      {/* â”€â”€ Browse by Category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Browse by Category ─────────────────── */}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
         <Text style={{ fontSize: 17, fontWeight: '700', color: '#0f172a' }}>Browse by Category</Text>
         <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-          <Text style={{ fontSize: 13, color: '#1d4ed8', fontWeight: '600' }}>See All â†’</Text>
+          <Text style={{ fontSize: 13, color: '#1d4ed8', fontWeight: '600' }}>See All →</Text>
         </TouchableOpacity>
       </View>
       <ScrollView
@@ -856,7 +856,7 @@ export default function Home() {
         ))}
       </ScrollView>
 
-      {/* â”€â”€ Quick Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Quick Actions ──────────────────────── */}
       <View style={{ paddingHorizontal: 16, marginBottom: 20 }}>
         <TouchableOpacity
           onPress={() => router.push('/request-wizard')}
@@ -877,7 +877,7 @@ export default function Home() {
             elevation: 6,
           }}
         >
-          <Text style={{ fontSize: 22 }}>ï¼‹</Text>
+          <Text style={{ fontSize: 22 }}>＋</Text>
           <View>
             <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>Post a New Job</Text>
             <Text style={{ color: '#bfdbfe', fontSize: 11, marginTop: 1 }}>Connect with a verified local provider</Text>
@@ -886,17 +886,17 @@ export default function Home() {
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {[
-            { icon: 'ðŸ“‹', label: 'My Jobs', onPress: () => router.push(isProvider ? '/active-jobs' : '/my-requests') },
-            { icon: 'ðŸ’°', label: 'Wallet', onPress: openWallet },
-            { icon: 'ðŸ””', label: 'Alerts', onPress: () => router.push('/notifications'), badge: unreadCount > 0 ? (unreadCount > 9 ? '9+' : String(unreadCount)) : null },
-            { icon: 'ðŸ”Ž', label: 'Providers', onPress: () => router.push('/providers') },
-            { icon: 'ðŸ› ', label: 'Offer Services', onPress: () => router.push('/provider-setup') },
-            { icon: 'ðŸ‘¤', label: 'Profile', onPress: () => router.push('/profile') },
-            { icon: 'ðŸš€', label: 'Subscription', onPress: () => router.push('/subscription') },
-            { icon: 'ðŸŽ', label: 'Referral', onPress: () => router.push('/referral') },
+            { icon: '📋', label: 'My Jobs', onPress: () => router.push(isProvider ? '/active-jobs' : '/my-requests') },
+            { icon: '💰', label: 'Wallet', onPress: openWallet },
+            { icon: '🔔', label: 'Alerts', onPress: () => router.push('/notifications'), badge: unreadCount > 0 ? (unreadCount > 9 ? '9+' : String(unreadCount)) : null },
+            { icon: '🔎', label: 'Providers', onPress: () => router.push('/providers') },
+            { icon: '🛠', label: 'Offer Services', onPress: () => router.push('/provider-setup') },
+            { icon: '👤', label: 'Profile', onPress: () => router.push('/profile') },
+            { icon: '🚀', label: 'Subscription', onPress: () => router.push('/subscription') },
+            { icon: '🎁', label: 'Referral', onPress: () => router.push('/referral') },
             isAdmin
-              ? { icon: 'âš™ï¸', label: 'Admin', onPress: () => router.push('/admin'), bg: '#fefce8', border: '#fde68a' }
-              : { icon: 'ðŸ’³', label: 'Payments', onPress: () => router.push('/payments') },
+              ? { icon: '⚙️', label: 'Admin', onPress: () => router.push('/admin'), bg: '#fefce8', border: '#fde68a' }
+              : { icon: '💳', label: 'Payments', onPress: () => router.push('/payments') },
           ].map((action) => (
             <TouchableOpacity
               key={action.label}
@@ -960,7 +960,7 @@ export default function Home() {
         }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontWeight: '800', fontSize: 13, color: monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT ? '#b91c1c' : monthlyAcceptsUsed >= 4 ? '#92400e' : '#15803d' }}>
-              {monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT ? 'ðŸš« Monthly limit reached' : `âœ… ${monthlyAcceptsUsed} / ${FREE_ACCEPT_LIMIT} jobs accepted this month`}
+              {monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT ? '🚫 Monthly limit reached' : `✅ ${monthlyAcceptsUsed} / ${FREE_ACCEPT_LIMIT} jobs accepted this month`}
             </Text>
             <Text style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
               {monthlyAcceptsUsed >= FREE_ACCEPT_LIMIT
@@ -978,9 +978,9 @@ export default function Home() {
       {providers.length > 0 && (
         <View style={{ marginBottom: 20 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>â­ Featured Providers</Text>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>⭐ Featured Providers</Text>
             <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all â†’</Text>
+              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all →</Text>
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}>
@@ -1021,7 +1021,7 @@ export default function Home() {
                     ) : null}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
                       <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '600' }}>
-                        â­ {p.avgRating ? Number(p.avgRating).toFixed(1) : 'New'}
+                        ⭐ {p.avgRating ? Number(p.avgRating).toFixed(1) : 'New'}
                       </Text>
                       {p.startingPrice ? (
                         <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
@@ -1030,7 +1030,7 @@ export default function Home() {
                       ) : null}
                     </View>
                     {providerCity ? (
-                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>ðŸ“ {providerCity}</Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
                     ) : null}
                     {badge ? (
                       <View style={{
@@ -1056,9 +1056,9 @@ export default function Home() {
       {topRatedProviders.length > 0 && (
         <View style={{ marginBottom: 20 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>ðŸ”¥ Top Rated This Week</Text>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>🔥 Top Rated This Week</Text>
             <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all â†’</Text>
+              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all →</Text>
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}>
@@ -1099,7 +1099,7 @@ export default function Home() {
                     ) : null}
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
                       <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '700' }}>
-                        â­ {Number(p.avgRating).toFixed(1)}
+                        ⭐ {Number(p.avgRating).toFixed(1)}
                       </Text>
                       {p.startingPrice ? (
                         <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
@@ -1108,7 +1108,7 @@ export default function Home() {
                       ) : null}
                     </View>
                     {providerCity ? (
-                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>ðŸ“ {providerCity}</Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
                     ) : null}
                     {badge ? (
                       <View style={{
@@ -1134,9 +1134,9 @@ export default function Home() {
       {recentProviders.length > 0 && (
         <View style={{ marginBottom: 20 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>ðŸ†• Recently Joined Providers</Text>
+            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>🆕 Recently Joined Providers</Text>
             <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all â†’</Text>
+              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all →</Text>
             </TouchableOpacity>
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}>
@@ -1178,10 +1178,10 @@ export default function Home() {
                       <Text style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '600' }}>{p.category}</Text>
                     ) : null}
                     <Text style={{ fontSize: 11, color: '#7c3aed', fontWeight: '600', marginTop: 2 }}>
-                      Akwaaba! ðŸŽ‰
+                      Akwaaba! 🎉
                     </Text>
                     {providerCity ? (
-                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>ðŸ“ {providerCity}</Text>
+                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
                     ) : null}
                     {p.startingPrice ? (
                       <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700', marginTop: 2 }}>
@@ -1196,10 +1196,10 @@ export default function Home() {
         </View>
       )}
 
-      {/* â”€â”€ Live Requests section header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Live Requests section header ────────── */}
       <View style={{ paddingHorizontal: 16, marginBottom: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>ðŸ“‹ Live Requests ({visibleRequests.length})</Text>
+          <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>📋 Live Requests ({visibleRequests.length})</Text>
           <View style={{ flex: 1, height: 1, backgroundColor: '#e2e8f0', marginLeft: 10 }} />
         </View>
 
@@ -1231,7 +1231,7 @@ export default function Home() {
                   gap: 4,
                 }}
               >
-                {cat !== 'All' && <Text style={{ fontSize: 12 }}>{CATEGORY_ICONS[cat] || 'âœ¨'}</Text>}
+                {cat !== 'All' && <Text style={{ fontSize: 12 }}>{CATEGORY_ICONS[cat] || '✨'}</Text>}
                 <Text style={{ fontWeight: '600', fontSize: 13, color: active ? '#ffffff' : '#334155' }}>{cat}</Text>
               </TouchableOpacity>
             );
@@ -1269,13 +1269,13 @@ export default function Home() {
                 onPress={resolveMyLocation}
                 style={{ flex: 1, backgroundColor: '#ecfeff', borderRadius: 8, borderWidth: 1, borderColor: '#a5f3fc', paddingVertical: 10, alignItems: 'center' }}
               >
-                <Text style={{ color: '#0f766e', fontWeight: '700', fontSize: 12 }}>{isLocating ? 'Locating...' : 'ðŸ“ Detect My Location'}</Text>
+                <Text style={{ color: '#0f766e', fontWeight: '700', fontSize: 12 }}>{isLocating ? 'Locating...' : '📍 Detect My Location'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setNearMeOnly((prev) => !prev)}
                 style={{ flex: 1, backgroundColor: nearMeOnly ? '#0f766e' : '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: nearMeOnly ? '#0f766e' : '#e2e8f0', paddingVertical: 10, alignItems: 'center' }}
               >
-                <Text style={{ color: nearMeOnly ? '#ffffff' : '#334155', fontWeight: '700', fontSize: 12 }}>ðŸ§­ Near Me (25km)</Text>
+                <Text style={{ color: nearMeOnly ? '#ffffff' : '#334155', fontWeight: '700', fontSize: 12 }}>🧭 Near Me (25km)</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1331,11 +1331,11 @@ export default function Home() {
                   onPress={() => router.push('/providers')}
                   activeOpacity={0.8}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>ðŸŒ Browse Providers</Text>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🌐 Browse Providers</Text>
                 </TouchableOpacity>
               </View>
               <Text style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
-                Â© 2026 ConnectHub. All rights reserved.
+                © 2026 ConnectHub. All rights reserved.
               </Text>
               <View style={{ flexDirection: 'row', gap: 20, marginTop: 4 }}>
                 <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7}>
@@ -1353,7 +1353,7 @@ export default function Home() {
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-              <Text style={{ fontSize: 46, marginBottom: 12 }}>ðŸ“­</Text>
+              <Text style={{ fontSize: 46, marginBottom: 12 }}>📭</Text>
               <Text style={{ fontSize: 18, color: AppColors.ink900, fontWeight: '800', textAlign: 'center' }}>No active jobs yet</Text>
               <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center', marginTop: 4 }}>Post a job or browse providers to get started.</Text>
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
@@ -1403,15 +1403,15 @@ export default function Home() {
                   </Text>
                 ) : null}
 
-                <Text style={{ color: '#334155', fontSize: 13 }}>ðŸ“ <Text style={{ fontWeight: '800', color: AppColors.ink900 }}>{areaName}</Text>{parts.length > 1 ? `, ${parts.slice(1).join(', ')}` : ''}</Text>
+                <Text style={{ color: '#334155', fontSize: 13 }}>📍 <Text style={{ fontWeight: '800', color: AppColors.ink900 }}>{areaName}</Text>{parts.length > 1 ? `, ${parts.slice(1).join(', ')}` : ''}</Text>
                     {currentCoords ? (() => {
                       const targetCoords = getLocationCoords(item.location);
                       const km = distanceKm(currentCoords, targetCoords);
                       if (km == null) return null;
                       return (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                          <Text style={{ fontSize: 12, color: '#1d4ed8', fontWeight: '600' }}>ðŸ“ {km < 1 ? `${Math.round(km * 1000)}m away` : `${km.toFixed(1)}km away`}</Text>
-                          <Text style={{ fontSize: 12, color: '#94a3b8' }}>â€¢</Text>
+                          <Text style={{ fontSize: 12, color: '#1d4ed8', fontWeight: '600' }}>📍 {km < 1 ? `${Math.round(km * 1000)}m away` : `${km.toFixed(1)}km away`}</Text>
+                          <Text style={{ fontSize: 12, color: '#94a3b8' }}>•</Text>
                           <Text style={{ fontSize: 12, color: '#64748b' }}>{locationLabel}</Text>
                         </View>
                       );
@@ -1427,7 +1427,7 @@ export default function Home() {
                     </Text>
                   </View>
                   <Text style={{ color: '#6b7280', fontSize: 12, flex: 1 }} numberOfLines={1}>{item.user || 'Unavailable'}</Text>
-                  <Text style={{ color: '#d1d5db', fontSize: 12 }}>â†’</Text>
+                  <Text style={{ color: '#d1d5db', fontSize: 12 }}>→</Text>
                   <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: item.acceptedBy ? '#dbeafe' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
                     <Text style={{ color: item.acceptedBy ? '#1d4ed8' : '#6b7280', fontWeight: '800', fontSize: 13 }}>
                       {String(item.acceptedBy || '?').trim().charAt(0).toUpperCase() || '?'}
@@ -1459,7 +1459,7 @@ export default function Home() {
 
                 {isProvider && status === REQUEST_STATUS.ACCEPTED ? (
                   <View style={{ marginTop: AppSpace.sm, backgroundColor: '#fffbeb', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#fcd34d' }}>
-                    <Text style={{ color: '#92400e', fontWeight: '800', fontSize: 13 }}>â³ Awaiting Payment</Text>
+                    <Text style={{ color: '#92400e', fontWeight: '800', fontSize: 13 }}>⏳ Awaiting Payment</Text>
                     <Text style={{ color: '#b45309', fontSize: 12, marginTop: 2 }}>Work begins once the customer funds escrow.</Text>
                     <AppButton label="Remind Customer" variant="warning" onPress={() => remindCustomerToFund(item)} style={{ marginTop: 8 }} />
                   </View>
@@ -1499,30 +1499,30 @@ export default function Home() {
                 ) : null}
 
                 {isOwner && status === REQUEST_STATUS.PAID && item.acceptedBy && !item.rating && isWithinRatingWindow(item) ? (
-                  <AppButton label="â­ Rate Provider" variant="warning" onPress={() => openRateScreen(item)} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label="⭐ Rate Provider" variant="warning" onPress={() => openRateScreen(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {isProvider && status === REQUEST_STATUS.PAID && !item.customerRating && isWithinRatingWindow(item) ? (
-                  <AppButton label="â­ Rate Customer" variant="warning" onPress={() => openRateCustomerScreen(item)} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label="⭐ Rate Customer" variant="warning" onPress={() => openRateCustomerScreen(item)} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {(isOwner || isProvider) && item.acceptedBy ? (
-                  <AppButton label="ðŸ’¬ Open Chat" variant="neutral" onPress={() => router.push({ pathname: '/chat', params: { jobId: item.id } })} style={{ marginTop: AppSpace.sm }} />
+                  <AppButton label="💬 Open Chat" variant="neutral" onPress={() => router.push({ pathname: '/chat', params: { jobId: item.id } })} style={{ marginTop: AppSpace.sm }} />
                 ) : null}
 
                 {item.paid && item.commission != null ? (
                   <View style={{ marginTop: 10, padding: 12, borderRadius: 10, backgroundColor: '#ecfdf5' }}>
-                    <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 4 }}>âœ… Payment Completed</Text>
+                    <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 4 }}>✅ Payment Completed</Text>
                     <Text style={{ color: '#166534', fontSize: 12 }}>Amount: GHS {item.price} | Platform fee: GHS {Number(item.commission).toFixed(2)} | Provider net: GHS {Number(item.providerNet).toFixed(2)}</Text>
-                    <Text style={{ color: '#166534', fontSize: 12 }}>Ref: {item.paymentReference || 'Unavailable'} Â· {formatPaidAt(item.paidAt)}</Text>
+                    <Text style={{ color: '#166534', fontSize: 12 }}>Ref: {item.paymentReference || 'Unavailable'} · {formatPaidAt(item.paidAt)}</Text>
                     {item.rating ? (
-                      <Text style={{ color: '#166534', fontSize: 12 }}>Review: {item.rating}/5{item.review ? ` â€” "${item.review}"` : ''}</Text>
+                      <Text style={{ color: '#166534', fontSize: 12 }}>Review: {item.rating}/5{item.review ? ` — "${item.review}"` : ''}</Text>
                     ) : null}
                   </View>
                 ) : item.paid ? (
                   <View style={{ marginTop: 10, padding: 12, borderRadius: 10, backgroundColor: '#ecfdf5' }}>
-                    <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 4 }}>âœ… Payment Completed</Text>
-                    <Text style={{ color: '#166534', fontSize: 12 }}>Ref: {item.paymentReference || 'Unavailable'} Â· {formatPaidAt(item.paidAt)}</Text>
+                    <Text style={{ color: '#166534', fontWeight: '700', marginBottom: 4 }}>✅ Payment Completed</Text>
+                    <Text style={{ color: '#166534', fontSize: 12 }}>Ref: {item.paymentReference || 'Unavailable'} · {formatPaidAt(item.paidAt)}</Text>
                   </View>
                 ) : null}
               </AppCard>

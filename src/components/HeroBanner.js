@@ -1,4 +1,4 @@
-﻿import { useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
@@ -15,9 +15,9 @@ const BANNER_HEIGHT = 196;
 const BANNERS = [
   {
     id: '1',
-    emoji: 'ðŸ› ï¸',
+    emoji: '🛠️',
     title: 'Find Skilled Providers',
-    subtitle: 'Plumbers, electricians, cleaners â€” near you in Ghana',
+    subtitle: 'Plumbers, electricians, cleaners — near you in Ghana',
     cta: 'Browse Providers',
     route: '/providers',
     bg: '#1e3a8a',
@@ -27,9 +27,9 @@ const BANNERS = [
   },
   {
     id: '2',
-    emoji: 'ðŸ“‹',
+    emoji: '📋',
     title: 'Post a Job in 60 Seconds',
-    subtitle: 'Tell us what you need â€” providers come to you',
+    subtitle: 'Tell us what you need — providers come to you',
     cta: 'Post a Job Now',
     route: '/request-wizard',
     bg: '#064e3b',
@@ -39,7 +39,7 @@ const BANNERS = [
   },
   {
     id: '3',
-    emoji: 'ðŸ’°',
+    emoji: '💰',
     title: 'Safe Escrow Payments',
     subtitle: 'Pay only after the job is done to your satisfaction',
     cta: 'Learn How It Works',
@@ -51,9 +51,9 @@ const BANNERS = [
   },
   {
     id: '4',
-    emoji: 'ðŸ“¡',
+    emoji: '📡',
     title: 'Live GPS Tracking',
-    subtitle: 'Track your provider in real-time â€” just like Uber',
+    subtitle: 'Track your provider in real-time — just like Uber',
     cta: 'See Features',
     route: '/help',
     bg: '#3b0764',
@@ -63,7 +63,7 @@ const BANNERS = [
   },
   {
     id: '5',
-    emoji: 'â­',
+    emoji: '⭐',
     title: 'Earn as a Provider',
     subtitle: 'Set up your profile and start earning today in Ghana',
     cta: 'Become a Provider',
@@ -131,14 +131,14 @@ export default function HeroBanner() {
                 onPress={() => router.push(b.route)}
                 activeOpacity={0.85}
               >
-                <Text style={[styles.slideCtaText, { color: b.ctaText }]}>{b.cta} â†’</Text>
+                <Text style={[styles.slideCtaText, { color: b.ctaText }]}>{b.cta} →</Text>
               </TouchableOpacity>
             </View>
           </View>
         ))}
       </ScrollView>
 
-      {/* Dot indicators â€” BELOW the slides, not overlapping */}
+      {/* Dot indicators — BELOW the slides, not overlapping */}
       <View style={styles.dotsRow}>
         {BANNERS.map((_, i) => (
           <TouchableOpacity
