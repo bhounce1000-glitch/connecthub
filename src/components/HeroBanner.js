@@ -1,189 +1,213 @@
-import { useRouter } from 'expo-router'
-import { useEffect, useRef, useState } from 'react'
+﻿import { useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import {
-    Dimensions, ScrollView,
-    StyleSheet,
-    Text, TouchableOpacity,
-    View
-} from 'react-native'
+  Dimensions,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-const { width } = Dimensions.get('window')
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const BANNER_HEIGHT = 196;
 
 const BANNERS = [
   {
     id: '1',
-    emoji: '🛠️',
+    emoji: 'ðŸ› ï¸',
     title: 'Find Skilled Providers',
-    subtitle: 'Plumbers, electricians, cleaners and more — near you',
+    subtitle: 'Plumbers, electricians, cleaners â€” near you in Ghana',
     cta: 'Browse Providers',
     route: '/providers',
-    gradient: ['#1e3a8a', '#1d4ed8'],
-    accent: '#bfdbfe',
+    bg: '#1e3a8a',
+    ctaBg: '#facc15',
+    ctaText: '#1e3a8a',
+    subColor: '#bfdbfe',
   },
   {
     id: '2',
-    emoji: '📋',
+    emoji: 'ðŸ“‹',
     title: 'Post a Job in 60 Seconds',
-    subtitle: 'Tell us what you need — providers will come to you',
-    cta: 'Post a Job',
+    subtitle: 'Tell us what you need â€” providers come to you',
+    cta: 'Post a Job Now',
     route: '/request-wizard',
-    gradient: ['#065f46', '#059669'],
-    accent: '#a7f3d0',
+    bg: '#064e3b',
+    ctaBg: '#6ee7b7',
+    ctaText: '#064e3b',
+    subColor: '#a7f3d0',
   },
   {
     id: '3',
-    emoji: '💰',
+    emoji: 'ðŸ’°',
     title: 'Safe Escrow Payments',
-    subtitle: 'Pay only when the job is done to your satisfaction',
-    cta: 'How It Works',
+    subtitle: 'Pay only after the job is done to your satisfaction',
+    cta: 'Learn How It Works',
     route: '/help',
-    gradient: ['#7c2d12', '#ea580c'],
-    accent: '#fed7aa',
+    bg: '#7c2d12',
+    ctaBg: '#fed7aa',
+    ctaText: '#7c2d12',
+    subColor: '#fdba74',
   },
   {
     id: '4',
-    emoji: '📡',
+    emoji: 'ðŸ“¡',
     title: 'Live GPS Tracking',
-    subtitle: 'Track your provider in real-time — just like Uber',
-    cta: 'Learn More',
+    subtitle: 'Track your provider in real-time â€” just like Uber',
+    cta: 'See Features',
     route: '/help',
-    gradient: ['#4c1d95', '#7c3aed'],
-    accent: '#ddd6fe',
+    bg: '#3b0764',
+    ctaBg: '#e9d5ff',
+    ctaText: '#3b0764',
+    subColor: '#c4b5fd',
   },
   {
     id: '5',
-    emoji: '⭐',
-    title: 'Become a Top Provider',
-    subtitle: 'Earn GHS 10,000+ monthly serving clients near you',
-    cta: 'Set Up Profile',
+    emoji: 'â­',
+    title: 'Earn as a Provider',
+    subtitle: 'Set up your profile and start earning today in Ghana',
+    cta: 'Become a Provider',
     route: '/provider-setup',
-    gradient: ['#713f12', '#d97706'],
-    accent: '#fde68a',
+    bg: '#78350f',
+    ctaBg: '#fde68a',
+    ctaText: '#78350f',
+    subColor: '#fcd34d',
   },
-]
+];
 
 export default function HeroBanner() {
-  const router = useRouter()
-  const [activeIndex, setActiveIndex] = useState(0)
-  const scrollRef = useRef(null)
-  const timerRef = useRef(null)
+  const router = useRouter();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const scrollRef = useRef(null);
+  const autoTimer = useRef(null);
 
-  const goToSlide = (index) => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTo({ x: index * width, animated: true })
-    }
-    setActiveIndex(index)
-  }
+  const scrollTo = (index) => {
+    try {
+      scrollRef.current?.scrollTo({ x: index * SCREEN_WIDTH, animated: true });
+    } catch (_) {}
+    setActiveIndex(index);
+  };
 
   useEffect(() => {
-    timerRef.current = setInterval(() => {
-      setActiveIndex(prev => {
-        const next = (prev + 1) % BANNERS.length
-        goToSlide(next)
-        return next
-      })
-    }, 4000)
-    return () => clearInterval(timerRef.current)
-  }, [])
+    autoTimer.current = setInterval(() => {
+      setActiveIndex((prev) => {
+        const next = (prev + 1) % BANNERS.length;
+        try {
+          scrollRef.current?.scrollTo({ x: next * SCREEN_WIDTH, animated: true });
+        } catch (_) {}
+        return next;
+      });
+    }, 4500);
+    return () => clearInterval(autoTimer.current);
+  }, []);
 
-  const handleScroll = (e) => {
-    const index = Math.round(e.nativeEvent.contentOffset.x / width)
-    setActiveIndex(index)
-  }
+  const handleScrollEnd = (e) => {
+    const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    if (index >= 0 && index < BANNERS.length) setActiveIndex(index);
+  };
 
   return (
-    <View style={styles.container}>
+    <View style={{ backgroundColor: '#f8fafc' }}>
       <ScrollView
         ref={scrollRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={handleScroll}
-        scrollEventThrottle={16}
+        onMomentumScrollEnd={handleScrollEnd}
+        scrollEventThrottle={32}
+        style={{ height: BANNER_HEIGHT }}
       >
-        {BANNERS.map((banner) => (
+        {BANNERS.map((b) => (
           <View
-            key={banner.id}
-            style={[styles.slide, { backgroundColor: banner.gradient[1], width }]}
+            key={b.id}
+            style={[styles.slide, { width: SCREEN_WIDTH, backgroundColor: b.bg }]}
           >
-            <Text style={styles.emoji}>{banner.emoji}</Text>
-            <Text style={styles.title}>{banner.title}</Text>
-            <Text style={[styles.subtitle, { color: banner.accent }]}>{banner.subtitle}</Text>
-            <TouchableOpacity
-              style={[styles.ctaButton, { backgroundColor: banner.accent }]}
-              onPress={() => router.push(banner.route)}
-              activeOpacity={0.85}
-            >
-              <Text style={[styles.ctaText, { color: banner.gradient[1] }]}>{banner.cta} →</Text>
-            </TouchableOpacity>
+            <View style={styles.slideInner}>
+              <Text style={styles.slideEmoji}>{b.emoji}</Text>
+              <Text style={styles.slideTitle}>{b.title}</Text>
+              <Text style={[styles.slideSubtitle, { color: b.subColor }]}>{b.subtitle}</Text>
+              <TouchableOpacity
+                style={[styles.slideCta, { backgroundColor: b.ctaBg }]}
+                onPress={() => router.push(b.route)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.slideCtaText, { color: b.ctaText }]}>{b.cta} â†’</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         ))}
       </ScrollView>
 
-      {/* Dot indicators */}
-      <View style={styles.dots}>
+      {/* Dot indicators â€” BELOW the slides, not overlapping */}
+      <View style={styles.dotsRow}>
         {BANNERS.map((_, i) => (
-          <TouchableOpacity key={i} onPress={() => goToSlide(i)} activeOpacity={0.8}>
+          <TouchableOpacity
+            key={i}
+            onPress={() => scrollTo(i)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+          >
             <View style={[styles.dot, i === activeIndex && styles.dotActive]} />
           </TouchableOpacity>
         ))}
       </View>
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    height: 200,
-    backgroundColor: '#1d4ed8',
-  },
   slide: {
-    height: 200,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+  },
+  slideInner: {
+    paddingHorizontal: 22,
     paddingVertical: 20,
     gap: 6,
   },
-  emoji: { fontSize: 32 },
-  title: {
-    fontSize: 22,
+  slideEmoji: {
+    fontSize: 30,
+    marginBottom: 2,
+  },
+  slideTitle: {
+    fontSize: 20,
     fontWeight: '800',
     color: '#ffffff',
-    marginTop: 4,
+    letterSpacing: -0.3,
   },
-  subtitle: {
+  slideSubtitle: {
     fontSize: 13,
     fontWeight: '500',
-    lineHeight: 18,
+    lineHeight: 19,
   },
-  ctaButton: {
+  slideCta: {
     alignSelf: 'flex-start',
     marginTop: 10,
     paddingVertical: 8,
     paddingHorizontal: 18,
     borderRadius: 20,
   },
-  ctaText: {
+  slideCtaText: {
     fontSize: 13,
     fontWeight: '700',
   },
-  dots: {
-    position: 'absolute',
-    bottom: 10,
-    left: 0,
-    right: 0,
+  dotsRow: {
     flexDirection: 'row',
     justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 8,
     gap: 6,
+    backgroundColor: '#f8fafc',
   },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.4)',
+    backgroundColor: '#cbd5e1',
   },
   dotActive: {
-    backgroundColor: '#ffffff',
-    width: 18,
+    width: 20,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#1d4ed8',
   },
-})
+});

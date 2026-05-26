@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+﻿import { useRouter } from 'expo-router';
 import { collection, doc, getDoc, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -29,18 +29,18 @@ function isPublicProviderEmail(email) {
 
 function buildStars(rating) {
   const n = Math.max(0, Math.min(5, Math.round(Number(rating || 0))));
-  return `${'★'.repeat(n)}${'☆'.repeat(5 - n)}`;
+  return `${'â˜…'.repeat(n)}${'â˜†'.repeat(5 - n)}`;
 }
 
 function EmptyState({ category, onBrowseAll, onBecomeProvider, onPostRequest }) {
   const title = category && category !== ALL ? `No ${category} providers found` : 'No providers available right now';
   return (
     <View style={{ alignItems: 'center', paddingVertical: 52, paddingHorizontal: 12 }}>
-      <Text style={{ fontSize: 56 }}>🔍</Text>
+      <Text style={{ fontSize: 56 }}>ðŸ”</Text>
       <Text style={{ marginTop: 10, color: AppColors.ink900, fontWeight: '800', fontSize: 18, textAlign: 'center' }}>{title}</Text>
       <Text style={{ marginTop: 6, color: '#94a3b8', textAlign: 'center' }}>Check back later, browse all categories, or post your request now.</Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 14, gap: 8 }}>
-        <TouchableOpacity onPress={onBrowseAll} style={{ backgroundColor: '#2563eb', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 }}>
+        <TouchableOpacity onPress={onBrowseAll} style={{ backgroundColor: '#1d4ed8', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 }}>
           <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>Browse All</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onPostRequest} style={{ backgroundColor: '#0f766e', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 }}>
@@ -225,7 +225,7 @@ export default function Providers() {
     return {
       total: providers.length,
       premium: premiumCount,
-      avgRating: countWithRating > 0 ? (avg / countWithRating).toFixed(1) : 'New ⭐',
+      avgRating: countWithRating > 0 ? (avg / countWithRating).toFixed(1) : 'New â­',
     };
   }, [providers]);
 
@@ -235,8 +235,8 @@ export default function Providers() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#f3f6fb', padding: AppSpace.lg }}>
-      <View style={{ backgroundColor: AppColors.brandNavy, borderRadius: AppRadius.xl, padding: AppSpace.xl, marginBottom: 12, borderWidth: 1, borderColor: '#1e293b', ...AppShadow.lg }}>
+    <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+      <View style={{ backgroundColor: '#0f172a', borderRadius: AppRadius.xl, padding: AppSpace.xl, marginHorizontal: 16, marginTop: 12, marginBottom: 12, ...AppShadow.lg }}>
         <Text style={{ color: '#93c5fd', fontSize: 12, fontWeight: '700', letterSpacing: 1 }}>CONNECTHUB</Text>
         <Text style={{ color: '#fff', fontSize: 24, fontWeight: '800', marginTop: 4 }}>Browse Providers</Text>
         <Text style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 19, marginTop: 6 }}>Discover verified workers by skill, location, rating, and readiness to work.</Text>
@@ -247,7 +247,7 @@ export default function Providers() {
         </View>
       </View>
 
-      <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, borderWidth: 1, borderColor: '#dbeafe', paddingHorizontal: 14, paddingVertical: 12, marginBottom: 10, ...AppShadow.card }}>
+      <View style={{ backgroundColor: '#fff', borderRadius: AppRadius.lg, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 14, paddingVertical: 12, marginBottom: 10, marginHorizontal: 16, ...AppShadow.card }}>
         <TextInput
           placeholder="Search providers by name, service, skill, or location"
           value={searchText}
@@ -268,9 +268,9 @@ export default function Providers() {
                 paddingHorizontal: 12,
                 paddingVertical: 8,
                 borderRadius: 999,
-                backgroundColor: active ? '#2563eb' : '#fff',
+                backgroundColor: active ? '#1d4ed8' : '#fff',
                 borderWidth: 1,
-                borderColor: active ? '#2563eb' : '#cbd5e1',
+                borderColor: active ? '#1d4ed8' : '#e2e8f0',
                 marginRight: 8,
               }}
             >
@@ -280,8 +280,7 @@ export default function Providers() {
         })}
       </ScrollView>
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-        <Text style={{ color: '#64748b', fontSize: 12, marginRight: 10 }}>Sort by:</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingHorizontal: 16 }}>
         {['rating', 'price', 'experience'].map((key) => {
           const active = sortBy === key;
           const label = key === 'rating' ? 'Rating' : key === 'price' ? 'Price' : 'Experience';
@@ -293,20 +292,19 @@ export default function Providers() {
                 marginRight: 8,
                 borderRadius: 999,
                 borderWidth: 1,
-                borderColor: active ? '#2563eb' : '#cbd5e1',
+                borderColor: active ? '#1d4ed8' : '#cbd5e1',
                 backgroundColor: active ? '#eff6ff' : '#fff',
                 paddingHorizontal: 10,
                 paddingVertical: 5,
               }}
             >
-              <Text style={{ color: active ? '#2563eb' : '#64748b', fontWeight: '800', fontSize: 12 }}>{label}</Text>
+              <Text style={{ color: active ? '#1d4ed8' : '#64748b', fontWeight: '800', fontSize: 12 }}>{label}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* View mode toggle: List vs Nearby */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingHorizontal: 16 }}>
         <TouchableOpacity
           onPress={() => setViewMode('list')}
           style={{
@@ -314,13 +312,13 @@ export default function Providers() {
             marginRight: 6,
             borderRadius: 999,
             borderWidth: 1,
-            borderColor: viewMode === 'list' ? '#2563eb' : '#cbd5e1',
+            borderColor: viewMode === 'list' ? '#1d4ed8' : '#cbd5e1',
             backgroundColor: viewMode === 'list' ? '#eff6ff' : '#fff',
             paddingVertical: 8,
             alignItems: 'center',
           }}
         >
-          <Text style={{ color: viewMode === 'list' ? '#2563eb' : '#64748b', fontWeight: '800', fontSize: 12 }}>\uD83D\uDCCB List</Text>
+          <Text style={{ color: viewMode === 'list' ? '#1d4ed8' : '#64748b', fontWeight: '800', fontSize: 12 }}>\uD83D\uDCCB List</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => {
@@ -345,7 +343,7 @@ export default function Providers() {
         </TouchableOpacity>
       </View>
 
-      {/* Distance filter chips — only visible in nearby mode */}
+      {/* Distance filter chips â€” only visible in nearby mode */}
       {viewMode === 'nearby' ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
           {['5', '10', '20', 'any'].map((km) => {
@@ -386,6 +384,7 @@ export default function Providers() {
         <FlatList
           data={filtered}
           keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 100 }}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
           ListEmptyComponent={(
             <EmptyState
@@ -413,7 +412,7 @@ export default function Providers() {
                       <SubscriptionBadge plan={item.subscriptionPlan} />
                       {item.kycVerified === true || String(item.kycStatus || '').toLowerCase() === 'verified' ? (
                         <View style={{ backgroundColor: '#dcfce7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: '#166534', fontSize: 10, fontWeight: '800' }}>✓ VERIFIED</Text>
+                          <Text style={{ color: '#166534', fontSize: 10, fontWeight: '800' }}>âœ“ VERIFIED</Text>
                         </View>
                       ) : null}
                       {String(item.subscriptionPlan || '').toLowerCase() === 'pro' ? (
@@ -441,8 +440,8 @@ export default function Providers() {
                 </View>
 
                 <View style={{ marginTop: 10 }}>
-                  <Text style={{ color: '#0f172a', fontWeight: '700' }}>{buildStars(item.avgRating)} ({Number(item.avgRating || 0).toFixed(1)}) — {reviews} reviews</Text>
-                  <Text style={{ color: '#64748b', marginTop: 4 }}>📍 {item.location || 'Accra, Ghana'}</Text>
+                  <Text style={{ color: '#0f172a', fontWeight: '700' }}>{buildStars(item.avgRating)} ({Number(item.avgRating || 0).toFixed(1)}) â€” {reviews} reviews</Text>
+                  <Text style={{ color: '#64748b', marginTop: 4 }}>ðŸ“ {item.location || 'Accra, Ghana'}</Text>
                   {myLocation ? (() => {
                     const providerCoords = getLocationCoords(item.location) || (
                       Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude))
@@ -452,18 +451,18 @@ export default function Providers() {
                     if (!providerCoords) return null;
                     return (
                     <Text style={{ color: '#1d4ed8', marginTop: 4, fontWeight: '700' }}>
-                      📍 {formatDistance(calculateDistance(myLocation.latitude, myLocation.longitude, providerCoords.latitude, providerCoords.longitude))}
+                      ðŸ“ {formatDistance(calculateDistance(myLocation.latitude, myLocation.longitude, providerCoords.latitude, providerCoords.longitude))}
                     </Text>
                     );
                   })() : null}
                   <Text style={{ color: '#16a34a', marginTop: 4, fontWeight: '800' }}>From GHS {Number(item.startingPrice || 0).toFixed(2)}</Text>
-                  {photoCount > 0 ? <Text style={{ color: '#94a3b8', marginTop: 4 }}>📷 {photoCount} photos</Text> : null}
+                  {photoCount > 0 ? <Text style={{ color: '#94a3b8', marginTop: 4 }}>ðŸ“· {photoCount} photos</Text> : null}
                 </View>
 
                 <AppButton
-                  label="View Profile →"
+                  label="View Profile â†’"
                   onPress={() => router.push({ pathname: '/provider-detail', params: { email: item.email } })}
-                  style={{ marginTop: 10, backgroundColor: '#2563eb' }}
+                  style={{ marginTop: 10, backgroundColor: '#1d4ed8' }}
                 />
               </AppCard>
             );
@@ -471,7 +470,7 @@ export default function Providers() {
         />
       )}
 
-      <AppButton label="← Back to Home" variant="neutral" onPress={() => router.replace('/home')} style={{ marginTop: 8 }} />
+      <AppButton label="â† Back to Home" variant="neutral" onPress={() => router.replace('/home')} style={{ marginTop: 8 }} />
     </View>
   );
 }

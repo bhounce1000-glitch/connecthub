@@ -1,56 +1,85 @@
-import { useEffect, useRef } from 'react'
-import { Animated, Dimensions, StyleSheet, View } from 'react-native'
+import { useEffect, useRef } from 'react';
+import { Animated, Dimensions, Platform, StyleSheet, Text, View } from 'react-native';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 const MESSAGES = [
-  '🎉 Post your first job FREE — No commission on your first booking!',
-  '🔥 Top-rated providers available now in Accra, Kumasi, and Tema',
-  '🌟 Verify your KYC and unlock unlimited job accepts',
-  '🚀 New: Live GPS tracking — see your provider coming in real-time',
-  '💸 Instant MoMo payouts — withdraw your earnings in minutes',
-  '⭐ 5-star rated providers near you — browse and book now',
+  '🎉 Post your first job FREE — no commission on your first booking',
+  '🔥 Top-rated providers in Accra, Kumasi and Tema — book now',
   '🛡️ Safe escrow payments — your money is protected until job is done',
-]
+  '🚀 Live GPS tracking — see your provider coming in real-time',
+  '💸 Instant MoMo payouts for providers — withdraw in minutes',
+  '⭐ Verified providers near you — KYC-checked and rated',
+];
+
+const FULL_TEXT = MESSAGES.join('     •     ');
+const CHAR_WIDTH = 8.2;
+const FULL_WIDTH = FULL_TEXT.length * CHAR_WIDTH;
 
 export default function PromotionalTicker() {
-  const screenWidth = Dimensions.get('window').width
-  const fullText = MESSAGES.join('   •   ')
-  const translateX = useRef(new Animated.Value(screenWidth)).current
+  const position = useRef(new Animated.Value(SCREEN_WIDTH)).current;
 
   useEffect(() => {
-    const animate = () => {
-      translateX.setValue(screenWidth)
-      Animated.timing(translateX, {
-        toValue: -fullText.length * 7.5, // approx pixel width of text
-        duration: fullText.length * 120,
+    if (Platform.OS === 'web') return undefined;
+    let running = true;
+    const run = () => {
+      if (!running) return;
+      position.setValue(SCREEN_WIDTH);
+      Animated.timing(position, {
+        toValue: -FULL_WIDTH,
+        duration: FULL_TEXT.length * 110,
         useNativeDriver: true,
-      }).start(() => animate()) // loop forever
-    }
-    animate()
-  }, [])
+      }).start(({ finished }) => {
+        if (finished && running) run();
+      });
+    };
+    run();
+    return () => {
+      running = false;
+      position.stopAnimation();
+    };
+  }, [position]);
+
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.wrapper}>
+        <Text style={styles.staticText} numberOfLines={1}>
+          {MESSAGES[0]}
+        </Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
+    <View style={styles.wrapper}>
       <Animated.Text
-        style={[styles.text, { transform: [{ translateX }] }]}
+        style={[styles.text, { transform: [{ translateX: position }] }]}
         numberOfLines={1}
       >
-        {fullText}
+        {FULL_TEXT}
       </Animated.Text>
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#1e3a8a',
-    paddingVertical: 8,
+  wrapper: {
+    height: 34,
+    backgroundColor: '#0f172a',
     overflow: 'hidden',
+    justifyContent: 'center',
   },
   text: {
-    color: '#ffffff',
-    fontSize: 13,
+    color: '#facc15',
+    fontSize: 12.5,
     fontWeight: '600',
-    letterSpacing: 0.3,
-    whiteSpace: 'nowrap',
+    letterSpacing: 0.2,
   },
-})
+  staticText: {
+    color: '#facc15',
+    fontSize: 12.5,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    paddingHorizontal: 16,
+  },
+});
