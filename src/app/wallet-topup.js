@@ -18,8 +18,8 @@ import { auth, db } from '../firebase';
 // ─── Paystack payment page ────────────────────────────────────────────────────
 // Go to dashboard.paystack.com → Payment Pages and find/create a page for wallet
 // top-ups. Copy the slug from the page URL and set it here.
-// The page must be configured with currency GHS and "Allow custom amount" enabled.
-const PAYSTACK_PAGE_SLUG = 'connecthub'; // ← update if your Paystack page slug differs
+// Page URL: https://paystack.shop/pay/connecthub-topup
+const PAYSTACK_PAGE_SLUG = 'connecthub-topup';
 
 // Callback URL — Paystack redirects here after payment with ?reference=...&trxref=...
 const CALLBACK_URL = 'https://connecthub-1873e.web.app/wallet-topup-return';
@@ -77,7 +77,7 @@ export default function WalletTopup() {
       //    Paystack will redirect to CALLBACK_URL?reference={reference}&trxref={reference}
       //    after the user pays. wallet-topup-return.js handles that redirect.
       const paystackUrl = [
-        `https://paystack.com/pay/${PAYSTACK_PAGE_SLUG}`,
+        `https://paystack.shop/pay/${PAYSTACK_PAGE_SLUG}`,
         `?amount=${amountPesewas}`,
         `&email=${encodeURIComponent(user.email)}`,
         `&ref=${reference}`,
