@@ -7788,7 +7788,8 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
     const metadataType = String(metadata?.type || '').trim().toLowerCase();
     const metadataOwner = String(metadata?.ownerEmail || '').trim().toLowerCase();
     const transactionEmail = String(data?.data?.customer?.email || '').trim().toLowerCase();
-    const amountGhs = parseMoney(Number(data?.data?.amount || 0) / 100);
+    const amountPesewas = Number(data?.data?.amount || 0);
+    const amountGhs = parseMoney(amountPesewas / 100);
 
     // Two valid flows:
     // A) Server-initialized: Paystack transaction has metadata.type = 'wallet_topup'
@@ -7798,15 +7799,46 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
       return sendError(res, req, 400, 'invalid_topup_type', 'This payment reference is not a wallet top up');
     }
 
+    let matchedPreRegRef = null;
     if (!metadataType) {
-      // Client-initiated flow — reference must be pre-registered in Firestore
-      const preReg = await adminDb.collection('wallet_topups').doc(reference).get();
-      if (!preReg.exists) {
-        return sendError(res, req, 400, 'invalid_topup_type', 'Payment reference is not registered as a wallet top up');
-      }
-      const preRegEmail = String(preReg.data()?.email || '').trim().toLowerCase();
-      if (preRegEmail !== actorEmail) {
-        return sendError(res, req, 403, 'owner_access_required', 'Only the payment owner can apply this wallet top up');
+      // Client-initiated flow — reference should be pre-registered in Firestore.
+      // Older payment-page launches used the wrong query param (`ref` instead of
+      // `reference`), so Paystack created a different transaction reference than
+      // the pending Firestore doc. Fall back to a unique pending top-up match by
+      // owner email + amount for those legacy checkouts.
+      const directPreRegRef = adminDb.collection('wallet_topups').doc(reference);
+      const directPreReg = await directPreRegRef.get();
+      if (directPreReg.exists) {
+        matchedPreRegRef = directPreRegRef;
+        const preRegEmail = String(directPreReg.data()?.email || '').trim().toLowerCase();
+        if (preRegEmail !== actorEmail) {
+          return sendError(res, req, 403, 'owner_access_required', 'Only the payment owner can apply this wallet top up');
+        }
+      } else {
+        const legacyCandidatesSnap = await adminDb.collection('wallet_topups')
+          .where('email', '==', actorEmail)
+          .limit(20)
+          .get();
+
+        const legacyCandidates = legacyCandidatesSnap.docs.filter((candidateDoc) => {
+          const candidate = candidateDoc.data() || {};
+          const candidateAmountPesewas = Number(
+            candidate?.amountPesewas || Math.round(Number(candidate?.amountGHS || 0) * 100)
+          );
+          return candidateDoc.id !== reference
+            && String(candidate?.status || '').trim().toLowerCase() === 'pending'
+            && String(candidate?.source || '').trim().toLowerCase() === 'client_initiated'
+            && candidate?.applied !== true
+            && candidateAmountPesewas === amountPesewas;
+        });
+
+        if (legacyCandidates.length === 1) {
+          matchedPreRegRef = legacyCandidates[0].ref;
+        } else if (legacyCandidates.length > 1) {
+          return sendError(res, req, 409, 'ambiguous_topup_reference', 'Multiple pending wallet top ups match this payment. Contact support for manual review.');
+        } else {
+          return sendError(res, req, 400, 'invalid_topup_type', 'Payment reference is not registered as a wallet top up');
+        }
       }
     }
 
@@ -7822,12 +7854,30 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
     const topupRef = adminDb.collection('wallet_topups').doc(reference);
     const transactionRef = adminDb.collection('transactions').doc(`wallet_topup_${reference}`);
     const userRef = adminDb.collection('users').doc(ownerEmail);
+    const legacyTopupRef = matchedPreRegRef && matchedPreRegRef.id !== reference
+      ? matchedPreRegRef
+      : null;
 
     let alreadyApplied = false;
     await adminDb.runTransaction(async (txn) => {
       const topupSnap = await txn.get(topupRef);
+      const legacyTopupSnap = legacyTopupRef ? await txn.get(legacyTopupRef) : null;
       if (topupSnap.exists && topupSnap.data()?.applied === true) {
         alreadyApplied = true;
+        return;
+      }
+      if (legacyTopupSnap?.exists && legacyTopupSnap.data()?.applied === true && legacyTopupSnap.data()?.verifiedReference === reference) {
+        alreadyApplied = true;
+        txn.set(topupRef, {
+          reference,
+          ownerEmail,
+          amount: amountGhs,
+          status: 'success',
+          applied: true,
+          appliedAt: legacyTopupSnap.data()?.appliedAt || new Date().toISOString(),
+          source: 'client_initiated',
+          linkedPendingReference: legacyTopupRef.id,
+        }, { merge: true });
         return;
       }
 
@@ -7844,7 +7894,20 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
         status: 'success',
         applied: true,
         appliedAt: nowIso,
+        source: 'client_initiated',
+        linkedPendingReference: legacyTopupRef?.id || null,
       }, { merge: true });
+
+      if (legacyTopupRef) {
+        txn.set(legacyTopupRef, {
+          ownerEmail,
+          amount: amountGhs,
+          status: 'success',
+          applied: true,
+          appliedAt: nowIso,
+          verifiedReference: reference,
+        }, { merge: true });
+      }
 
       txn.set(transactionRef, {
         senderEmail: 'paystack@system',
