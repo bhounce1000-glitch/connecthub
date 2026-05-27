@@ -119,7 +119,7 @@ export default function WalletTopup() {
         <Text style={s.heroEmoji}>💳</Text>
         <Text style={s.heroTitle}>Fund Your Wallet</Text>
         <Text style={s.heroSub}>
-          Pay securely with Paystack — Mobile Money (MoMo)
+          Pay securely with Paystack — MoMo, bank card, or bank transfer
         </Text>
       </View>
 
