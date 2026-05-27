@@ -30,10 +30,15 @@ const PORT = process.env.PORT || 3001;
 const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL || 'https://connecthub-1873e.web.app';
 const CALLBACK_BASE_URL = process.env.PAYSTACK_CALLBACK_BASE_URL || WEB_BASE_URL;
 const PUBLIC_SERVER_BASE_URL = process.env.BACKEND_PUBLIC_URL || 'https://connecthub-yrox.onrender.com';
-const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || `${WEB_BASE_URL},${CALLBACK_BASE_URL},https://connecthub-1873e.firebaseapp.com,http://localhost:8081,http://localhost:19006,exp://localhost:8081`)
-  .split(',')
-  .map((item) => item.trim())
-  .filter(Boolean);
+const CORS_ALLOWED_ORIGINS = Array.from(new Set([
+  // Always allow both Firebase Hosting domains regardless of env var
+  'https://connecthub-1873e.web.app',
+  'https://connecthub-1873e.firebaseapp.com',
+  ...(process.env.CORS_ALLOWED_ORIGINS || `${WEB_BASE_URL},${CALLBACK_BASE_URL},http://localhost:8081,http://localhost:19006,exp://localhost:8081`)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean),
+]));
 // ADMIN LOGIN ACCOUNT — do not change this to support email
 const ADMIN_LOGIN_EMAIL = 'bhounce1000@gmail.com';
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || process.env.EXPO_PUBLIC_ADMIN_EMAILS || ADMIN_LOGIN_EMAIL)
