@@ -1,3 +1,4 @@
+import * as ExpoLinking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useState } from 'react';
@@ -21,8 +22,10 @@ import { auth, db } from '../firebase';
 // Page URL: https://paystack.shop/pay/connecthub-topup
 const PAYSTACK_PAGE_SLUG = 'connecthub-topup';
 
-// Callback URL — Paystack redirects here after payment with ?reference=...&trxref=...
-const CALLBACK_URL = 'https://connecthub-1873e.web.app/wallet-topup-return';
+// Callback URL — web returns to Hosting, native returns into the app scheme.
+const CALLBACK_URL = Platform.OS === 'web'
+  ? 'https://connecthub-1873e.web.app/wallet-topup-return'
+  : ExpoLinking.createURL('/wallet-topup-return');
 // ─────────────────────────────────────────────────────────────────────────────
 
 const QUICK_AMOUNTS = [10, 50, 100, 200, 500, 1000];
