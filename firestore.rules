@@ -96,9 +96,21 @@ service cloud.firestore {
     }
 
     match /wallet_topups/{reference} {
-      // Users can read their own topup records; only server (admin SDK) can write
-      allow read: if isSignedIn() && resource.data.ownerEmail == request.auth.token.email;
-      allow write: if false;
+      // Users can read their own topup records
+      allow read: if isSignedIn() && (
+        resource.data.ownerEmail == request.auth.token.email ||
+        resource.data.email == request.auth.token.email
+      );
+      // Client-initiated flow: user pre-registers a pending topup reference before
+      // opening Paystack. The server (admin SDK) later overwrites the record to mark
+      // it applied. Clients may only create; not update or delete.
+      allow create: if isSignedIn()
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.status == 'pending'
+        && request.resource.data.amountGHS is number
+        && request.resource.data.amountGHS >= 1
+        && request.resource.data.amountGHS <= 10000;
+      allow update, delete: if false;
     }
 
     match /notifications/{notifId} {

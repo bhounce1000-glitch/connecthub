@@ -7790,15 +7790,31 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
     const transactionEmail = String(data?.data?.customer?.email || '').trim().toLowerCase();
     const amountGhs = parseMoney(Number(data?.data?.amount || 0) / 100);
 
-    if (metadataType !== 'wallet_topup') {
+    // Two valid flows:
+    // A) Server-initialized: Paystack transaction has metadata.type = 'wallet_topup'
+    // B) Client-initiated: no Paystack metadata, but the reference was pre-registered
+    //    in Firestore wallet_topups by the client before opening Paystack.
+    if (metadataType && metadataType !== 'wallet_topup') {
       return sendError(res, req, 400, 'invalid_topup_type', 'This payment reference is not a wallet top up');
+    }
+
+    if (!metadataType) {
+      // Client-initiated flow — reference must be pre-registered in Firestore
+      const preReg = await adminDb.collection('wallet_topups').doc(reference).get();
+      if (!preReg.exists) {
+        return sendError(res, req, 400, 'invalid_topup_type', 'Payment reference is not registered as a wallet top up');
+      }
+      const preRegEmail = String(preReg.data()?.email || '').trim().toLowerCase();
+      if (preRegEmail !== actorEmail) {
+        return sendError(res, req, 403, 'owner_access_required', 'Only the payment owner can apply this wallet top up');
+      }
     }
 
     if (!amountGhs || amountGhs <= 0) {
       return sendError(res, req, 400, 'invalid_topup_amount', 'Top up amount is invalid');
     }
 
-    const ownerEmail = metadataOwner || transactionEmail;
+    const ownerEmail = metadataOwner || transactionEmail || actorEmail;
     if (!ownerEmail || ownerEmail !== actorEmail) {
       return sendError(res, req, 403, 'owner_access_required', 'Only the payment owner can apply this wallet top up');
     }

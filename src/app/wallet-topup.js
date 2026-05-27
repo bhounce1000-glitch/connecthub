@@ -1,8 +1,9 @@
-import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useState } from 'react';
 import {
     ActivityIndicator,
+    Linking,
     Platform,
     ScrollView,
     StyleSheet,
@@ -12,14 +13,17 @@ import {
     View,
 } from 'react-native';
 
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 
-// On web: requests go through Firebase Hosting /api/** rewrite → walletProxy Cloud Function.
-// This avoids all CORS and browser-extension blocking — the request is same-origin.
-// On native: hit Render directly (no browser CORS constraints).
-const API_BASE = Platform.OS === 'web'
-  ? ''
-  : 'https://connecthub-yrox.onrender.com';
+// ─── Paystack payment page ────────────────────────────────────────────────────
+// Go to dashboard.paystack.com → Payment Pages and find/create a page for wallet
+// top-ups. Copy the slug from the page URL and set it here.
+// The page must be configured with currency GHS and "Allow custom amount" enabled.
+const PAYSTACK_PAGE_SLUG = 'connecthub'; // ← update if your Paystack page slug differs
+
+// Callback URL — Paystack redirects here after payment with ?reference=...&trxref=...
+const CALLBACK_URL = 'https://connecthub-1873e.web.app/wallet-topup-return';
+// ─────────────────────────────────────────────────────────────────────────────
 
 const QUICK_AMOUNTS = [10, 50, 100, 200, 500, 1000];
 
@@ -43,52 +47,60 @@ export default function WalletTopup() {
       return;
     }
 
+    const user = auth.currentUser;
+    if (!user) {
+      setNotice({ tone: 'error', message: 'You must be signed in. Please log in and try again.' });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        setNotice({ tone: 'error', message: 'You must be signed in. Please log in and try again.' });
-        return;
-      }
+      // 1. Generate a unique reference on the client — used as Firestore doc ID
+      //    and passed to Paystack so we can verify it after payment.
+      const reference = `topup-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const amountPesewas = Math.round(parsedAmount * 100);
 
-      // getIdToken() — no force-refresh; Firebase auto-refreshes when close to expiry
-      const token = await user.getIdToken();
-
-      // Direct fetch — no AbortController, no retry wrapper, no timeout signal
-      // AbortController.abort() throws TypeError in Safari/WebKit which masks the real error
-      const response = await fetch(`${API_BASE}/api/wallet/topup/init`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ amount: parsedAmount }),
+      // 2. Pre-register the topup in Firestore BEFORE opening Paystack.
+      //    The server's /wallet/topup/verify will look up this record when
+      //    Paystack metadata isn't present (payment page flow).
+      await setDoc(doc(db, 'wallet_topups', reference), {
+        reference,
+        email: user.email,
+        amountGHS: parsedAmount,
+        amountPesewas,
+        status: 'pending',
+        source: 'client_initiated',
+        createdAt: serverTimestamp(),
       });
 
-      const data = await response.json().catch(() => ({}));
+      // 3. Build the Paystack payment page URL.
+      //    Paystack will redirect to CALLBACK_URL?reference={reference}&trxref={reference}
+      //    after the user pays. wallet-topup-return.js handles that redirect.
+      const paystackUrl = [
+        `https://paystack.com/pay/${PAYSTACK_PAGE_SLUG}`,
+        `?amount=${amountPesewas}`,
+        `&email=${encodeURIComponent(user.email)}`,
+        `&ref=${reference}`,
+        `&callback_url=${encodeURIComponent(CALLBACK_URL)}`,
+      ].join('');
 
-      if (!response.ok || !data?.status) {
-        throw new Error(data?.message || `Server error ${response.status}. Please try again.`);
-      }
-
-      const authorizationUrl = data?.data?.authorization_url;
-      if (!authorizationUrl) {
-        throw new Error('Payment provider did not return a checkout URL. Please try again.');
-      }
-
+      // 4. Open Paystack — on web redirect in-tab, on native use system browser.
       if (Platform.OS === 'web') {
-        window.location.href = authorizationUrl;
+        window.location.href = paystackUrl;
       } else {
-        await Linking.openURL(authorizationUrl);
+        const canOpen = await Linking.canOpenURL(paystackUrl);
+        if (!canOpen) throw new Error('Cannot open Paystack. Please try again.');
+        await Linking.openURL(paystackUrl);
       }
     } catch (error) {
       setNotice({
         tone: 'error',
-        message: error.message || 'Could not start payment. Please try again.',
+        message: error.message || 'Could not start payment. Please try again or contact connecthub1000@gmail.com',
       });
-    } finally {
       setIsSubmitting(false);
     }
+    // Note: setIsSubmitting(false) is intentionally NOT called on success —
+    // the page is about to navigate away to Paystack, so there's no need.
   };
 
   return (
