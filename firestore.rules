@@ -95,6 +95,12 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    match /wallet_topups/{reference} {
+      // Users can read their own topup records; only server (admin SDK) can write
+      allow read: if isSignedIn() && resource.data.ownerEmail == request.auth.token.email;
+      allow write: if false;
+    }
+
     match /notifications/{notifId} {
       allow read: if isSignedIn() && (
         resource.data.userId == request.auth.token.email
