@@ -1,10 +1,14 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { auth } from '../firebase';
 
-const API_BASE_URL = 'https://connecthub-yrox.onrender.com';
+// On web: same-origin via Firebase Hosting /api/** → walletProxy Cloud Function.
+// On native: direct to Render (no browser CORS constraints).
+const API_BASE = Platform.OS === 'web'
+  ? ''
+  : 'https://connecthub-yrox.onrender.com';
 
 export default function WalletTopupReturn() {
   const router = useRouter();
@@ -42,7 +46,7 @@ export default function WalletTopupReturn() {
       const token = await user.getIdToken();
 
       // Direct fetch — no AbortController, no retry wrapper
-      const response = await fetch(`${API_BASE_URL}/wallet/topup/verify`, {
+      const response = await fetch(`${API_BASE}/api/wallet/topup/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

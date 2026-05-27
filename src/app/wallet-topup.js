@@ -14,8 +14,12 @@ import {
 
 import { auth } from '../firebase';
 
-// Hard-coded so the URL is never undefined regardless of build env
-const API_BASE_URL = 'https://connecthub-yrox.onrender.com';
+// On web: requests go through Firebase Hosting /api/** rewrite → walletProxy Cloud Function.
+// This avoids all CORS and browser-extension blocking — the request is same-origin.
+// On native: hit Render directly (no browser CORS constraints).
+const API_BASE = Platform.OS === 'web'
+  ? ''
+  : 'https://connecthub-yrox.onrender.com';
 
 const QUICK_AMOUNTS = [10, 50, 100, 200, 500, 1000];
 
@@ -52,7 +56,7 @@ export default function WalletTopup() {
 
       // Direct fetch — no AbortController, no retry wrapper, no timeout signal
       // AbortController.abort() throws TypeError in Safari/WebKit which masks the real error
-      const response = await fetch(`${API_BASE_URL}/wallet/topup/init`, {
+      const response = await fetch(`${API_BASE}/api/wallet/topup/init`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,4 +1,8 @@
 {
+  "functions": [
+    { "source": "functions", "codebase": "default" },
+    { "source": "wallet-proxy", "codebase": "wallet" }
+  ],
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
@@ -31,6 +35,7 @@
       }
     ],
     "rewrites": [
+      { "source": "/api/**", "function": "walletProxy", "region": "us-central1" },
       { "source": "**", "destination": "/index.html" }
     ]
   }

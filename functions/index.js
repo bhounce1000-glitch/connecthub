@@ -1,5 +1,6 @@
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 
@@ -109,6 +110,48 @@ exports.autoConfirmDoneJobs = onSchedule(
         }));
       }
       await Promise.all(notifications);
+    }
+  }
+);
+
+/**
+ * Wallet API proxy — forwards /api/wallet/* to the Render backend.
+ * Runs same-origin from Firebase Hosting so no CORS or browser-extension blocking.
+ */
+const RENDER_BACKEND = 'https://connecthub-yrox.onrender.com';
+exports.walletProxy = onRequest(
+  {
+    cors: [
+      'https://connecthub-1873e.web.app',
+      'https://connecthub-1873e.firebaseapp.com',
+      'http://localhost:8081',
+      'http://localhost:19006',
+    ],
+    timeoutSeconds: 60,
+  },
+  async (req, res) => {
+    // Strip /api prefix: /api/wallet/topup/init -> /wallet/topup/init
+    const targetPath = req.path.replace(/^\/api/, '') || '/';
+
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (req.headers.authorization) {
+        headers['Authorization'] = req.headers.authorization;
+      }
+
+      const fetchOptions = {
+        method: req.method,
+        headers,
+      };
+      if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body) {
+        fetchOptions.body = JSON.stringify(req.body);
+      }
+
+      const upstream = await fetch(`${RENDER_BACKEND}${targetPath}`, fetchOptions);
+      const data = await upstream.json().catch(() => ({}));
+      res.status(upstream.status).json(data);
+    } catch (err) {
+      res.status(502).json({ status: false, error: 'proxy_error', message: err.message });
     }
   }
 );
