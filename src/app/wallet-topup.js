@@ -77,13 +77,14 @@ export default function WalletTopup() {
       });
 
       // 3. Build the Paystack payment page URL.
-      //    Paystack will redirect to CALLBACK_URL?reference={reference}&trxref={reference}
-      //    after the user pays. wallet-topup-return.js handles that redirect.
+      //    Payment Pages expect the transaction reference in the `reference`
+      //    query parameter. Using `ref` here can lead to verify failures such
+      //    as "Transaction reference not found." after a successful charge.
       const paystackUrl = [
         `https://paystack.shop/pay/${PAYSTACK_PAGE_SLUG}`,
         `?amount=${amountPesewas}`,
         `&email=${encodeURIComponent(user.email)}`,
-        `&ref=${reference}`,
+        `&reference=${encodeURIComponent(reference)}`,
         `&callback_url=${encodeURIComponent(CALLBACK_URL)}`,
       ].join('');
 
