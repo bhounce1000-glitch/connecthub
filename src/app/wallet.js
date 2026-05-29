@@ -165,7 +165,7 @@ export default function Wallet() {
 
       const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
       const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
-      const emailQ = query(collection(db, 'transactions'), where('email', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
+      const emailQ = query(collection(db, 'transactions'), where('email', '==', currentEmail), limit(50));
       const [sentSnap, receivedSnap, emailSnap] = await Promise.all([
         getDocs(sentQ),
         getDocs(receivedQ),
@@ -207,7 +207,7 @@ export default function Wallet() {
 
     const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
     const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
-    const emailQ = query(collection(db, 'transactions'), where('email', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
+    const emailQ = query(collection(db, 'transactions'), where('email', '==', currentEmail), limit(50));
 
     let sentRows = [];
     let receivedRows = [];
