@@ -1860,12 +1860,12 @@ async function countProviderMonthlyAccepts(providerEmail) {
 async function verifyPaystackTransaction(reference) {
   const normalizedReference = String(reference || '').trim();
   if (!normalizedReference) {
-    return { ok: false, error: 'missing_reference', data: null };
+    return { ok: false, error: 'missing_reference', message: 'Missing payment reference', statusCode: 400, data: null };
   }
 
   const paystackSecret = getPaystackSecret();
   if (!paystackSecret) {
-    return { ok: false, error: 'payment_configuration_missing', data: null };
+    return { ok: false, error: 'payment_configuration_missing', message: 'Server payment configuration missing', statusCode: 500, data: null };
   }
 
   const response = await fetch(`https://api.paystack.co/transaction/verify/${normalizedReference}`, {
@@ -1880,8 +1880,10 @@ async function verifyPaystackTransaction(reference) {
   const isSuccessful = response.ok && data?.status && data?.data?.status === 'success';
   return {
     ok: Boolean(isSuccessful),
+    statusCode: response.status || (isSuccessful ? 200 : 400),
     data,
-    error: isSuccessful ? null : 'subscription_payment_not_successful',
+    error: isSuccessful ? null : 'paystack_transaction_not_successful',
+    message: isSuccessful ? null : (data?.message || 'Payment not confirmed by Paystack'),
   };
 }
 
@@ -4069,6 +4071,89 @@ app.get('/admin/auth/signup-errors', requireAuth, requireAdmin, async (req, res)
   } catch (error) {
     logger.error({ err: error }, 'ADMIN_SIGNUP_ERROR_LOGS_FETCH_ERROR');
     return sendError(res, req, 500, 'signup_logs_failed', 'Could not load signup error logs');
+  }
+});
+
+app.post('/admin/wallet-topups/:reference/reverify', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const reference = String(req.params.reference || req.body?.reference || '').trim();
+    if (!reference) {
+      return sendError(res, req, 400, 'missing_reference', 'Payment reference is required');
+    }
+
+    const verification = await verifyPaystackTransaction(reference);
+    if (!verification.ok) {
+      return sendError(
+        res,
+        req,
+        verification.statusCode || 400,
+        verification.error || 'wallet_topup_not_successful',
+        verification.message || 'Payment not confirmed by Paystack',
+        verification.data || null
+      );
+    }
+
+    const paystackData = verification.data?.data || {};
+    const metadata = paystackData?.metadata || {};
+    const metadataType = String(metadata?.type || '').trim().toLowerCase();
+    if (metadataType && metadataType !== 'wallet_topup' && !isWalletTopupReference(reference)) {
+      return sendError(res, req, 400, 'invalid_topup_type', 'This payment reference is not a wallet top up');
+    }
+
+    const ownerEmail = String(
+      metadata?.ownerEmail
+        || metadata?.userEmail
+        || paystackData?.customer?.email
+        || req.body?.ownerEmail
+        || ''
+    ).trim().toLowerCase();
+
+    const applyResult = await applyWalletTopupCredit({
+      reference,
+      ownerEmail,
+      amountPesewas: Number(paystackData?.amount || 0),
+      gatewayResponse: paystackData?.gateway_response || null,
+      paymentChannel: paystackData?.channel || null,
+      source: 'manual_admin_reverify',
+      allowLegacyMatch: true,
+    });
+
+    if (!applyResult.ok) {
+      const statusCode = applyResult.code === 'missing_user_email'
+        ? 400
+        : applyResult.code === 'owner_access_required'
+          ? 403
+          : applyResult.code === 'ambiguous_topup_reference'
+            ? 409
+            : applyResult.code === 'payment_configuration_missing'
+              ? 500
+              : 400;
+      return sendError(res, req, statusCode, applyResult.code || 'wallet_topup_apply_failed', applyResult.message || 'Could not apply wallet top up');
+    }
+
+    await logAdminAction(req.userEmail || req.user?.email || ADMIN_EMAIL, 'manual_wallet_topup_reverify', {
+      reference,
+      ownerEmail,
+      alreadyApplied: applyResult.alreadyApplied,
+      amount: applyResult.amount,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+    });
+
+    return sendSuccess(res, req, {
+      message: applyResult.alreadyApplied ? 'Wallet top up was already applied' : 'Wallet top up applied successfully',
+      data: {
+        reference,
+        amount: applyResult.amount,
+        ownerEmail,
+        alreadyApplied: applyResult.alreadyApplied,
+        paystackStatus: paystackData?.status || 'success',
+        paymentChannel: paystackData?.channel || null,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'ADMIN_WALLET_TOPUP_REVERIFY_ERROR');
+    return sendError(res, req, 500, 'wallet_topup_reverify_failed', 'Could not reverify wallet top up');
   }
 });
 

@@ -72,6 +72,46 @@
     }
   });
 
+  await runCheck('POST /wallet/topup rejects unauthenticated request with 401', async () => {
+    const response = await fetchFn(`${baseUrl}/wallet/topup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ amount: 1 }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (response.status !== 401) {
+      throw new Error(`Expected 401, received ${response.status}`);
+    }
+
+    if (data?.code !== 'missing_bearer_token') {
+      throw new Error(`Expected code=missing_bearer_token, received ${data?.code || 'unknown'}`);
+    }
+  });
+
+  await runCheck('POST /paystack/webhook rejects unsigned payload with 400', async () => {
+    const response = await fetchFn(`${baseUrl}/paystack/webhook`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ event: 'test' }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (response.status !== 400) {
+      throw new Error(`Expected 400, received ${response.status}`);
+    }
+
+    if (data?.code !== 'invalid_paystack_signature') {
+      throw new Error(`Expected code=invalid_paystack_signature, received ${data?.code || 'unknown'}`);
+    }
+  });
+
   const failedChecks = checks.filter((item) => !item.ok);
 
   console.log('');

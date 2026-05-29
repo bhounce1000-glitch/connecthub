@@ -123,9 +123,21 @@ Callback: https://app.your-domain.com/pay-return
 
 - `POST /pay`: Initializes a Paystack transaction.
 - `POST /pay/verify`: Verifies a Paystack reference.
+- `POST /wallet/topup`: Initializes a wallet top-up checkout with Paystack.
+- `POST /wallet/topup/verify`: Manually verifies and applies a wallet top-up reference.
 - `GET /wallet/withdraw-status`: Returns whether wallet withdrawals are currently enabled.
 - `POST /paystack/webhook`: Receives signed Paystack webhook events and updates Firestore when a charge succeeds.
 - `GET /`: Simple health check.
+
+## Wallet top-up recovery
+
+If Paystack confirms a successful top-up but the wallet needs support intervention, admins can manually re-run the top-up reconciliation with:
+
+```text
+POST /admin/wallet-topups/:reference/reverify
+```
+
+This endpoint is admin-only and uses the same shared top-up crediting logic as the webhook and normal verify route, so it remains idempotent.
 
 ## Wallet withdrawals
 
