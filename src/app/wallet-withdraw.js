@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 
-import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -14,11 +14,39 @@ import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost } from '../utils/api-client';
 
+const WITHDRAWAL_PENDING_WINDOW_HOURS = 24;
+
 const NETWORKS = [
   { label: 'MTN', value: 'MTN', code: 'mtn' },
   { label: 'Telecel (Vodafone)', value: 'Telecel (Vodafone)', code: 'vod' },
   { label: 'AirtelTigo', value: 'AirtelTigo', code: 'atl' },
 ];
+
+const toMs = (value) => {
+  if (!value) return 0;
+  if (value?.seconds) return value.seconds * 1000;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+};
+
+const isBlockingPendingWithdrawal = (withdrawal) => {
+  const status = String(withdrawal?.status || '').toUpperCase();
+  if (status === 'PROCESSING') {
+    return true;
+  }
+  if (status !== 'PENDING') {
+    return false;
+  }
+  if (!withdrawal?.manualQueue) {
+    return true;
+  }
+  const requestedMs = toMs(withdrawal?.requestedAt || withdrawal?.requestedAtIso || withdrawal?.updatedAt);
+  if (!requestedMs) {
+    return true;
+  }
+  const staleCutoffMs = Date.now() - WITHDRAWAL_PENDING_WINDOW_HOURS * 60 * 60 * 1000;
+  return requestedMs >= staleCutoffMs;
+};
 
 const getWithdrawErrorMessage = (errorPayload) => {
   const errorCode = errorPayload?.code || errorPayload?.error;
@@ -92,11 +120,9 @@ export default function WalletWithdraw() {
       const balance = Number(userDoc.data()?.walletBalance || 0);
 
       const kyc = String(userDoc.data()?.kycStatus || '').toLowerCase();
-      const pendingSnap = await getDocs(query(collection(db, 'withdrawals'), where('email', '==', email), where('status', 'in', ['pending', 'pending_admin_approval', 'processing', 'manual_review'])));
 
       setWalletBalance(Number.isFinite(balance) ? balance : 0);
       setKycVerified(kyc === 'verified');
-      setHasPendingWithdrawal(!pendingSnap.empty);
     };
     loadGuards().catch(() => {});
   }, [user?.email]);
@@ -111,6 +137,27 @@ export default function WalletWithdraw() {
       const nextBalance = snap.exists() ? Number(snap.data()?.walletBalance || 0) : 0;
       setWalletBalance(Number.isFinite(nextBalance) ? nextBalance : 0);
     });
+
+    return unsub;
+  }, [user?.email]);
+
+  useEffect(() => {
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!email) {
+      setHasPendingWithdrawal(false);
+      return undefined;
+    }
+
+    const unsub = onSnapshot(
+      query(collection(db, 'wallet_withdrawals'), where('userEmail', '==', email)),
+      (snap) => {
+        const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        setHasPendingWithdrawal(rows.some(isBlockingPendingWithdrawal));
+      },
+      () => {
+        setHasPendingWithdrawal(false);
+      }
+    );
 
     return unsub;
   }, [user?.email]);

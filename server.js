@@ -3243,6 +3243,114 @@ async function queueWithdrawalManually({
   });
 }
 
+function mergeSnapshotDocs(...snapshots) {
+  const merged = new Map();
+  snapshots.forEach((snapshot) => {
+    snapshot?.docs?.forEach((docSnap) => {
+      merged.set(docSnap.ref.path, docSnap);
+    });
+  });
+  return Array.from(merged.values());
+}
+
+async function findBlockingWithdrawalForUser(actorEmail) {
+  const pendingSnap = await adminDb.collection('wallet_withdrawals')
+    .where('userEmail', '==', actorEmail)
+    .where('status', 'in', ['PENDING', 'PROCESSING'])
+    .limit(10)
+    .get();
+
+  if (pendingSnap.empty) {
+    return null;
+  }
+
+  const nowIso = new Date().toISOString();
+  const staleCutoffMs = Date.now() - WITHDRAWAL_SLA_HOURS * 60 * 60 * 1000;
+  const blockingLegacyStatuses = new Set(['pending', 'pending_admin_approval', 'processing', 'manual_review']);
+  const blockingTransactionStatuses = new Set(['pending', 'processing']);
+  const terminalLegacyStatusMap = {
+    completed: 'COMPLETED',
+    rejected: 'REFUNDED',
+    refunded: 'REFUNDED',
+    failed: 'FAILED',
+    cancelled: 'FAILED',
+  };
+
+  for (const docSnap of pendingSnap.docs) {
+    const withdrawalData = docSnap.data() || {};
+    const status = String(withdrawalData.status || '').toUpperCase();
+    const reference = String(withdrawalData.reference || docSnap.id || '').trim();
+
+    if (status === 'PROCESSING') {
+      return { id: docSnap.id, reference, status, data: withdrawalData };
+    }
+
+    const [legacyByWalletId, legacyByReference, txByWithdrawalId, txByReference, txByTransactionId] = await Promise.all([
+      adminDb.collection('withdrawals').where('walletWithdrawalId', '==', docSnap.id).limit(3).get(),
+      reference ? adminDb.collection('withdrawals').where('reference', '==', reference).limit(3).get() : Promise.resolve({ docs: [] }),
+      adminDb.collection('transactions').where('walletWithdrawalId', '==', docSnap.id).limit(3).get(),
+      reference ? adminDb.collection('transactions').where('reference', '==', reference).limit(3).get() : Promise.resolve({ docs: [] }),
+      reference ? adminDb.collection('transactions').where('transactionId', '==', reference).limit(3).get() : Promise.resolve({ docs: [] }),
+    ]);
+
+    const legacyDocs = mergeSnapshotDocs(legacyByWalletId, legacyByReference);
+    const txDocs = mergeSnapshotDocs(txByWithdrawalId, txByReference, txByTransactionId);
+
+    const blockingLegacyDoc = legacyDocs.find((legacyDoc) => blockingLegacyStatuses.has(String(legacyDoc.data()?.status || '').trim().toLowerCase()));
+    if (blockingLegacyDoc) {
+      return { id: docSnap.id, reference, status, data: withdrawalData };
+    }
+
+    const blockingTxDoc = txDocs.find((txDoc) => blockingTransactionStatuses.has(String(txDoc.data()?.status || '').trim().toLowerCase()));
+    if (blockingTxDoc) {
+      return { id: docSnap.id, reference, status, data: withdrawalData };
+    }
+
+    const terminalLegacyDoc = legacyDocs.find((legacyDoc) => terminalLegacyStatusMap[String(legacyDoc.data()?.status || '').trim().toLowerCase()]);
+    if (terminalLegacyDoc) {
+      const legacyStatus = String(terminalLegacyDoc.data()?.status || '').trim().toLowerCase();
+      const reconciledStatus = terminalLegacyStatusMap[legacyStatus];
+      await docSnap.ref.set({
+        status: reconciledStatus,
+        updatedAt: nowIso,
+        completedAt: reconciledStatus === 'COMPLETED' ? nowIso : null,
+        failedAt: reconciledStatus === 'COMPLETED' ? null : nowIso,
+        failureReason: reconciledStatus === 'COMPLETED' ? null : legacyStatus,
+        reconciledFromLegacyAt: nowIso,
+      }, { merge: true });
+      continue;
+    }
+
+    const requestedMs = toMillis(withdrawalData.requestedAt || withdrawalData.requestedAtIso || withdrawalData.updatedAt);
+    const isStaleQueuedOrphan = Boolean(withdrawalData.manualQueue)
+      && requestedMs > 0
+      && requestedMs < staleCutoffMs
+      && !reference;
+
+    const isStaleManualQueue = Boolean(withdrawalData.manualQueue)
+      && requestedMs > 0
+      && requestedMs < staleCutoffMs
+      && legacyDocs.length === 0
+      && txDocs.length === 0;
+
+    if (isStaleQueuedOrphan || isStaleManualQueue) {
+      await docSnap.ref.set({
+        status: 'FAILED',
+        updatedAt: nowIso,
+        failedAt: nowIso,
+        failureReason: 'stale_orphaned_pending',
+        transferStatusEvent: 'system.reconciled_stale_pending',
+        transferStatusMessage: 'Stale queued withdrawal was reconciled automatically',
+      }, { merge: true });
+      continue;
+    }
+
+    return { id: docSnap.id, reference, status, data: withdrawalData };
+  }
+
+  return null;
+}
+
 function mapNetworkToPaystackCodes(networkLabel) {
   const n = String(networkLabel || '').toLowerCase().replace(/\s+/g, '');
   if (n.includes('mtn')) return ['mtn', 'MTN'];
@@ -3430,12 +3538,8 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     }
 
     // Block duplicate pending withdrawals
-    const pendingSnap = await adminDb.collection('wallet_withdrawals')
-      .where('userEmail', '==', actorEmail)
-      .where('status', 'in', ['PENDING', 'PROCESSING'])
-      .limit(1)
-      .get();
-    if (!pendingSnap.empty) {
+    const blockingWithdrawal = await findBlockingWithdrawalForUser(actorEmail);
+    if (blockingWithdrawal) {
       return sendError(res, req, 409, 'withdrawal_already_pending', 'You already have a pending withdrawal. Wait for it to complete before submitting another.');
     }
 
