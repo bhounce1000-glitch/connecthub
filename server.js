@@ -107,6 +107,7 @@ const SIGNUP_ERROR_LOG_COLLECTION = 'signup_error_logs';
 const OTP_RESEND_COOLDOWN_SECONDS = Number(process.env.OTP_RESEND_COOLDOWN_SECONDS || 60);
 const OTP_MAX_VERIFY_ATTEMPTS = Number(process.env.OTP_MAX_VERIFY_ATTEMPTS || 5);
 const OTP_LOCK_MINUTES = Number(process.env.OTP_LOCK_MINUTES || 15);
+const PAYSTACK_WITHDRAWALS_ENABLED = String(process.env.PAYSTACK_WITHDRAWALS_ENABLED || 'false').trim().toLowerCase() === 'true';
 const REQUEST_PAYOUT_COLLECTION = 'request_payouts';
 const REQUEST_STATUS_SEQUENCE = ['open', 'accepted', 'in_progress', 'pending_confirmation', 'completed', 'paid'];
 const ACCEPTED_PAYMENT_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -462,6 +463,80 @@ function sendError(res, req, statusCode, code, message, details = null) {
 
 function getPaystackSecret() {
   return process.env.PAYSTACK_SECRET || '';
+}
+
+function getWithdrawalAvailability() {
+  if (PAYSTACK_WITHDRAWALS_ENABLED) {
+    return {
+      enabled: true,
+      code: null,
+      message: 'Wallet withdrawals are enabled.',
+      hint: '',
+    };
+  }
+
+  return {
+    enabled: false,
+    code: 'withdrawals_disabled',
+    message: 'Wallet withdrawals are temporarily unavailable while Paystack third-party payouts are not enabled on this account.',
+    hint: 'Upgrade the Paystack business tier, enable Transfers, then set PAYSTACK_WITHDRAWALS_ENABLED=true before allowing withdrawals again.',
+  };
+}
+
+function classifyWithdrawalGatewayError(rawMessage) {
+  const message = String(rawMessage || '').trim();
+  const lower = message.toLowerCase();
+
+  if (!lower) {
+    return null;
+  }
+
+  if (lower.includes('starter business') || lower.includes('third party payouts')) {
+    return {
+      statusCode: 503,
+      code: 'paystack_business_tier_restricted',
+      message: 'Wallet withdrawals are unavailable because the Paystack account cannot do third-party payouts yet.',
+      hint: 'Upgrade the Paystack business tier and enable Transfers before allowing withdrawals.',
+    };
+  }
+
+  if (lower.includes('transfer disabled') || lower.includes('transfers are disabled')) {
+    return {
+      statusCode: 503,
+      code: 'transfer_disabled',
+      message: 'Wallet withdrawals are unavailable because Paystack transfers are disabled for this account.',
+      hint: 'Enable Transfers in Paystack before allowing withdrawals.',
+    };
+  }
+
+  if (lower.includes('otp') && lower.includes('transfer')) {
+    return {
+      statusCode: 503,
+      code: 'transfer_otp_required',
+      message: 'Wallet withdrawals are unavailable because Paystack transfer finalization still requires OTP.',
+      hint: 'Complete Paystack transfer setup before allowing withdrawals.',
+    };
+  }
+
+  if (lower.includes('pending approval')) {
+    return {
+      statusCode: 503,
+      code: 'transfer_pending_approval',
+      message: 'Wallet withdrawals are unavailable because Paystack transfer capability is pending approval.',
+      hint: 'Complete Paystack compliance approval before allowing withdrawals.',
+    };
+  }
+
+  if (lower.includes('insufficient balance')) {
+    return {
+      statusCode: 503,
+      code: 'paystack_insufficient_balance',
+      message: 'Wallet withdrawals are unavailable because the Paystack transfer balance is insufficient.',
+      hint: 'Fund the Paystack balance before retrying withdrawals.',
+    };
+  }
+
+  return null;
 }
 
 function isValidEmailFormat(email) {
@@ -3520,6 +3595,18 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
       return sendError(res, req, 500, 'payment_configuration_missing', 'Payment service is not configured');
     }
 
+    const withdrawalAvailability = getWithdrawalAvailability();
+    if (!withdrawalAvailability.enabled) {
+      return sendError(
+        res,
+        req,
+        503,
+        withdrawalAvailability.code,
+        withdrawalAvailability.message,
+        { hint: withdrawalAvailability.hint }
+      );
+    }
+
     // ── Pre-flight Firestore checks (outside transaction for speed) ───────────
     const userRef = adminDb.collection('users').doc(actorEmail);
     const userSnap = await userRef.get();
@@ -3577,6 +3664,13 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
 
     // ── Paystack recipient creation failed → queue for manual processing ──────
     if (!recipientResult?.ok) {
+      const recipientBlocker = classifyWithdrawalGatewayError(lastRecipientMessage);
+      if (recipientBlocker) {
+        return sendError(res, req, recipientBlocker.statusCode, recipientBlocker.code, recipientBlocker.message, {
+          hint: recipientBlocker.hint,
+          paystack: { message: lastRecipientMessage },
+        });
+      }
       logger.warn({
         provider, normalizedPhone, bankCodes, accountNumbers,
         paystackMessage: lastRecipientMessage,
@@ -3617,6 +3711,13 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
 
     if (!transferResult.ok) {
       const paystackMsg = String(transferResult.data?.message || '').trim();
+      const transferBlocker = classifyWithdrawalGatewayError(paystackMsg);
+      if (transferBlocker) {
+        return sendError(res, req, transferBlocker.statusCode, transferBlocker.code, transferBlocker.message, {
+          hint: transferBlocker.hint,
+          paystack: { message: paystackMsg },
+        });
+      }
       logger.warn({ transferResult, paystackMsg }, 'PAYSTACK_TRANSFER_INITIATION_FAILED_QUEUING');
       return await queueWithdrawalManually({
         res, req, userRef, userData, actorEmail, amount, provider,
@@ -3773,6 +3874,11 @@ app.post('/wallet/withdraw', requireAuth, async (req, res) => {
     }
     return sendError(res, req, 500, 'server_error', 'An unexpected error occurred. Please try again.');
   }
+});
+
+app.get('/wallet/withdraw-status', (req, res) => {
+  const availability = getWithdrawalAvailability();
+  return sendSuccess(res, req, { data: availability });
 });
 
 app.post('/admin/withdrawals/:id/complete', requireAuth, requireAdmin, async (req, res) => {

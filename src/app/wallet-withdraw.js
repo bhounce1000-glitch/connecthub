@@ -12,7 +12,7 @@ import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
-import { apiPost } from '../utils/api-client';
+import { apiGet, apiPost } from '../utils/api-client';
 
 const WITHDRAWAL_PENDING_WINDOW_HOURS = 24;
 
@@ -109,6 +109,33 @@ export default function WalletWithdraw() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [kycVerified, setKycVerified] = useState(false);
   const [hasPendingWithdrawal, setHasPendingWithdrawal] = useState(false);
+  const [withdrawalsEnabled, setWithdrawalsEnabled] = useState(false);
+  const [withdrawalsStatusMessage, setWithdrawalsStatusMessage] = useState('Wallet withdrawals are temporarily unavailable while Paystack payouts are not enabled.');
+
+  useEffect(() => {
+    let active = true;
+
+    const loadWithdrawalStatus = async () => {
+      try {
+        const { response, data } = await apiGet(`${API_BASE_URL}/wallet/withdraw-status`);
+        if (!active) return;
+
+        const enabled = Boolean(response.ok && data?.status && data?.data?.enabled);
+        setWithdrawalsEnabled(enabled);
+        setWithdrawalsStatusMessage(String(data?.data?.message || data?.message || 'Wallet withdrawals are temporarily unavailable.').trim() || 'Wallet withdrawals are temporarily unavailable.');
+      } catch (error) {
+        if (!active) return;
+        setWithdrawalsEnabled(false);
+        setWithdrawalsStatusMessage(error?.message || 'Could not confirm withdrawal availability right now.');
+      }
+    };
+
+    loadWithdrawalStatus();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const loadGuards = async () => {
@@ -163,11 +190,12 @@ export default function WalletWithdraw() {
   }, [user?.email]);
 
   const disableReason = useMemo(() => {
+    if (!withdrawalsEnabled) return withdrawalsStatusMessage;
     if (walletBalance < 10) return 'Withdrawal disabled: available balance is below GHS 10.';
     if (!kycVerified) return 'Withdrawal disabled: complete KYC verification first.';
     if (hasPendingWithdrawal) return 'Withdrawal disabled: you already have a pending withdrawal.';
     return '';
-  }, [walletBalance, kycVerified, hasPendingWithdrawal]);
+  }, [withdrawalsEnabled, withdrawalsStatusMessage, walletBalance, kycVerified, hasPendingWithdrawal]);
 
   const submitWithdrawal = async () => {
     const numericAmount = Number(amount || 0);
@@ -247,6 +275,15 @@ export default function WalletWithdraw() {
       scroll
     >
       <AppCard>
+        {!withdrawalsEnabled ? (
+          <AppNotice
+            tone="warning"
+            title="Withdrawals unavailable"
+            message={withdrawalsStatusMessage}
+            style={{ marginBottom: 12 }}
+          />
+        ) : null}
+
         <Text style={{ color: '#64748b', marginBottom: 16, fontSize: 12 }}>
           Funds are sent <Text style={{ fontWeight: '700', color: '#166534' }}>instantly</Text> via Paystack. Minimum GHS 10.00. KYC required.
         </Text>
