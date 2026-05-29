@@ -119,12 +119,21 @@ function transactionCounterparty(row, currentEmail) {
   return `From: ${String(row.senderName || row.senderEmail || row.reference || 'Unknown').toUpperCase()}`;
 }
 
+function mergeTransactionRows(...groups) {
+  const byId = new Map();
+  groups.flat().forEach((row) => {
+    if (row?.id) {
+      byId.set(row.id, row);
+    }
+  });
+  return Array.from(byId.values()).sort((a, b) => rowTime(b) - rowTime(a));
+}
+
 export default function Wallet() {
   const router = useRouter();
   const { refresh } = useLocalSearchParams();
   const { user } = useAuthUser();
   const currentEmail = (user?.email || '').trim().toLowerCase();
-  const currentUid = String(user?.uid || '').trim();
 
   const [transactions, setTransactions] = useState([]);
   const [walletBalance, setWalletBalance] = useState(0);
@@ -151,42 +160,22 @@ export default function Wallet() {
 
     setErrorMessage('');
     try {
-      let balance = 0;
-      if (currentUid) {
-        const walletByUid = await getDoc(doc(db, 'wallets', currentUid));
-        if (walletByUid.exists()) {
-          balance = Number(walletByUid.data()?.balance || walletByUid.data()?.walletBalance || 0);
-        }
-      }
-      if (!balance && currentEmail) {
-        const walletByEmail = await getDoc(doc(db, 'wallets', currentEmail));
-        if (walletByEmail.exists()) {
-          balance = Number(walletByEmail.data()?.balance || walletByEmail.data()?.walletBalance || 0);
-        }
-      }
-      if (!balance) {
-        const userSnap = await getDoc(doc(db, 'users', currentEmail));
-        balance = userSnap.exists() ? Number(userSnap.data()?.walletBalance || 0) : 0;
-      }
+      const userSnap = await getDoc(doc(db, 'users', currentEmail));
+      const balance = userSnap.exists() ? Number(userSnap.data()?.walletBalance || 0) : 0;
 
-      const byUserIdQ = currentUid
-        ? query(collection(db, 'transactions'), where('userId', '==', currentUid), orderBy('createdAt', 'desc'), limit(50))
-        : null;
       const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
       const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
-      const [userIdSnap, sentSnap, receivedSnap] = await Promise.all([
-        byUserIdQ ? getDocs(byUserIdQ) : Promise.resolve({ docs: [] }),
+      const emailQ = query(collection(db, 'transactions'), where('email', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
+      const [sentSnap, receivedSnap, emailSnap] = await Promise.all([
         getDocs(sentQ),
         getDocs(receivedQ),
+        getDocs(emailQ),
       ]);
 
-      const userIdRows = userIdSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: d.data()?.type === 'credit' ? 'received' : 'sent' }));
       const sentRows = sentSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'sent' }));
       const receivedRows = receivedSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'received' }));
-
-      const byId = new Map();
-      [...userIdRows, ...sentRows, ...receivedRows].forEach((row) => byId.set(row.id, row));
-      const merged = Array.from(byId.values()).sort((a, b) => rowTime(b) - rowTime(a));
+      const emailRows = emailSnap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'received' }));
+      const merged = mergeTransactionRows(sentRows, receivedRows, emailRows);
 
       setWalletBalance(Number.isFinite(balance) ? balance : 0);
       setTransactions(merged);
@@ -205,21 +194,10 @@ export default function Wallet() {
   }, [currentEmail, refresh]);
 
   useEffect(() => {
-    if (!currentEmail && !currentUid) return undefined;
-    const refPath = currentUid ? doc(db, 'wallets', currentUid) : doc(db, 'wallets', currentEmail);
-    const unsubWallet = onSnapshot(refPath, (snap) => {
-      const balance = snap.exists() ? Number(snap.data()?.balance || snap.data()?.walletBalance || 0) : 0;
-      setWalletBalance(Number.isFinite(balance) ? balance : 0);
-    });
-    return unsubWallet;
-  }, [currentEmail, currentUid]);
-
-  useEffect(() => {
     if (!currentEmail) return undefined;
     const unsub = onSnapshot(doc(db, 'users', currentEmail), (snap) => {
-      if (snap.exists()) {
-        setWalletBalance(parseFloat(snap.data()?.walletBalance || 0));
-      }
+      const nextBalance = snap.exists() ? Number(snap.data()?.walletBalance || 0) : 0;
+      setWalletBalance(Number.isFinite(nextBalance) ? nextBalance : 0);
     });
     return unsub;
   }, [currentEmail]);
@@ -229,15 +207,14 @@ export default function Wallet() {
 
     const sentQ = query(collection(db, 'transactions'), where('senderEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
     const receivedQ = query(collection(db, 'transactions'), where('receiverEmail', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
+    const emailQ = query(collection(db, 'transactions'), where('email', '==', currentEmail), orderBy('timestamp', 'desc'), limit(50));
 
     let sentRows = [];
     let receivedRows = [];
+    let emailRows = [];
 
     const mergeRows = () => {
-      const byId = new Map();
-      [...sentRows, ...receivedRows].forEach((row) => byId.set(row.id, row));
-      const merged = Array.from(byId.values()).sort((a, b) => rowTime(b) - rowTime(a));
-      setTransactions(merged);
+      setTransactions(mergeTransactionRows(sentRows, receivedRows, emailRows));
     };
 
     const unsubSent = onSnapshot(sentQ, (snap) => {
@@ -250,9 +227,15 @@ export default function Wallet() {
       mergeRows();
     });
 
+    const unsubEmail = onSnapshot(emailQ, (snap) => {
+      emailRows = snap.docs.map((d) => ({ id: d.id, ...d.data(), direction: 'received' }));
+      mergeRows();
+    });
+
     return () => {
       unsubSent();
       unsubReceived();
+      unsubEmail();
     };
   }, [currentEmail]);
 
@@ -441,7 +424,7 @@ export default function Wallet() {
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
                         <Text style={{ color: amountColor, fontWeight: '800' }}>{isReceived ? '+' : '-'} GHS {Number(row.amount || 0).toFixed(2)}</Text>
-                        <Text style={{ color: '#94a3b8', fontSize: 11 }}>{toDisplayDateTime(row.timestamp)}</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 11 }}>{toDisplayDateTime(row.timestamp || row.createdAt)}</Text>
                       </View>
                     </View>
                     <View style={{ marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>

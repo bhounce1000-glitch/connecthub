@@ -1308,6 +1308,355 @@ function parseMoney(value) {
   return Math.max(0, parseFloat(amount.toFixed(2)));
 }
 
+function isWalletTopupReference(reference) {
+  return String(reference || '').trim().toLowerCase().startsWith('topup-');
+}
+
+function isWalletTopupSettled(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'success' || normalized === 'completed';
+}
+
+function resolveWalletTopupCallbackUrl(candidateUrl) {
+  const rawValue = String(candidateUrl || '').trim();
+  if (!rawValue) {
+    return `${NORMALIZED_CALLBACK_BASE_URL}/wallet-topup-return`;
+  }
+
+  if (rawValue.startsWith(`${MOBILE_SCHEME}://wallet-topup-return`)) {
+    return rawValue;
+  }
+
+  try {
+    const parsed = new URL(rawValue);
+    if (parsed.pathname === '/wallet-topup-return' && allowedOriginSet.has(trimTrailingSlash(parsed.origin))) {
+      return rawValue;
+    }
+  } catch {
+    // Fall back to the default callback below.
+  }
+
+  return `${NORMALIZED_CALLBACK_BASE_URL}/wallet-topup-return`;
+}
+
+async function resolveWalletTopupMatch({ reference, ownerEmail, amountPesewas, allowLegacyMatch = true }) {
+  const normalizedReference = String(reference || '').trim();
+  const normalizedOwnerEmail = String(ownerEmail || '').trim().toLowerCase();
+  const topupRef = adminDb.collection('wallet_topups').doc(normalizedReference);
+  const topupSnap = await topupRef.get();
+
+  if (topupSnap.exists) {
+    const topupData = topupSnap.data() || {};
+    const topupOwnerEmail = String(topupData.ownerEmail || topupData.email || '').trim().toLowerCase();
+    if (topupOwnerEmail && normalizedOwnerEmail && topupOwnerEmail !== normalizedOwnerEmail) {
+      return { ok: false, code: 'owner_access_required', message: 'Only the payment owner can apply this wallet top up' };
+    }
+
+    return {
+      ok: true,
+      topupRef,
+      topupData,
+      legacyTopupRef: null,
+      legacyTopupData: null,
+      matchType: 'direct',
+    };
+  }
+
+  if (!allowLegacyMatch || !normalizedOwnerEmail) {
+    return {
+      ok: true,
+      topupRef,
+      topupData: null,
+      legacyTopupRef: null,
+      legacyTopupData: null,
+      matchType: 'new',
+    };
+  }
+
+  const [byEmailSnap, byOwnerSnap] = await Promise.all([
+    adminDb.collection('wallet_topups').where('email', '==', normalizedOwnerEmail).limit(20).get(),
+    adminDb.collection('wallet_topups').where('ownerEmail', '==', normalizedOwnerEmail).limit(20).get(),
+  ]);
+
+  const candidatesByPath = new Map();
+  [...byEmailSnap.docs, ...byOwnerSnap.docs].forEach((docSnap) => {
+    candidatesByPath.set(docSnap.ref.path, docSnap);
+  });
+
+  const candidates = Array.from(candidatesByPath.values()).filter((candidateDoc) => {
+    const candidate = candidateDoc.data() || {};
+    const candidateAmountPesewas = Number(candidate.amountPesewas || Math.round(Number(candidate.amountGHS || candidate.amount || 0) * 100));
+    return candidateDoc.id !== normalizedReference
+      && !isWalletTopupSettled(candidate.status)
+      && candidate.applied !== true
+      && candidateAmountPesewas === Number(amountPesewas || 0);
+  });
+
+  if (candidates.length > 1) {
+    return {
+      ok: false,
+      code: 'ambiguous_topup_reference',
+      message: 'Multiple pending wallet top ups match this payment. Contact support for manual review.',
+    };
+  }
+
+  const legacyTopup = candidates[0] || null;
+
+  return {
+    ok: true,
+    topupRef,
+    topupData: null,
+    legacyTopupRef: legacyTopup?.ref || null,
+    legacyTopupData: legacyTopup?.data() || null,
+    matchType: legacyTopup ? 'legacy' : 'new',
+  };
+}
+
+async function applyWalletTopupCredit({
+  reference,
+  ownerEmail,
+  amountPesewas,
+  gatewayResponse = null,
+  paymentChannel = null,
+  source = 'wallet_topup_verify',
+  allowLegacyMatch = true,
+}) {
+  const normalizedReference = String(reference || '').trim();
+  const normalizedOwnerEmail = String(ownerEmail || '').trim().toLowerCase();
+  const normalizedAmountPesewas = Number(amountPesewas || 0);
+  const amountGhs = parseMoney(normalizedAmountPesewas / 100);
+
+  if (!normalizedReference) {
+    return { ok: false, code: 'missing_reference', message: 'Missing payment reference' };
+  }
+  if (!normalizedOwnerEmail) {
+    return { ok: false, code: 'missing_user_email', message: 'Payment owner email is missing' };
+  }
+  if (!amountGhs || amountGhs <= 0) {
+    return { ok: false, code: 'invalid_topup_amount', message: 'Top up amount is invalid' };
+  }
+
+  const matchResult = await resolveWalletTopupMatch({
+    reference: normalizedReference,
+    ownerEmail: normalizedOwnerEmail,
+    amountPesewas: normalizedAmountPesewas,
+    allowLegacyMatch,
+  });
+
+  if (!matchResult.ok) {
+    return matchResult;
+  }
+
+  const {
+    topupRef,
+    topupData,
+    legacyTopupRef,
+    legacyTopupData,
+    matchType,
+  } = matchResult;
+
+  const transactionRef = adminDb.collection('transactions').doc(`wallet_topup_${normalizedReference}`);
+  const userRef = adminDb.collection('users').doc(normalizedOwnerEmail);
+  let alreadyApplied = false;
+
+  await adminDb.runTransaction(async (txn) => {
+    const userSnap = await txn.get(userRef);
+    if (!userSnap.exists) {
+      throw new Error('wallet_topup_user_not_found');
+    }
+
+    const currentTopupSnap = topupData ? { exists: true, data: () => topupData } : await txn.get(topupRef);
+    const currentLegacyTopupSnap = legacyTopupRef
+      ? (legacyTopupData ? { exists: true, data: () => legacyTopupData, id: legacyTopupRef.id } : await txn.get(legacyTopupRef))
+      : null;
+    const currentTransactionSnap = await txn.get(transactionRef);
+
+    const topupAlreadyApplied = currentTopupSnap.exists && currentTopupSnap.data()?.applied === true;
+    const legacyAlreadyApplied = currentLegacyTopupSnap?.exists && currentLegacyTopupSnap.data()?.applied === true;
+
+    if (currentTransactionSnap.exists || topupAlreadyApplied || legacyAlreadyApplied) {
+      alreadyApplied = true;
+      txn.set(topupRef, {
+        reference: normalizedReference,
+        ownerEmail: normalizedOwnerEmail,
+        email: normalizedOwnerEmail,
+        amount: amountGhs,
+        amountGHS: amountGhs,
+        amountPesewas: normalizedAmountPesewas,
+        status: 'success',
+        applied: true,
+        appliedAt: currentTopupSnap.data()?.appliedAt || currentLegacyTopupSnap?.data()?.appliedAt || new Date().toISOString(),
+        source,
+        paymentChannel,
+        gatewayResponse,
+        verifiedReference: normalizedReference,
+        linkedPendingReference: legacyTopupRef?.id || null,
+      }, { merge: true });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+
+    txn.set(userRef, {
+      walletBalance: admin.firestore.FieldValue.increment(amountGhs),
+      updatedAt: nowIso,
+    }, { merge: true });
+
+    txn.set(topupRef, {
+      reference: normalizedReference,
+      ownerEmail: normalizedOwnerEmail,
+      email: normalizedOwnerEmail,
+      amount: amountGhs,
+      amountGHS: amountGhs,
+      amountPesewas: normalizedAmountPesewas,
+      status: 'success',
+      applied: true,
+      appliedAt: nowIso,
+      creditedAt: nowIso,
+      source,
+      paymentChannel,
+      gatewayResponse,
+      verifiedReference: normalizedReference,
+      linkedPendingReference: legacyTopupRef?.id || null,
+      matchType,
+    }, { merge: true });
+
+    if (legacyTopupRef) {
+      txn.set(legacyTopupRef, {
+        ownerEmail: normalizedOwnerEmail,
+        email: normalizedOwnerEmail,
+        amount: amountGhs,
+        amountGHS: amountGhs,
+        amountPesewas: normalizedAmountPesewas,
+        status: 'success',
+        applied: true,
+        appliedAt: nowIso,
+        creditedAt: nowIso,
+        verifiedReference: normalizedReference,
+      }, { merge: true });
+    }
+
+    txn.set(transactionRef, {
+      type: 'wallet_topup',
+      reference: normalizedReference,
+      transactionId: normalizedReference,
+      email: normalizedOwnerEmail,
+      userId: normalizedOwnerEmail,
+      senderEmail: 'paystack@system',
+      receiverEmail: normalizedOwnerEmail,
+      amount: amountGhs,
+      status: 'success',
+      paymentMethod: paymentChannel || 'paystack',
+      description: `Wallet top-up — GHS ${amountGhs.toFixed(2)}`,
+      jobTitle: 'Wallet Top-up',
+      gatewayResponse,
+      source,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: nowIso,
+    }, { merge: true });
+  });
+
+  if (!alreadyApplied) {
+    await notifyUser(
+      normalizedOwnerEmail,
+      `Your wallet has been funded with GHS ${amountGhs.toFixed(2)}.`,
+      'Wallet Funded',
+      { screen: 'wallet', type: 'wallet_topup' }
+    );
+  }
+
+  return {
+    ok: true,
+    alreadyApplied,
+    amount: amountGhs,
+    reference: normalizedReference,
+  };
+}
+
+async function createWalletTopupCheckout({ actorEmail, amount, callbackUrl }) {
+  const paystackSecret = getPaystackSecret();
+  const normalizedEmail = String(actorEmail || '').trim().toLowerCase();
+  const parsedAmount = parseMoney(amount);
+
+  if (!normalizedEmail) {
+    return { ok: false, statusCode: 401, code: 'missing_user_email', message: 'Authenticated user email is missing' };
+  }
+  if (!parsedAmount || parsedAmount < 1) {
+    return { ok: false, statusCode: 400, code: 'invalid_amount', message: 'Top up amount must be at least GHS 1.00' };
+  }
+  if (!paystackSecret) {
+    return { ok: false, statusCode: 500, code: 'payment_configuration_missing', message: 'Server payment configuration missing' };
+  }
+
+  const reference = `topup-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const amountPesewas = Math.round(parsedAmount * 100);
+  const resolvedCallbackUrl = resolveWalletTopupCallbackUrl(callbackUrl);
+
+  const paystackController = new AbortController();
+  const paystackTimeout = setTimeout(() => paystackController.abort(), 10000);
+  let response;
+  try {
+    response = await fetch('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: normalizedEmail,
+        amount: amountPesewas,
+        currency: 'GHS',
+        reference,
+        callback_url: resolvedCallbackUrl,
+        metadata: {
+          type: 'wallet_topup',
+          ownerEmail: normalizedEmail,
+          userEmail: normalizedEmail,
+          cancel_action: `${NORMALIZED_CALLBACK_BASE_URL}/wallet`,
+        },
+      }),
+      signal: paystackController.signal,
+    });
+  } finally {
+    clearTimeout(paystackTimeout);
+  }
+
+  const data = await response.json();
+  logger.info({ paystackStatus: data?.status, ref: data?.data?.reference || reference, ownerEmail: normalizedEmail }, 'WALLET_TOPUP_INIT_RESPONSE');
+
+  if (!response.ok || !data?.status || !data?.data?.authorization_url) {
+    return {
+      ok: false,
+      statusCode: response.status || 500,
+      code: 'wallet_topup_init_failed',
+      message: data?.message || 'Could not initialize wallet top up',
+    };
+  }
+
+  await adminDb.collection('wallet_topups').doc(reference).set({
+    reference,
+    ownerEmail: normalizedEmail,
+    email: normalizedEmail,
+    amount: parsedAmount,
+    amountGHS: parsedAmount,
+    amountPesewas,
+    status: 'pending',
+    source: 'server_initiated',
+    authorizationUrl: data.data.authorization_url,
+    callbackUrl: resolvedCallbackUrl,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true });
+
+  return {
+    ok: true,
+    authorizationUrl: data.data.authorization_url,
+    accessCode: data.data.access_code,
+    reference,
+    amount: parsedAmount,
+  };
+}
+
 function normalizeGhanaPhone(phone) {
   let cleaned = String(phone || '').replace(/[\s\-\(\)\+]/g, '').trim();
 
@@ -4453,7 +4802,7 @@ async function handlePaystackWebhook(req, res) {
       .digest('hex');
 
     if (!signature || signature !== expectedSignature) {
-      return sendError(res, req, 401, 'invalid_paystack_signature', 'Invalid signature');
+      return sendError(res, req, 400, 'invalid_paystack_signature', 'Invalid signature');
     }
 
     const event = req.body;
@@ -4474,6 +4823,27 @@ async function handlePaystackWebhook(req, res) {
             subscriptionAuthorizationCode: event?.data?.authorization?.authorization_code || null,
             updatedAt: new Date().toISOString(),
           }, { merge: true });
+        }
+      } else if (metadata?.type === 'wallet_topup' || isWalletTopupReference(event?.data?.reference)) {
+        const ownerEmail = String(
+          metadata?.ownerEmail
+            || metadata?.userEmail
+            || event?.data?.customer?.email
+            || ''
+        ).trim().toLowerCase();
+
+        const topupResult = await applyWalletTopupCredit({
+          reference: event?.data?.reference,
+          ownerEmail,
+          amountPesewas: Number(event?.data?.amount || 0),
+          gatewayResponse: event?.data?.gateway_response || null,
+          paymentChannel: event?.data?.channel || null,
+          source: 'paystack_webhook',
+          allowLegacyMatch: true,
+        });
+
+        if (!topupResult.ok) {
+          logger.warn({ topupResult, ref: event?.data?.reference || null }, 'WEBHOOK_WALLET_TOPUP_SKIPPED');
         }
       } else {
         const paymentUpdate = await markRequestEscrowFunded(event?.data?.metadata?.requestId, event?.data?.reference, {
@@ -7692,67 +8062,55 @@ app.post('/chat/notify', requireAuth, async (req, res) => {
 app.post('/wallet/topup/init', payInitLimiter, requireAuth, async (req, res) => {
   try {
     const actorEmail = String(req.user?.email || '').trim().toLowerCase();
-    const amount = parseMoney(req.body?.amount);
-    const paystackSecret = getPaystackSecret();
+    const checkout = await createWalletTopupCheckout({
+      actorEmail,
+      amount: req.body?.amount,
+      callbackUrl: req.body?.callbackUrl,
+    });
 
-    if (!actorEmail) {
-      return sendError(res, req, 401, 'missing_user_email', 'Authenticated user email is missing');
-    }
-
-    if (!amount || amount < 1) {
-      return sendError(res, req, 400, 'invalid_amount', 'Top up amount must be at least GHS 1.00');
-    }
-
-    if (!paystackSecret) {
-      return sendError(res, req, 500, 'payment_configuration_missing', 'Server payment configuration missing');
-    }
-
-    const callbackUrl = `${NORMALIZED_CALLBACK_BASE_URL}/wallet-topup-return`;
-
-    const paystackController = new AbortController();
-    const paystackTimeout = setTimeout(() => paystackController.abort(), 10000);
-    let response;
-    try {
-      response = await fetch('https://api.paystack.co/transaction/initialize', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${paystackSecret}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: actorEmail,
-          amount: Math.round(amount * 100),
-          callback_url: callbackUrl,
-          metadata: {
-            type: 'wallet_topup',
-            ownerEmail: actorEmail,
-            requestId: null,
-          },
-        }),
-        signal: paystackController.signal,
-      });
-    } finally {
-      clearTimeout(paystackTimeout);
-    }
-
-    const data = await response.json();
-
-    logger.info({ paystackStatus: data?.status, ref: data?.data?.reference || null, ownerEmail: actorEmail }, 'WALLET_TOPUP_INIT_RESPONSE');
-
-    if (!response.ok || !data?.status || !data?.data?.authorization_url) {
-      return sendError(res, req, response.status || 500, 'wallet_topup_init_failed', data?.message || 'Could not initialize wallet top up');
+    if (!checkout.ok) {
+      return sendError(res, req, checkout.statusCode || 500, checkout.code || 'wallet_topup_init_failed', checkout.message || 'Could not initialize wallet top up');
     }
 
     return sendSuccess(res, req, {
       message: 'Wallet top up initialized',
       data: {
-        authorization_url: data.data.authorization_url,
-        access_code: data.data.access_code,
-        reference: data.data.reference,
+        authorization_url: checkout.authorizationUrl,
+        access_code: checkout.accessCode,
+        reference: checkout.reference,
+        amount: checkout.amount,
       },
     });
   } catch (error) {
     logger.error({ err: error }, 'WALLET_TOPUP_INIT_ERROR');
+    return sendError(res, req, 500, 'wallet_topup_init_failed', 'Could not initialize wallet top up');
+  }
+});
+
+app.post('/wallet/topup', payInitLimiter, requireAuth, async (req, res) => {
+  try {
+    const actorEmail = String(req.user?.email || '').trim().toLowerCase();
+    const checkout = await createWalletTopupCheckout({
+      actorEmail,
+      amount: req.body?.amount,
+      callbackUrl: req.body?.callbackUrl,
+    });
+
+    if (!checkout.ok) {
+      return sendError(res, req, checkout.statusCode || 500, checkout.code || 'wallet_topup_init_failed', checkout.message || 'Could not initialize wallet top up');
+    }
+
+    return sendSuccess(res, req, {
+      message: 'Wallet top up initialized',
+      data: {
+        authorization_url: checkout.authorizationUrl,
+        access_code: checkout.accessCode,
+        reference: checkout.reference,
+        amount: checkout.amount,
+      },
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'WALLET_TOPUP_INIT_ALIAS_ERROR');
     return sendError(res, req, 500, 'wallet_topup_init_failed', 'Could not initialize wallet top up');
   }
 });
@@ -7799,49 +8157,6 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
       return sendError(res, req, 400, 'invalid_topup_type', 'This payment reference is not a wallet top up');
     }
 
-    let matchedPreRegRef = null;
-    if (!metadataType) {
-      // Client-initiated flow — reference should be pre-registered in Firestore.
-      // Older payment-page launches used the wrong query param (`ref` instead of
-      // `reference`), so Paystack created a different transaction reference than
-      // the pending Firestore doc. Fall back to a unique pending top-up match by
-      // owner email + amount for those legacy checkouts.
-      const directPreRegRef = adminDb.collection('wallet_topups').doc(reference);
-      const directPreReg = await directPreRegRef.get();
-      if (directPreReg.exists) {
-        matchedPreRegRef = directPreRegRef;
-        const preRegEmail = String(directPreReg.data()?.email || '').trim().toLowerCase();
-        if (preRegEmail !== actorEmail) {
-          return sendError(res, req, 403, 'owner_access_required', 'Only the payment owner can apply this wallet top up');
-        }
-      } else {
-        const legacyCandidatesSnap = await adminDb.collection('wallet_topups')
-          .where('email', '==', actorEmail)
-          .limit(20)
-          .get();
-
-        const legacyCandidates = legacyCandidatesSnap.docs.filter((candidateDoc) => {
-          const candidate = candidateDoc.data() || {};
-          const candidateAmountPesewas = Number(
-            candidate?.amountPesewas || Math.round(Number(candidate?.amountGHS || 0) * 100)
-          );
-          return candidateDoc.id !== reference
-            && String(candidate?.status || '').trim().toLowerCase() === 'pending'
-            && String(candidate?.source || '').trim().toLowerCase() === 'client_initiated'
-            && candidate?.applied !== true
-            && candidateAmountPesewas === amountPesewas;
-        });
-
-        if (legacyCandidates.length === 1) {
-          matchedPreRegRef = legacyCandidates[0].ref;
-        } else if (legacyCandidates.length > 1) {
-          return sendError(res, req, 409, 'ambiguous_topup_reference', 'Multiple pending wallet top ups match this payment. Contact support for manual review.');
-        } else {
-          return sendError(res, req, 400, 'invalid_topup_type', 'Payment reference is not registered as a wallet top up');
-        }
-      }
-    }
-
     if (!amountGhs || amountGhs <= 0) {
       return sendError(res, req, 400, 'invalid_topup_amount', 'Top up amount is invalid');
     }
@@ -7850,94 +8165,31 @@ app.post('/wallet/topup/verify', payVerifyLimiter, requireAuth, async (req, res)
     if (!ownerEmail || ownerEmail !== actorEmail) {
       return sendError(res, req, 403, 'owner_access_required', 'Only the payment owner can apply this wallet top up');
     }
-
-    const topupRef = adminDb.collection('wallet_topups').doc(reference);
-    const transactionRef = adminDb.collection('transactions').doc(`wallet_topup_${reference}`);
-    const userRef = adminDb.collection('users').doc(ownerEmail);
-    const legacyTopupRef = matchedPreRegRef && matchedPreRegRef.id !== reference
-      ? matchedPreRegRef
-      : null;
-
-    let alreadyApplied = false;
-    await adminDb.runTransaction(async (txn) => {
-      const topupSnap = await txn.get(topupRef);
-      const legacyTopupSnap = legacyTopupRef ? await txn.get(legacyTopupRef) : null;
-      if (topupSnap.exists && topupSnap.data()?.applied === true) {
-        alreadyApplied = true;
-        return;
-      }
-      if (legacyTopupSnap?.exists && legacyTopupSnap.data()?.applied === true && legacyTopupSnap.data()?.verifiedReference === reference) {
-        alreadyApplied = true;
-        txn.set(topupRef, {
-          reference,
-          ownerEmail,
-          amount: amountGhs,
-          status: 'success',
-          applied: true,
-          appliedAt: legacyTopupSnap.data()?.appliedAt || new Date().toISOString(),
-          source: 'client_initiated',
-          linkedPendingReference: legacyTopupRef.id,
-        }, { merge: true });
-        return;
-      }
-
-      const nowIso = new Date().toISOString();
-      txn.set(userRef, {
-        walletBalance: admin.firestore.FieldValue.increment(amountGhs),
-        updatedAt: nowIso,
-      }, { merge: true });
-
-      txn.set(topupRef, {
-        reference,
-        ownerEmail,
-        amount: amountGhs,
-        status: 'success',
-        applied: true,
-        appliedAt: nowIso,
-        source: 'client_initiated',
-        linkedPendingReference: legacyTopupRef?.id || null,
-      }, { merge: true });
-
-      if (legacyTopupRef) {
-        txn.set(legacyTopupRef, {
-          ownerEmail,
-          amount: amountGhs,
-          status: 'success',
-          applied: true,
-          appliedAt: nowIso,
-          verifiedReference: reference,
-        }, { merge: true });
-      }
-
-      txn.set(transactionRef, {
-        senderEmail: 'paystack@system',
-        receiverEmail: ownerEmail,
-        amount: amountGhs,
-        status: 'success',
-        paymentMethod: 'wallet_topup',
-        transactionId: reference,
-        jobTitle: 'Wallet Top-up',
-        type: 'wallet_topup',
-        gatewayResponse: data?.data?.gateway_response || null,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
+    const applyResult = await applyWalletTopupCredit({
+      reference,
+      ownerEmail,
+      amountPesewas,
+      gatewayResponse: data?.data?.gateway_response || null,
+      paymentChannel: data?.data?.channel || null,
+      source: metadataType === 'wallet_topup' ? 'wallet_topup_verify' : 'wallet_topup_verify_legacy',
+      allowLegacyMatch: !metadataType,
     });
 
-    if (!alreadyApplied) {
-      await notifyUser(
-        ownerEmail,
-        `Your wallet has been funded with GHS ${amountGhs.toFixed(2)}.`,
-        'Wallet Funded',
-        { screen: 'wallet' }
-      );
+    if (!applyResult.ok) {
+      const statusCode = applyResult.code === 'owner_access_required'
+        ? 403
+        : applyResult.code === 'ambiguous_topup_reference'
+          ? 409
+          : 400;
+      return sendError(res, req, statusCode, applyResult.code || 'wallet_topup_apply_failed', applyResult.message || 'Could not apply wallet top up');
     }
 
     return sendSuccess(res, req, {
-      message: alreadyApplied ? 'Wallet top up already applied' : 'Wallet top up applied',
+      message: applyResult.alreadyApplied ? 'Wallet top up already applied' : 'Wallet top up applied',
       data: {
         reference,
-        amount: amountGhs,
-        applied: !alreadyApplied,
+        amount: applyResult.amount,
+        applied: !applyResult.alreadyApplied,
       },
     });
   } catch (error) {

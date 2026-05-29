@@ -1,9 +1,9 @@
 import * as ExpoLinking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Linking,
     Platform,
     ScrollView,
@@ -14,27 +14,25 @@ import {
     View,
 } from 'react-native';
 
-import { auth, db } from '../firebase';
+import { API_BASE_URL, WEB_BASE_URL } from '../constants/api';
+import { auth } from '../firebase';
+import { apiPost } from '../utils/api-client';
+import { formatApiMessage } from '../utils/api-response';
 
-// ─── Paystack payment page ────────────────────────────────────────────────────
-// Go to dashboard.paystack.com → Payment Pages and find/create a page for wallet
-// top-ups. Copy the slug from the page URL and set it here.
-// Page URL: https://paystack.shop/pay/connecthub-topup
-const PAYSTACK_PAGE_SLUG = 'connecthub-topup';
-
-// Callback URL — web returns to Hosting, native returns into the app scheme.
+const TOPUP_API_BASE = Platform.OS === 'web' ? '/api' : API_BASE_URL;
 const CALLBACK_URL = Platform.OS === 'web'
-  ? 'https://connecthub-1873e.web.app/wallet-topup-return'
+  ? `${WEB_BASE_URL}/wallet-topup-return`
   : ExpoLinking.createURL('/wallet-topup-return');
-// ─────────────────────────────────────────────────────────────────────────────
 
-const QUICK_AMOUNTS = [10, 50, 100, 200, 500, 1000];
+const QUICK_AMOUNTS = [10, 20, 50, 100, 200, 500];
 
 export default function WalletTopup() {
   const router = useRouter();
   const [amount, setAmount] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [pendingReference, setPendingReference] = useState('');
+  const [awaitingReturn, setAwaitingReturn] = useState(false);
 
   const parsedAmount = Number(amount || 0);
 
@@ -58,58 +56,90 @@ export default function WalletTopup() {
 
     setIsSubmitting(true);
     try {
-      // 1. Generate a unique reference on the client — used as Firestore doc ID
-      //    and passed to Paystack so we can verify it after payment.
-      const reference = `topup-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const amountPesewas = Math.round(parsedAmount * 100);
+      const { response, data } = await apiPost(
+        `${TOPUP_API_BASE}/wallet/topup`,
+        { amount: parsedAmount, callbackUrl: CALLBACK_URL },
+        { requireAuth: true }
+      );
 
-      // 2. Pre-register the topup in Firestore BEFORE opening Paystack.
-      //    The server's /wallet/topup/verify will look up this record when
-      //    Paystack metadata isn't present (payment page flow).
-      await setDoc(doc(db, 'wallet_topups', reference), {
-        reference,
-        email: user.email,
-        amountGHS: parsedAmount,
-        amountPesewas,
-        status: 'pending',
-        source: 'client_initiated',
-        createdAt: serverTimestamp(),
-      });
-
-      // 3. Build the Paystack payment page URL.
-      //    Payment Pages expect the transaction reference in the `reference`
-      //    query parameter. Using `ref` here can lead to verify failures such
-      //    as "Transaction reference not found." after a successful charge.
-      const paystackUrl = [
-        `https://paystack.shop/pay/${PAYSTACK_PAGE_SLUG}`,
-        `?amount=${amountPesewas}`,
-        `&email=${encodeURIComponent(user.email)}`,
-        `&reference=${encodeURIComponent(reference)}`,
-        `&callback_url=${encodeURIComponent(CALLBACK_URL)}`,
-      ].join('');
-
-      // 4. Open Paystack — on web redirect in-tab, on native use system browser.
-      if (Platform.OS === 'web') {
-        window.location.href = paystackUrl;
-      } else {
-        const canOpen = await Linking.canOpenURL(paystackUrl);
-        if (!canOpen) throw new Error('Cannot open Paystack. Please try again.');
-        await Linking.openURL(paystackUrl);
+      if (!response.ok || !data?.status || !data?.data?.authorization_url) {
+        throw new Error(formatApiMessage(data, 'Could not start payment. Please try again.'));
       }
+
+      const checkoutUrl = String(data.data.authorization_url || '').trim();
+      const checkoutReference = String(data.data.reference || '').trim();
+      setPendingReference(checkoutReference);
+
+      if (Platform.OS === 'web') {
+        window.location.href = checkoutUrl;
+        return;
+      }
+
+      const canOpen = await Linking.canOpenURL(checkoutUrl);
+      if (!canOpen) {
+        throw new Error('Cannot open Paystack. Please try again.');
+      }
+
+      await Linking.openURL(checkoutUrl);
+      setAwaitingReturn(true);
     } catch (error) {
+      const message = String(error?.message || 'Could not start payment. Please try again or contact connecthub1000@gmail.com');
       setNotice({
         tone: 'error',
-        message: error.message || 'Could not start payment. Please try again or contact connecthub1000@gmail.com',
+        message: /abort|fetch|network/i.test(message)
+          ? 'Could not reach the payment server. If the server is waking up, wait about 30 seconds and try again.'
+          : message,
       });
+    } finally {
       setIsSubmitting(false);
     }
-    // Note: setIsSubmitting(false) is intentionally NOT called on success —
-    // the page is about to navigate away to Paystack, so there's no need.
+  };
+
+  const handleVerifyReturn = async () => {
+    if (!pendingReference) {
+      setNotice({
+        tone: 'warning',
+        message: 'No pending payment reference was found. If you already paid, use the callback screen or contact support with your Paystack reference.',
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setNotice(null);
+
+    try {
+      const { response, data } = await apiPost(
+        `${TOPUP_API_BASE}/wallet/topup/verify`,
+        { reference: pendingReference },
+        { requireAuth: true }
+      );
+
+      if (!response.ok || !data?.status) {
+        throw new Error(formatApiMessage(data, 'Payment is still being verified.'));
+      }
+
+      const amountValue = Number(data?.data?.amount || parsedAmount || 0);
+      Alert.alert(
+        'Wallet funded',
+        `GHS ${amountValue.toFixed(2)} has been added to your ConnectHub wallet.`,
+        [{ text: 'View Wallet', onPress: () => router.replace('/wallet') }]
+      );
+    } catch {
+      Alert.alert(
+        'Payment processing',
+        `If you completed payment, your wallet will update automatically when Paystack confirms it. Reference: ${pendingReference}`,
+        [
+          { text: 'Check Wallet', onPress: () => router.replace('/wallet') },
+          { text: 'Stay Here' },
+        ]
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.content}>
-      {/* Header */}
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} style={s.backBtn}>
           <Text style={s.backBtnText}>← Back</Text>
@@ -118,88 +148,116 @@ export default function WalletTopup() {
         <View style={{ width: 60 }} />
       </View>
 
-      {/* Hero card */}
-      <View style={s.hero}>
-        <Text style={s.heroEmoji}>💳</Text>
-        <Text style={s.heroTitle}>Fund Your Wallet</Text>
-        <Text style={s.heroSub}>
-          Pay securely with Paystack — Mobile Money (MoMo)
-        </Text>
-      </View>
-
-      {/* Amount input */}
-      <View style={s.card}>
-        <Text style={s.label}>Enter Amount (GHS)</Text>
-        <View style={s.inputRow}>
-          <Text style={s.currencyBadge}>GHS</Text>
-          <TextInput
-            style={s.amountInput}
-            value={amount}
-            onChangeText={(v) => {
+      {awaitingReturn ? (
+        <View style={s.awaitingCard}>
+          <Text style={s.awaitingEmoji}>⏳</Text>
+          <Text style={s.awaitingTitle}>Complete Payment on Paystack</Text>
+          <Text style={s.awaitingSub}>
+            Finish the checkout in your browser, then come back here and verify if the callback did not return automatically.
+          </Text>
+          <TouchableOpacity
+            style={s.verifyBtn}
+            onPress={handleVerifyReturn}
+            disabled={isSubmitting}
+            activeOpacity={0.85}
+          >
+            {isSubmitting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.verifyBtnText}>I Have Paid — Verify Now</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.cancelBtn}
+            onPress={() => {
+              setAwaitingReturn(false);
+              setPendingReference('');
               setNotice(null);
-              setAmount(v.replace(/[^0-9.]/g, ''));
             }}
-            keyboardType="decimal-pad"
-            placeholder="0.00"
-            placeholderTextColor="#94a3b8"
-            maxLength={8}
-          />
+            activeOpacity={0.75}
+          >
+            <Text style={s.cancelBtnText}>I Did Not Pay — Go Back</Text>
+          </TouchableOpacity>
+          {pendingReference ? <Text style={s.refText}>Ref: {pendingReference}</Text> : null}
         </View>
+      ) : (
+        <>
+          <View style={s.hero}>
+            <Text style={s.heroEmoji}>💳</Text>
+            <Text style={s.heroTitle}>Fund Your Wallet</Text>
+            <Text style={s.heroSub}>
+              Pay securely with Paystack. Your wallet updates automatically after Paystack confirms the payment.
+            </Text>
+          </View>
 
-        <Text style={s.quickLabel}>Quick select</Text>
-        <View style={s.quickRow}>
-          {QUICK_AMOUNTS.map((q) => (
-            <TouchableOpacity
-              key={q}
-              style={[s.chip, amount === String(q) && s.chipActive]}
-              onPress={() => { setAmount(String(q)); setNotice(null); }}
-              activeOpacity={0.75}
-            >
-              <Text style={[s.chipText, amount === String(q) && s.chipTextActive]}>
-                {q}
+          <View style={s.card}>
+            <Text style={s.label}>Enter Amount (GHS)</Text>
+            <View style={s.inputRow}>
+              <Text style={s.currencyBadge}>GHS</Text>
+              <TextInput
+                style={s.amountInput}
+                value={amount}
+                onChangeText={(value) => {
+                  setNotice(null);
+                  setAmount(value.replace(/[^0-9.]/g, ''));
+                }}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                placeholderTextColor="#94a3b8"
+                maxLength={8}
+              />
+            </View>
+
+            <Text style={s.quickLabel}>Quick select</Text>
+            <View style={s.quickRow}>
+              {QUICK_AMOUNTS.map((quickAmount) => (
+                <TouchableOpacity
+                  key={quickAmount}
+                  style={[s.chip, amount === String(quickAmount) && s.chipActive]}
+                  onPress={() => {
+                    setAmount(String(quickAmount));
+                    setNotice(null);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[s.chipText, amount === String(quickAmount) && s.chipTextActive]}>
+                    GHS {quickAmount}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {notice && (
+            <View style={[s.notice, notice.tone === 'warning' && s.noticeWarning]}>
+              <Text style={[s.noticeText, notice.tone === 'warning' && s.noticeTextWarning]}>
+                {notice.tone === 'error' ? '⚠️  ' : 'ℹ️  '}{notice.message}
               </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
+            </View>
+          )}
 
-      {/* Notice */}
-      {notice && (
-        <View style={[s.notice, notice.tone === 'warning' && s.noticeWarning]}>
-          <Text style={[s.noticeText, notice.tone === 'warning' && s.noticeTextWarning]}>
-            {notice.tone === 'error' ? '⚠️  ' : 'ℹ️  '}{notice.message}
+          <View style={s.infoBox}>
+            <Text style={s.infoText}>
+              Your wallet is credited automatically by webhook after Paystack confirms payment. Manual verify is available as a fallback.
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={[s.payBtn, (!amount || isSubmitting) && s.payBtnDisabled]}
+            onPress={handleTopup}
+            disabled={!amount || isSubmitting}
+            activeOpacity={0.85}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={s.payBtnText}>
+                {parsedAmount >= 1 ? `Pay GHS ${parsedAmount.toFixed(2)} →` : 'Enter an amount to continue'}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          <Text style={s.secureNote}>
+            Secured by Paystack — ConnectHub never stores your card or MoMo details.
           </Text>
-        </View>
+        </>
       )}
-
-      {/* Info */}
-      <View style={s.infoBox}>
-        <Text style={s.infoText}>
-          🛡️  Funds are credited to your wallet immediately after successful payment verification.
-        </Text>
-      </View>
-
-      {/* CTA */}
-      <TouchableOpacity
-        style={[s.payBtn, (!amount || isSubmitting) && s.payBtnDisabled]}
-        onPress={handleTopup}
-        disabled={!amount || isSubmitting}
-        activeOpacity={0.85}
-      >
-        {isSubmitting ? (
-          <ActivityIndicator color="#fff" size="small" />
-        ) : (
-          <Text style={s.payBtnText}>
-            {parsedAmount >= 1
-              ? `Pay GHS ${parsedAmount.toFixed(2)} →`
-              : 'Enter an amount to continue'}
-          </Text>
-        )}
-      </TouchableOpacity>
-
-      <Text style={s.secureNote}>
-        🔒 Secured by Paystack — your card details are never stored by ConnectHub
-      </Text>
     </ScrollView>
   );
 }
@@ -331,5 +389,36 @@ const s = StyleSheet.create({
     paddingHorizontal: 24,
     lineHeight: 18,
   },
+  awaitingCard: {
+    margin: 16,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 14,
+  },
+  awaitingEmoji: { fontSize: 48 },
+  awaitingTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a', textAlign: 'center' },
+  awaitingSub: { fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 21 },
+  verifyBtn: {
+    backgroundColor: '#059669',
+    borderRadius: 12,
+    width: '100%',
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  verifyBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  cancelBtn: {
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    width: '100%',
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  cancelBtnText: { color: '#64748b', fontSize: 14, fontWeight: '600' },
+  refText: { fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' },
 });
 
