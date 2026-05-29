@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 
 import AppButton from '../components/ui/app-button';
 import AppCard from '../components/ui/app-card';
@@ -85,18 +85,11 @@ export default function WalletWithdraw() {
   useEffect(() => {
     const loadGuards = async () => {
       const email = String(user?.email || '').trim().toLowerCase();
-      const uid = String(user?.uid || '').trim();
       if (!email) return;
 
-      const walletByUid = uid ? await getDoc(doc(db, 'wallets', uid)) : null;
-      const walletByEmail = await getDoc(doc(db, 'wallets', email));
       const userDoc = await getDoc(doc(db, 'users', email));
 
-      const balance = walletByUid?.exists()
-        ? Number(walletByUid.data()?.balance || walletByUid.data()?.walletBalance || 0)
-        : walletByEmail.exists()
-          ? Number(walletByEmail.data()?.balance || walletByEmail.data()?.walletBalance || 0)
-          : Number(userDoc.data()?.walletBalance || 0);
+      const balance = Number(userDoc.data()?.walletBalance || 0);
 
       const kyc = String(userDoc.data()?.kycStatus || '').toLowerCase();
       const pendingSnap = await getDocs(query(collection(db, 'withdrawals'), where('email', '==', email), where('status', 'in', ['pending', 'pending_admin_approval', 'processing', 'manual_review'])));
@@ -106,7 +99,21 @@ export default function WalletWithdraw() {
       setHasPendingWithdrawal(!pendingSnap.empty);
     };
     loadGuards().catch(() => {});
-  }, [user?.email, user?.uid]);
+  }, [user?.email]);
+
+  useEffect(() => {
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!email) {
+      return undefined;
+    }
+
+    const unsub = onSnapshot(doc(db, 'users', email), (snap) => {
+      const nextBalance = snap.exists() ? Number(snap.data()?.walletBalance || 0) : 0;
+      setWalletBalance(Number.isFinite(nextBalance) ? nextBalance : 0);
+    });
+
+    return unsub;
+  }, [user?.email]);
 
   const disableReason = useMemo(() => {
     if (walletBalance < 10) return 'Withdrawal disabled: available balance is below GHS 10.';
