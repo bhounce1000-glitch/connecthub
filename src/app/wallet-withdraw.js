@@ -15,20 +15,11 @@ import useAuthUser from '../hooks/use-auth-user';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_URL || API_BASE_URL || 'https://connecthub-yrox.onrender.com';
 
-const WITHDRAWAL_PENDING_WINDOW_HOURS = 24;
-
 const NETWORKS = [
   { label: 'MTN', value: 'MTN', code: 'mtn' },
   { label: 'Telecel (Vodafone)', value: 'Telecel (Vodafone)', code: 'vod' },
   { label: 'AirtelTigo', value: 'AirtelTigo', code: 'atl' },
 ];
-
-const toMs = (value) => {
-  if (!value) return 0;
-  if (value?.seconds) return value.seconds * 1000;
-  const ms = new Date(value).getTime();
-  return Number.isFinite(ms) ? ms : 0;
-};
 
 const isBlockingPendingWithdrawal = (withdrawal) => {
   const status = String(withdrawal?.status || '').toUpperCase();
@@ -36,55 +27,6 @@ const isBlockingPendingWithdrawal = (withdrawal) => {
     return true;
   }
   return false;
-};
-
-const getWithdrawErrorMessage = (errorPayload) => {
-  const errorCode = errorPayload?.code || errorPayload?.error;
-  const paystackMessage = String(errorPayload?.details?.paystack?.message || errorPayload?.message || '').trim();
-  const hint = String(errorPayload?.details?.hint || '').trim();
-  switch (errorCode) {
-    case 'invalid_phone':
-      return 'Enter a valid 10-digit Ghana number starting with 0';
-    case 'insufficient_balance':
-      return 'Insufficient wallet balance';
-    case 'invalid_amount':
-      return 'Minimum withdrawal is GHS 10';
-    case 'recipient_creation_failed':
-      if (paystackMessage && hint) {
-        return `${paystackMessage} ${hint}`;
-      }
-      if (paystackMessage) {
-        return paystackMessage;
-      }
-      return 'Could not verify your MoMo wallet for payout. Check number, selected network, and wallet status.';
-    case 'paystack_insufficient_balance':
-      return 'Withdrawal is blocked because Paystack balance is insufficient. Top up your Paystack balance and try again.';
-    case 'paystack_business_tier_restricted':
-      return 'Your Paystack account is on Starter business tier and cannot do third-party payouts. Upgrade your Paystack business tier and enable Transfers, then try again.';
-    case 'transfer_disabled':
-      return 'Withdrawal transfers are disabled on Paystack. Enable Transfers in your Paystack dashboard settings.';
-    case 'transfer_otp_required':
-      return 'Paystack transfer finalization/OTP is required. Complete transfer settings in Paystack before retrying.';
-    case 'transfer_pending_approval':
-      return 'Paystack transfer capability is pending approval. Complete compliance verification in Paystack.';
-    case 'kyc_required':
-      return 'Complete KYC verification before withdrawing';
-    case 'server_error':
-      return 'Something went wrong. Please try again.';
-    case 'transfer_failed':
-      if (paystackMessage && hint) {
-        return `${paystackMessage} ${hint}`;
-      }
-      if (paystackMessage) {
-        return paystackMessage;
-      }
-      return 'Transfer could not be processed. Please try again.';
-    default:
-      if (paystackMessage) {
-        return paystackMessage;
-      }
-      return errorPayload?.message || 'Withdrawal failed. Please try again.';
-  }
 };
 
 export default function WalletWithdraw() {

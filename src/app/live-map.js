@@ -197,7 +197,7 @@ export default function LiveMapScreen() {
     );
 
     return unsub;
-  }, [isProviderView, jobId, updateRoute]);
+  }, [isProviderView, jobId, updateRoute, customerLatNum, customerLonNum]);
 
   // Fetch initial route once location is known.
   useEffect(() => {

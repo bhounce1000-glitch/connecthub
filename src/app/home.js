@@ -95,28 +95,6 @@ function getAvatarColor(email) {
   return AVATAR_BG_COLORS[Math.abs(hash) % AVATAR_BG_COLORS.length];
 }
 
-const PROMOTION_MESSAGES = [
-  { text: 'Free provider spotlight for verified workers this week', route: '/subscription' },
-  { text: 'Post a service request and match with nearby trusted providers', route: '/request-wizard' },
-  { text: 'Escrow-backed jobs help protect customers and workers', route: '/help' },
-  { text: 'Upgrade your provider profile for better job visibility', route: '/provider-setup' },
-  { text: 'Explore verified local services across Ghana', route: '/providers' },
-];
-
-const SERVICE_MARKETPLACE_SECTIONS = [
-  { title: 'Featured Providers', subtitle: 'Verified workers with stronger profiles', route: '/providers', accent: '#4f46e5' },
-  { title: 'Local Services', subtitle: 'Cleaning, repairs, driving, catering and more', route: '/providers', accent: '#0f766e' },
-  { title: 'Top Job Requests', subtitle: 'Open paid jobs providers can accept now', route: '/request-wizard', accent: '#d97706' },
-  { title: 'Provider Boost', subtitle: 'Get more visibility with a serious profile', route: '/subscription', accent: '#be123c' },
-];
-
-const TRUST_SIGNALS = [
-  { label: 'Verified IDs', value: 'KYC' },
-  { label: 'Safe Payments', value: 'Escrow' },
-  { label: 'Live Routing', value: 'GPS' },
-  { label: 'Rated Providers', value: 'Reviews' },
-];
-
 function formatRelativeTime(value) {
   let postedMs = 0;
   if (value?.seconds) {
@@ -145,7 +123,7 @@ export default function Home() {
   const [pendingAction, setPendingAction] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [userProfiles, setUserProfiles] = useState({});
-  const [searchText, setSearchText] = useState('');
+  const [searchText] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [selectedCity, setSelectedCity] = useState('All Cities');
   const [nearMeOnly, setNearMeOnly] = useState(false);
@@ -154,7 +132,7 @@ export default function Home() {
   const profileFetchQueue = useRef(new Set());
   const [unreadCount, setUnreadCount] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter] = useState('all');
   const fabScale = useRef(new Animated.Value(1)).current;
   const currentEmail = String(user?.email || '').trim().toLowerCase();
   const isAdmin = useMemo(() => isAdminEmail(currentEmail), [currentEmail]);
@@ -519,19 +497,6 @@ export default function Home() {
     } catch {
       setNotice({ tone: 'error', title: 'Reminder failed', message: 'Could not send reminder right now.' });
     }
-  };
-
-  const openStatusFilterPicker = () => {
-    Alert.alert('Filter Requests', 'Choose a status to display', [
-      { text: 'All', onPress: () => setStatusFilter('all') },
-      { text: 'Open', onPress: () => setStatusFilter(REQUEST_STATUS.OPEN) },
-      { text: 'Accepted', onPress: () => setStatusFilter(REQUEST_STATUS.ACCEPTED) },
-      { text: 'In Progress', onPress: () => setStatusFilter(REQUEST_STATUS.IN_PROGRESS) },
-      { text: 'Overdue Pending', onPress: () => setStatusFilter('overdue_pending') },
-      { text: 'Completed Jobs', onPress: () => setStatusFilter('completed') },
-      { text: 'Paid Jobs', onPress: () => setStatusFilter('paid') },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
   };
 
   const handleRefresh = async () => {
@@ -1536,15 +1501,6 @@ export default function Home() {
           <Text style={{ color: '#fff', fontSize: 30, fontWeight: '700', marginTop: -2 }}>+</Text>
         </TouchableOpacity>
       </Animated.View>
-    </View>
-  );
-}
-
-function HeroMetric({ label, value }) {
-  return (
-    <View style={{ flex: 1, borderRadius: AppRadius.md, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', paddingVertical: 10, paddingHorizontal: 10 }}>
-      <Text style={{ color: '#94a3b8', fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>{label}</Text>
-      <Text style={{ color: '#f8fafc', fontSize: 13, fontWeight: '900', marginTop: 3 }} numberOfLines={1}>{value}</Text>
     </View>
   );
 }
