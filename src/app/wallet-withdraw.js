@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 
 import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
 
@@ -10,9 +10,10 @@ import AppInput from '../components/ui/app-input';
 import AppNotice from '../components/ui/app-notice';
 import ScreenShell from '../components/ui/screen-shell';
 import { API_BASE_URL } from '../constants/api';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
-import { apiGet, apiPost } from '../utils/api-client';
+
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || API_BASE_URL || 'https://connecthub-yrox.onrender.com';
 
 const WITHDRAWAL_PENDING_WINDOW_HOURS = 24;
 
@@ -31,21 +32,10 @@ const toMs = (value) => {
 
 const isBlockingPendingWithdrawal = (withdrawal) => {
   const status = String(withdrawal?.status || '').toUpperCase();
-  if (status === 'PROCESSING') {
+  if (['PENDING_ADMIN_APPROVAL', 'PENDING', 'PROCESSING'].includes(status)) {
     return true;
   }
-  if (status !== 'PENDING') {
-    return false;
-  }
-  if (!withdrawal?.manualQueue) {
-    return true;
-  }
-  const requestedMs = toMs(withdrawal?.requestedAt || withdrawal?.requestedAtIso || withdrawal?.updatedAt);
-  if (!requestedMs) {
-    return true;
-  }
-  const staleCutoffMs = Date.now() - WITHDRAWAL_PENDING_WINDOW_HOURS * 60 * 60 * 1000;
-  return requestedMs >= staleCutoffMs;
+  return false;
 };
 
 const getWithdrawErrorMessage = (errorPayload) => {
@@ -109,33 +99,8 @@ export default function WalletWithdraw() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [kycVerified, setKycVerified] = useState(false);
   const [hasPendingWithdrawal, setHasPendingWithdrawal] = useState(false);
-  const [withdrawalsEnabled, setWithdrawalsEnabled] = useState(false);
-  const [withdrawalsStatusMessage, setWithdrawalsStatusMessage] = useState('Wallet withdrawals are temporarily unavailable while Paystack payouts are not enabled.');
-
-  useEffect(() => {
-    let active = true;
-
-    const loadWithdrawalStatus = async () => {
-      try {
-        const { response, data } = await apiGet(`${API_BASE_URL}/wallet/withdraw-status`);
-        if (!active) return;
-
-        const enabled = Boolean(response.ok && data?.status && data?.data?.enabled);
-        setWithdrawalsEnabled(enabled);
-        setWithdrawalsStatusMessage(String(data?.data?.message || data?.message || 'Wallet withdrawals are temporarily unavailable.').trim() || 'Wallet withdrawals are temporarily unavailable.');
-      } catch (error) {
-        if (!active) return;
-        setWithdrawalsEnabled(false);
-        setWithdrawalsStatusMessage(error?.message || 'Could not confirm withdrawal availability right now.');
-      }
-    };
-
-    loadWithdrawalStatus();
-
-    return () => {
-      active = false;
-    };
-  }, []);
+  const [withdrawalReference, setWithdrawalReference] = useState('');
+  const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
 
   useEffect(() => {
     const loadGuards = async () => {
@@ -176,7 +141,7 @@ export default function WalletWithdraw() {
     }
 
     const unsub = onSnapshot(
-      query(collection(db, 'wallet_withdrawals'), where('userEmail', '==', email)),
+      query(collection(db, 'withdrawals'), where('email', '==', email)),
       (snap) => {
         const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
         setHasPendingWithdrawal(rows.some(isBlockingPendingWithdrawal));
@@ -190,12 +155,11 @@ export default function WalletWithdraw() {
   }, [user?.email]);
 
   const disableReason = useMemo(() => {
-    if (!withdrawalsEnabled) return withdrawalsStatusMessage;
     if (walletBalance < 10) return 'Withdrawal disabled: available balance is below GHS 10.';
     if (!kycVerified) return 'Withdrawal disabled: complete KYC verification first.';
     if (hasPendingWithdrawal) return 'Withdrawal disabled: you already have a pending withdrawal.';
     return '';
-  }, [withdrawalsEnabled, withdrawalsStatusMessage, walletBalance, kycVerified, hasPendingWithdrawal]);
+  }, [walletBalance, kycVerified, hasPendingWithdrawal]);
 
   const submitWithdrawal = async () => {
     const numericAmount = Number(amount || 0);
@@ -218,41 +182,49 @@ export default function WalletWithdraw() {
 
     setIsSubmitting(true);
     setNotice(null);
+    setWithdrawalSuccess(false);
+    setWithdrawalReference('');
     try {
-      const payload = {
-        amount: numericAmount,
-        accountName: accountName.trim(),
-        phoneNumber: phoneNumber.trim(),
-        provider: network,
-        network,
-      };
-      const { response, data } = await apiPost(`${API_BASE_URL}/wallet/withdraw`, payload, { requireAuth: true });
-      if (!response.ok || !data?.status) {
-        const mappedMessage = getWithdrawErrorMessage(data);
-        const requestId = data?.requestId ? `\n\nRequest ID: ${data.requestId}` : '';
-        setNotice({ tone: 'error', title: 'Withdrawal failed', message: `${mappedMessage}${requestId}` });
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        throw new Error('Please sign in again to submit a withdrawal request.');
+      }
+
+      const response = await fetch(`${API_BASE}/wallet/withdraw`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          amount: numericAmount,
+          accountName: accountName.trim(),
+          phoneNumber: phoneNumber.trim(),
+          provider: network,
+        }),
+      });
+
+      const data = await response.json();
+      if (!(response.ok && (data?.success === true || data?.status === true))) {
+        const errorMessage = String(data?.error || data?.message || 'Withdrawal failed. Please try again.').trim();
+        setNotice({ tone: 'error', title: 'Withdrawal failed', message: errorMessage });
         return;
       }
 
-      const result = data;
-      const withdrawnAmount = Number(result?.data?.amount || numericAmount || 0);
-      const targetPhone = result?.data?.phoneNumber || phoneNumber.trim();
-      const targetProvider = result?.data?.provider || network;
-      const ref = result?.data?.reference || 'PENDING';
-      const isQueued = result?.data?.status === 'queued';
+      const result = data?.data || data;
+      const ref = String(result?.reference || result?.withdrawalId || 'PENDING').trim();
+      setWithdrawalReference(ref);
+      setWithdrawalSuccess(true);
+      setNotice({
+        tone: 'success',
+        title: 'Withdrawal Request Received!',
+        message: `Reference: ${ref}`,
+      });
 
-      const alertTitle = isQueued ? '✅ Withdrawal Received!' : '✅ Withdrawal Initiated!';
-      const alertBody = isQueued
-        ? `GHS ${withdrawnAmount.toFixed(2)} has been deducted and your withdrawal to ${targetProvider} (${targetPhone}) is queued for processing.\n\nYou will be notified once the money is sent.\n\nReference: ${ref}`
-        : `GHS ${withdrawnAmount.toFixed(2)} is being sent instantly to your ${targetProvider} account (${targetPhone}).\n\nYou will be notified once the money lands.\n\nReference: ${ref}`;
-
-      setNotice({ tone: 'success', title: alertTitle, message: `Reference: ${ref}` });
-      Alert.alert(alertTitle, alertBody, [
-        {
-          text: 'OK',
-          onPress: () => router.replace(`/wallet?refresh=${Date.now()}`),
-        },
-      ]);
+      setAmount('');
+      setAccountName('');
+      setPhoneNumber('');
+      setNetwork('');
     } catch (error) {
       setNotice({
         tone: 'error',
@@ -268,25 +240,36 @@ export default function WalletWithdraw() {
     <ScreenShell
       eyebrow="WALLET"
       title="Withdraw Funds"
-      subtitle="Funds are sent instantly to your Mobile Money. Minimum GHS 10."
+      subtitle="Withdrawals are processed manually within 24 hours. You will receive a notification when complete."
       accentColor="#1e3a8a"
       accentTextColor="#dbeafe"
       backgroundColor="#f8fafc"
       scroll
     >
       <AppCard>
-        {!withdrawalsEnabled ? (
-          <AppNotice
-            tone="warning"
-            title="Withdrawals unavailable"
-            message={withdrawalsStatusMessage}
-            style={{ marginBottom: 12 }}
-          />
-        ) : null}
-
         <Text style={{ color: '#64748b', marginBottom: 16, fontSize: 12 }}>
-          Funds are sent <Text style={{ fontWeight: '700', color: '#166534' }}>instantly</Text> via Paystack. Minimum GHS 10.00. KYC required.
+          Withdrawals are processed <Text style={{ fontWeight: '700', color: '#166534' }}>manually within 24 hours</Text>. Minimum GHS 10.00. KYC required.
         </Text>
+
+        {withdrawalSuccess ? (
+          <View style={{ margin: 16, backgroundColor: '#f0fdf4', borderRadius: 14, padding: 20, borderWidth: 1, borderColor: '#bbf7d0', alignItems: 'center', gap: 10 }}>
+            <Text style={{ fontSize: 40 }}>✅</Text>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a', textAlign: 'center' }}>
+              Withdrawal Request Received!
+            </Text>
+            <Text style={{ fontSize: 14, color: '#475569', textAlign: 'center', lineHeight: 21 }}>
+              Your withdrawal will be processed within 24 hours. You will receive a notification and email when complete.
+            </Text>
+            <Text style={{ fontSize: 11, color: '#94a3b8' }}>Reference: {withdrawalReference}</Text>
+            <Pressable
+              style={{ backgroundColor: '#1d4ed8', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 28, marginTop: 8 }}
+              onPress={() => router.replace('/wallet')}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>View Wallet →</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <AppInput
           label="Amount (GHS)"

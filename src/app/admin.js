@@ -7,7 +7,6 @@ import {
     doc,
     getDoc,
     getDocs,
-    increment,
     limit,
     onSnapshot,
     orderBy,
@@ -753,80 +752,27 @@ export default function Admin() {
 
   const handleWithdrawalAction = async (row, action) => {
     try {
-      const adminEmail = String(user?.email || 'bhounce1000@gmail.com').trim().toLowerCase();
-      const withdrawalRef = doc(db, 'withdrawals', row.id);
       const reference = String(row.reference || row.id).trim();
-      const amount = safeNumber(row.amount || row.netAmount || 0);
-      const provider = String(row.provider || row.network || row.method || 'Mobile Money').trim();
-      const phoneNumber = String(row.phoneNumber || row.phone || row.accountNumber || '').trim();
-      const userEmail = String(row.email || row.userEmail || '').trim().toLowerCase();
       const reason = String(row.rejectionReason || row.reason || 'Rejected by admin desk').trim();
 
+      if (!reference) {
+        throw new Error('Withdrawal reference is missing.');
+      }
+
       if (action === 'approve') {
-        await updateDoc(withdrawalRef, {
-          status: 'completed',
-          processedAt: new Date().toISOString(),
-          processedBy: adminEmail,
-        });
-
-        const txSnap = await getDocs(query(collection(db, 'transactions'), where('reference', '==', reference)));
-        await Promise.all(txSnap.docs.map((entry) => updateDoc(entry.ref, { status: 'completed', updatedAt: new Date().toISOString() })));
-
-        await addDoc(collection(db, 'notifications'), {
-          userId: userEmail,
-          recipientId: userEmail,
-          title: '✅ Withdrawal Successful!',
-          body: `GHS ${amount.toFixed(2)} has been sent to your ${provider} account ending in ${phoneNumber ? String(phoneNumber).slice(-4) : '****'}. Check your MoMo wallet now.`,
-          type: 'withdrawal_completed',
-          read: false,
-          createdAt: serverTimestamp(),
-        });
-
-        await apiPost(`${API_BASE_URL}/admin/notify-withdrawal-paid`, {
-          email: userEmail,
-          amount,
-          provider,
-          phoneNumber,
-        }, { requireAuth: true });
-
-        if (row.fraudFlagged === true) {
-          await updateDoc(withdrawalRef, {
-            fraudReviewed: true,
-            fraudReviewedAt: new Date().toISOString(),
-            fraudReviewedBy: adminEmail,
-          });
-        }
+        const { response, data } = await apiPost(
+          `${API_BASE_URL}/admin/withdrawals/${encodeURIComponent(reference)}/approve`,
+          {},
+          { requireAuth: true }
+        );
+        assertApiSuccess(response, data, 'Could not approve withdrawal');
       } else {
-        await updateDoc(withdrawalRef, {
-          status: 'rejected',
-          processedAt: new Date().toISOString(),
-          processedBy: adminEmail,
-        });
-
-        await updateDoc(doc(db, 'users', userEmail), {
-          walletBalance: increment(amount),
-        });
-
-        const txSnap = await getDocs(query(collection(db, 'transactions'), where('reference', '==', reference)));
-        await Promise.all(txSnap.docs.map((entry) => updateDoc(entry.ref, { status: 'failed', updatedAt: new Date().toISOString() })));
-
-        await addDoc(collection(db, 'notifications'), {
-          userId: userEmail,
-          recipientId: userEmail,
-          title: '❌ Withdrawal Rejected',
-          body: `Your withdrawal of GHS ${amount.toFixed(2)} was rejected. Reason: ${reason}. Your balance has been restored.`,
-          type: 'withdrawal_rejected',
-          read: false,
-          createdAt: serverTimestamp(),
-        });
-
-        await apiPost(`${API_BASE_URL}/admin/notify-withdrawal-rejected`, {
-          email: userEmail,
-          amount,
-          provider,
-          phoneNumber,
-          reason,
-        }, { requireAuth: true });
+        const { response, data } = await apiPost(
+          `${API_BASE_URL}/admin/withdrawals/${encodeURIComponent(reference)}/reject`,
+          { reason },
+          { requireAuth: true }
+        );
+        assertApiSuccess(response, data, 'Could not reject withdrawal');
       }
 
       Alert.alert('Success', `Withdrawal ${action === 'approve' ? 'marked as paid' : 'rejected'} successfully.`);
