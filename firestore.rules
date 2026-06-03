@@ -153,7 +153,49 @@ service cloud.firestore {
     match /kyc_submissions/{email} {
       allow read: if isOwner(email) || isAdmin();
       allow create: if isOwner(email) && validUser();
-      allow update: if isOwner(email) || isAdmin();
+      allow update: if isAdmin()
+        || (
+          isOwner(email)
+          && validUser()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'email',
+            'fullName',
+            'dob',
+            'gender',
+            'nationality',
+            'countryOfResidence',
+            'city',
+            'homeAddress',
+            'occupation',
+            'profilePhotoUrl',
+            'phone',
+            'altPhone',
+            'idType',
+            'idNumber',
+            'idFrontUrl',
+            'idBackUrl',
+            'paymentMethod',
+            'momoProvider',
+            'momoCountry',
+            'momoNumber',
+            'momoName',
+            'momoNumberMasked',
+            'bankName',
+            'bankAccountNumber',
+            'bankAccountName',
+            'bankBranch',
+            'bankAccountNumberMasked',
+            'selfieUrl',
+            'livenessCompleted',
+            'livenessSteps',
+            'faceVerificationStatus',
+            'faceVerifiedAt',
+            'livenessCompletedAt',
+            'kycStatus',
+            'submittedAt',
+            'updatedAt'
+          ])
+        );
       allow delete: if isAdmin();
     }
 

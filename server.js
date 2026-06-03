@@ -7752,13 +7752,15 @@ app.post('/admin/kyc/:email/approve', requireAuth, requireAdmin, async (req, res
     const now = new Date().toISOString();
     const patch = {
       kycStatus: 'verified',
+      faceVerificationStatus: 'verified',
+      faceVerifiedAt: now,
       reviewedBy: req.user?.email || null,
       reviewedAt: now,
       updatedAt: now,
     };
 
     await submissionRef.set(patch, { merge: true });
-    await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'verified', updatedAt: now }, { merge: true });
+    await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'verified', faceVerificationStatus: 'verified', faceVerifiedAt: now, updatedAt: now }, { merge: true });
 
     const notificationDelivery = await notifyUser(
       targetEmail,
@@ -7812,6 +7814,8 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
     const now = new Date().toISOString();
     const patch = {
       kycStatus: 'rejected',
+      faceVerificationStatus: 'rejected',
+      faceVerifiedAt: null,
       rejectionReason: reason,
       reviewedBy: req.user?.email || null,
       reviewedAt: now,
@@ -7819,7 +7823,7 @@ app.post('/admin/kyc/:email/reject', requireAuth, requireAdmin, async (req, res)
     };
 
     await submissionRef.set(patch, { merge: true });
-    await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'rejected', updatedAt: now }, { merge: true });
+    await adminDb.collection('users').doc(targetEmail).set({ kycStatus: 'rejected', faceVerificationStatus: 'rejected', faceVerifiedAt: null, updatedAt: now }, { merge: true });
 
     const notificationDelivery = await notifyUser(
       targetEmail,

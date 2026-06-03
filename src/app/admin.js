@@ -121,6 +121,14 @@ function extractKycPhotos(row) {
   return [...new Set(urls)];
 }
 
+function formatFaceStatus(row) {
+  const value = String(row?.faceVerificationStatus || '').trim().toLowerCase();
+  if (!value) {
+    return row?.livenessCompleted ? 'PENDING_ADMIN_REVIEW' : 'NOT_STARTED';
+  }
+  return value.toUpperCase();
+}
+
 function formatMoney(value) {
   return `GHS ${safeNumber(value).toFixed(2)}`;
 }
@@ -1432,6 +1440,9 @@ export default function Admin() {
               {filteredKycRows.map((row) => {
                 const photos = extractKycPhotos(row);
                 const expanded = expandedKycId === row.id;
+                const selfieUrl = String(row?.selfieUrl || row?.selfie || '').trim();
+                const idFrontUrl = String(row?.idFrontUrl || '').trim();
+                const livenessCompleted = !!row?.livenessCompleted;
 
                 return (
                   <View key={row.id} style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10 }}>
@@ -1463,6 +1474,41 @@ export default function Admin() {
                             />
                           </TouchableOpacity>
                         ))}
+                      </View>
+                    )}
+
+                    {expanded && (
+                      <View style={{ marginTop: 12, padding: 10, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, backgroundColor: '#f8fafc' }}>
+                        <Text style={{ color: ADMIN_TEXT, fontWeight: '800', marginBottom: 8 }}>Face Verification Review</Text>
+                        <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 8 }}>
+                          Liveness: {livenessCompleted ? 'COMPLETED' : 'NOT COMPLETED'} | Face Status: {formatFaceStatus(row)}
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 12 }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 6 }}>Submitted Selfie</Text>
+                            {selfieUrl ? (
+                              <TouchableOpacity onPress={() => setFullscreenPhoto(selfieUrl)}>
+                                <Image source={{ uri: selfieUrl }} style={{ width: '100%', aspectRatio: 1, borderRadius: 8, backgroundColor: '#e2e8f0' }} />
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={{ width: '100%', aspectRatio: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e2e8f0' }}>
+                                <Text style={{ color: ADMIN_TEXT_LIGHT }}>No selfie</Text>
+                              </View>
+                            )}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: ADMIN_TEXT_LIGHT, marginBottom: 6 }}>ID Front Photo</Text>
+                            {idFrontUrl ? (
+                              <TouchableOpacity onPress={() => setFullscreenPhoto(idFrontUrl)}>
+                                <Image source={{ uri: idFrontUrl }} style={{ width: '100%', aspectRatio: 1, borderRadius: 8, backgroundColor: '#e2e8f0' }} />
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={{ width: '100%', aspectRatio: 1, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#e2e8f0' }}>
+                                <Text style={{ color: ADMIN_TEXT_LIGHT }}>No ID front</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
                       </View>
                     )}
 

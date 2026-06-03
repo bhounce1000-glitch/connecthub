@@ -18,7 +18,7 @@ import { KYC_STATUS } from '../../constants/access';
 import { AppColors, AppRadius, AppSpace, AppType } from '../../constants/design-tokens';
 import { db } from '../../firebase';
 
-const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Review'];
+const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Face', 'Review'];
 
 function StepIndicator({ current }) {
   return (
@@ -209,10 +209,10 @@ export default function KycStep4() {
             Review & Submit
           </Text>
           <Text style={{ color: AppColors.ink500, fontSize: AppType.body, marginBottom: AppSpace.xl }}>
-            Step 4 of 4 — Please confirm your details before submitting.
+            Step 5 of 5 — Please confirm your details before submitting.
           </Text>
 
-          <StepIndicator current={3} />
+          <StepIndicator current={4} />
 
           {notice && (
             <AppNotice type={notice.type} message={notice.message} style={{ marginBottom: AppSpace.md }} />
@@ -236,6 +236,12 @@ export default function KycStep4() {
             <ReviewRow label="ID Number" value={d.idNumber} />
             <ReviewRow label="ID Front Photo" value={d.idFrontUrl ? '✅ Uploaded' : '❌ Missing'} />
             <ReviewRow label="ID Back Photo" value={d.idBackUrl ? '✅ Uploaded' : 'Not provided'} />
+          </ReviewSection>
+
+          <ReviewSection title="Face Verification" onEdit={() => router.push('/kyc/step-face')}>
+            <ReviewRow label="Selfie" value={d.selfieUrl ? '✅ Captured' : '❌ Missing'} />
+            <ReviewRow label="Liveness" value={d.livenessCompleted ? '✅ Completed' : '❌ Not completed'} />
+            <ReviewRow label="Face Status" value={d.faceVerificationStatus || 'pending_admin_review'} />
           </ReviewSection>
 
           <ReviewSection title="Payment Details" onEdit={() => router.push('/kyc/step3')}>
@@ -294,7 +300,7 @@ export default function KycStep4() {
             onPress={() => router.back()}
             style={{ marginTop: AppSpace.md, alignItems: 'center', paddingVertical: AppSpace.sm }}
           >
-            <Text style={{ color: AppColors.ink500, fontSize: AppType.body }}>← Back to Payment</Text>
+            <Text style={{ color: AppColors.ink500, fontSize: AppType.body }}>← Back to Face Verification</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

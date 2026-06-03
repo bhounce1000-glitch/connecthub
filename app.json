@@ -67,6 +67,12 @@
       "expo-router",
       "expo-web-browser",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "ConnectHub needs camera access to verify your identity with a liveness selfie."
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "ConnectHub needs access to your photo library to set a profile picture."

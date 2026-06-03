@@ -23,7 +23,7 @@ const PAYMENT_METHODS = [
 
 const MOMO_PROVIDERS = ['MTN Mobile Money', 'Vodafone Cash', 'AirtelTigo Money', 'Zeepay', 'G-Money'];
 
-const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Review'];
+const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Face', 'Review'];
 
 function StepIndicator({ current }) {
   return (
@@ -178,7 +178,7 @@ export default function KycStep3() {
 
       await setDoc(doc(db, 'kyc_submissions', email), payload, { merge: true });
 
-      router.push('/kyc/step4');
+      router.push('/kyc/step-face');
     } catch (err) {
       setNotice({ type: 'error', message: err.message || 'Failed to save. Please try again.' });
     } finally {
@@ -207,7 +207,7 @@ export default function KycStep3() {
             Verify Your Identity
           </Text>
           <Text style={{ color: AppColors.ink500, fontSize: AppType.body, marginBottom: AppSpace.xl }}>
-            Step 3 of 4 — Where should we send your earnings?
+            Step 3 of 5 — Where should we send your earnings?
           </Text>
 
           <StepIndicator current={2} />

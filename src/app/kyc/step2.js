@@ -109,7 +109,7 @@ function validateIdNumberByType(idType, rawValue) {
   return null;
 }
 
-const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Review'];
+const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Face', 'Review'];
 
 function StepIndicator({ current }) {
   return (

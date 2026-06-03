@@ -20,7 +20,7 @@ import useAuthUser from '../../hooks/use-auth-user';
 
 const GENDERS = ['Male', 'Female', 'Non-binary', 'Prefer not to say'];
 
-const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Review'];
+const STEP_LABELS = ['Personal', 'Identity', 'Payment', 'Face', 'Review'];
 
 const uploadProfilePhoto = async (file) => {
   const auth = getAuth();
