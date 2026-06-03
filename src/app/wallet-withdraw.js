@@ -304,7 +304,7 @@ export default function WalletWithdraw() {
 
       <View style={{ marginTop: 12 }}>
         <Text style={{ color: '#64748b', fontSize: 12, textAlign: 'center' }}>
-          Funds are sent instantly via Paystack Transfer. You&apos;ll receive a push notification and email when complete.{'\n\n'}
+          Withdrawals are queued for manual processing and are typically completed within 24 hours. You&apos;ll receive a push notification and email when complete.{"\n\n"}
           <Text style={{ color: '#2563eb', textDecorationLine: 'underline' }} onPress={() => router.push('/withdrawal-history')}>
             View withdrawal history →
           </Text>
