@@ -1,21 +1,49 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import { doc, setDoc } from 'firebase/firestore';
+import { Platform } from 'react-native';
 
 import { auth, db } from '../firebase';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+let notificationHandlerInitialized = false;
+
+function getNotificationsModule() {
+  if (Platform.OS === 'web') {
+    return null;
+  }
+
+  return require('expo-notifications');
+}
+
+function ensureNotificationHandler() {
+  if (notificationHandlerInitialized) {
+    return;
+  }
+
+  const Notifications = getNotificationsModule();
+  if (!Notifications) {
+    return;
+  }
+
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+
+  notificationHandlerInitialized = true;
+}
 
 async function ensureAndroidNotificationChannel() {
+  const Notifications = getNotificationsModule();
+  if (!Notifications) {
+    return;
+  }
+
   if (Device.osName !== 'Android') {
     return;
   }
@@ -85,7 +113,17 @@ export async function registerForPushNotifications() {
     return null;
   }
 
+  if (Platform.OS === 'web') {
+    return null;
+  }
+
+  const Notifications = getNotificationsModule();
+  if (!Notifications) {
+    return null;
+  }
+
   try {
+    ensureNotificationHandler();
     await ensureAndroidNotificationChannel();
 
     if (!Device.isDevice) {

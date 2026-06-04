@@ -49,7 +49,6 @@
     "expo-constants": "55.0.10-canary-20260328-2049187",
     "expo-crypto": "55.0.11-canary-20260328-2049187",
     "expo-device": "55.0.11-canary-20260328-2049187",
-    "expo-face-detector": "^13.0.2",
     "expo-file-system": "55.0.13-canary-20260328-2049187",
     "expo-font": "55.0.5-canary-20260328-2049187",
     "expo-glass-effect": "55.0.9-canary-20260328-2049187",

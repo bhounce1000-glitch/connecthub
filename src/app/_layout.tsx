@@ -1,8 +1,7 @@
 
-import * as Notifications from 'expo-notifications';
 import { Stack, usePathname, useRouter, type ErrorBoundaryProps } from 'expo-router';
 import { useEffect } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Text, View } from 'react-native';
 import AppErrorBoundary from '../components/ErrorBoundary';
 import AppButton from '../components/ui/app-button';
 import { KYC_STATUS, isAdminEmail } from '../constants/access';
@@ -37,38 +36,56 @@ export default function Layout() {
   }, [isAuthReady, user, profile, isLoading, pathname, isKycRoute, isAdminUser, router]);
 
   useEffect(() => {
+    let isActive = true;
+    let responseSubscription: { remove: () => void } | undefined;
+
     if (!email) {
       return undefined;
     }
 
-    registerForPushNotifications().catch(() => {
-      // Push registration is non-blocking.
-    });
+    if (Platform.OS === 'web') {
+      return undefined;
+    }
 
-    const handleResponse = (response: Notifications.NotificationResponse | null) => {
-      const data = response?.notification?.request?.content?.data || {};
-      const targetRoute = resolveNotificationRoute(data);
-      if (targetRoute) {
-        router.push(targetRoute as never);
-      }
-    };
-
-    Notifications.getLastNotificationResponseAsync()
-      .then((response) => {
-        if (response) {
-          handleResponse(response);
-        }
-      })
-      .catch(() => {
-        // Ignore stale response lookup failures.
+    const setupNotifications = async () => {
+      registerForPushNotifications().catch(() => {
+        // Push registration is non-blocking.
       });
 
-    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      handleResponse(response);
+      const Notifications = await import('expo-notifications');
+
+      const handleResponse = (response: any) => {
+        const data = response?.notification?.request?.content?.data || {};
+        const targetRoute = resolveNotificationRoute(data);
+        if (targetRoute) {
+          router.push(targetRoute as never);
+        }
+      };
+
+      Notifications.getLastNotificationResponseAsync()
+        .then((response) => {
+          if (isActive && response) {
+            handleResponse(response);
+          }
+        })
+        .catch(() => {
+          // Ignore stale response lookup failures.
+        });
+
+      responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        if (isActive) {
+          handleResponse(response);
+        }
+      });
+    };
+
+    setupNotifications().catch(() => {
+      // Notification wiring is non-blocking.
     });
 
     return () => {
-      responseSubscription.remove();
+      isActive = false;
+      responseSubscription?.remove();
     };
   }, [email, router]);
 
