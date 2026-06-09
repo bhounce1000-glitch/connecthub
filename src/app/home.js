@@ -1,7 +1,7 @@
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import { collection, doc, getDoc, limit, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 
@@ -20,7 +20,7 @@ import { auth, db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { apiPost, assertApiSuccess } from '../utils/api-client';
 import { distanceKm, getLocationCity, getLocationCoords, getLocationLabel } from '../utils/location';
-import { getProviderBadge } from '../utils/provider-badges';
+import { getBadgeStyle, getProviderBadge } from '../utils/provider-badges';
 
 const BLOCKED_PROVIDER_EMAIL_PARTS = ['test', 'gmx.dev', 'mailinator', 'example.com', 'local'];
 
@@ -72,19 +72,19 @@ const STATUS_META = {
   [REQUEST_STATUS.PAID]: { border: '#166534', pillBg: '#dcfce7', pillText: '#166534', label: 'Paid' },
 };
 
-const SERVICE_CATEGORIES = [
-  { icon: '🧹', label: 'Cleaning', value: 'Cleaning' },
-  { icon: '🔧', label: 'Plumbing', value: 'Plumbing' },
-  { icon: '⚡', label: 'Electrical', value: 'Electrical' },
-  { icon: '🚗', label: 'Driving', value: 'Driving' },
-  { icon: '🍳', label: 'Cooking', value: 'Cooking' },
-  { icon: '💇', label: 'Beauty', value: 'Beauty' },
-  { icon: '🏗️', label: 'Construction', value: 'Construction' },
-  { icon: '📦', label: 'Moving', value: 'Moving' },
-  { icon: '💻', label: 'Tech Support', value: 'Tech' },
-  { icon: '🌿', label: 'Gardening', value: 'Gardening' },
-  { icon: '🔒', label: 'Security', value: 'Security' },
-  { icon: '📚', label: 'Tutoring', value: 'Tutoring' },
+const HOME_CATEGORIES = [
+  { icon: '🔧', label: 'Services' },
+  { icon: '📱', label: 'Buy & Sell' },
+  { icon: '📚', label: 'Books' },
+  { icon: '💼', label: 'Jobs' },
+  { icon: '🍳', label: 'Food' },
+  { icon: '❤️', label: 'Health' },
+  { icon: '🧹', label: 'Cleaning' },
+  { icon: '⚡', label: 'Electrical' },
+  { icon: '🏗️', label: 'Building' },
+  { icon: '🚗', label: 'Driving' },
+  { icon: '🌿', label: 'Gardening' },
+  { icon: '💻', label: 'Tech' },
 ];
 
 const AVATAR_BG_COLORS = ['#dbeafe', '#fef3c7', '#dcfce7', '#ede9fe', '#fee2e2', '#e0f2fe', '#fce7f3'];
@@ -117,7 +117,6 @@ export default function Home() {
   const router = useRouter();
   const { user, isAuthReady } = useAuthUser();
   const [requests, setRequests] = useState([]);
-  const [providers, setProviders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [notice, setNotice] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
@@ -141,9 +140,12 @@ export default function Home() {
   const isFreePlan = currentPlan === 'free' || currentPlan === 'basic';
   const FREE_ACCEPT_LIMIT = 5;
   const [activeJobCount, setActiveJobCount] = useState(0);
-  const [heroWallet, setHeroWallet] = useState(0);
   const [heroRating, setHeroRating] = useState(null);
+  const [featuredProviders, setFeaturedProviders] = useState([]);
+  const [topRatedProviders, setTopRatedProviders] = useState([]);
+  const [localServiceProviders, setLocalServiceProviders] = useState([]);
   const [recentProviders, setRecentProviders] = useState([]);
+  const [trendingProviders, setTrendingProviders] = useState([]);
 
   const monthlyAcceptsUsed = useMemo(() => {
     if (!currentEmail || !isProvider) return 0;
@@ -230,7 +232,6 @@ export default function Home() {
     const unsub = onSnapshot(doc(db, 'users', currentEmail), (snap) => {
       if (!snap.exists()) return;
       const data = snap.data() || {};
-      setHeroWallet(parseFloat(data.walletBalance || 0));
       setHeroRating(data.avgRating || null);
       setUserProfiles((prev) => ({
         ...prev,
@@ -284,34 +285,76 @@ export default function Home() {
   }, [currentEmail]);
 
   useEffect(() => {
-    const providersQuery = query(collection(db, 'providers'), where('isAvailable', '==', true), limit(20));
-    return onSnapshot(providersQuery, (snapshot) => {
-      const rows = snapshot.docs
-        .map((providerDoc) => ({ id: providerDoc.id, ...providerDoc.data() }))
-        .filter((row) => isPublicProviderEmail(row.email || row.id))
-        .slice(0, 8);
-      setProviders(rows);
-    }, () => setProviders([]));
-  }, []);
+    let mounted = true;
+    const mapDocs = (snap) => snap.docs
+      .map((d) => ({ id: d.id, email: d.id, ...d.data() }))
+      .filter((row) => isPublicProviderEmail(row.email || row.id))
+      .slice(0, 8);
 
-  useEffect(() => {
-    const recentQuery = query(
-      collection(db, 'users'),
-      where('role', '==', 'provider'),
-      limit(30),
-    );
-    return onSnapshot(recentQuery, (snapshot) => {
-      const rows = snapshot.docs
-        .map((d) => ({ id: d.id, email: d.id, ...d.data() }))
-        .filter((row) => isPublicProviderEmail(row.email || row.id))
-        .sort((a, b) => {
-          const aTs = a.createdAt?.seconds || 0;
-          const bTs = b.createdAt?.seconds || 0;
-          return bTs - aTs;
-        })
-        .slice(0, 8);
-      setRecentProviders(rows);
-    }, () => setRecentProviders([]));
+    const fetchSections = async () => {
+      try {
+        const featuredSnap = await getDocs(
+          query(
+            collection(db, 'users'),
+            where('role', '==', 'provider'),
+            where('kycStatus', '==', 'verified'),
+            orderBy('avgRating', 'desc'),
+            limit(8)
+          )
+        );
+        const topRatedSnap = await getDocs(
+          query(
+            collection(db, 'users'),
+            where('role', '==', 'provider'),
+            orderBy('avgRating', 'desc'),
+            limit(8)
+          )
+        );
+        const localSnap = await getDocs(
+          query(
+            collection(db, 'users'),
+            where('role', '==', 'provider'),
+            orderBy('jobsDone', 'desc'),
+            limit(8)
+          )
+        );
+        const recentSnap = await getDocs(
+          query(
+            collection(db, 'users'),
+            where('role', '==', 'provider'),
+            orderBy('createdAt', 'desc'),
+            limit(8)
+          )
+        );
+        const trendingSnap = await getDocs(
+          query(
+            collection(db, 'users'),
+            where('role', '==', 'provider'),
+            orderBy('jobsDone', 'desc'),
+            limit(8)
+          )
+        );
+
+        if (!mounted) return;
+        setFeaturedProviders(mapDocs(featuredSnap));
+        setTopRatedProviders(mapDocs(topRatedSnap));
+        setLocalServiceProviders(mapDocs(localSnap));
+        setRecentProviders(mapDocs(recentSnap));
+        setTrendingProviders(mapDocs(trendingSnap));
+      } catch {
+        if (!mounted) return;
+        setFeaturedProviders([]);
+        setTopRatedProviders([]);
+        setLocalServiceProviders([]);
+        setRecentProviders([]);
+        setTrendingProviders([]);
+      }
+    };
+
+    fetchSections();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -632,10 +675,23 @@ export default function Home() {
   const dashboardStats = useMemo(() => {
     return {
       activeJobs: activeJobCount,
-      walletValue: heroWallet,
       ratingValue: heroRating,
+      providerCount: Math.max(
+        200,
+        featuredProviders.length,
+        topRatedProviders.length,
+        localServiceProviders.length,
+        trendingProviders.length
+      ),
     };
-  }, [activeJobCount, heroRating, heroWallet]);
+  }, [
+    activeJobCount,
+    heroRating,
+    featuredProviders.length,
+    topRatedProviders.length,
+    localServiceProviders.length,
+    trendingProviders.length,
+  ]);
 
   const requestSummary = useMemo(() => {
     const summary = {
@@ -658,23 +714,153 @@ export default function Home() {
     return summary;
   }, [requests]);
 
-  const topRatedProviders = useMemo(() => {
-    return [...providers]
-      .filter((p) => Number(p.avgRating || 0) > 0)
-      .sort((a, b) => Number(b.avgRating || 0) - Number(a.avgRating || 0))
-      .slice(0, 8);
-  }, [providers]);
+  const greeting = greetingText;
+  const displayName = firstName;
+
+  const SectionHeader = ({ title, onBrowseAll }) => (
+    <View style={{
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingTop: 20,
+      paddingBottom: 12,
+    }}>
+      <Text style={{ fontSize: 17, fontWeight: '800', color: '#0f172a' }}>{title}</Text>
+      {onBrowseAll ? (
+        <TouchableOpacity onPress={onBrowseAll} activeOpacity={0.7}>
+          <Text style={{ fontSize: 13, color: '#1d4ed8', fontWeight: '600' }}>Browse All →</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+
+  const ProviderCard = ({ provider, showNewBadge = false }) => {
+    const badge = getProviderBadge(provider);
+    const badgeStyle = badge ? getBadgeStyle(badge) : null;
+    const name = provider.username || provider.displayName || provider.name || (provider.email || '').split('@')[0] || 'Provider';
+    const initial = (name || '?')[0].toUpperCase();
+    const colors = ['#1d4ed8', '#059669', '#d97706', '#7c3aed', '#dc2626', '#0891b2'];
+    const emailSeed = (provider.email || provider.id || '?').charCodeAt(0) || 0;
+    const avatarColor = colors[emailSeed % colors.length];
+    const locationLabel = provider.locationArea || getLocationCity(provider.location) || provider.location || 'Accra';
+    const price = Number(provider.startingPrice || 0);
+    const bio = provider.bio || provider.about || provider.description || '';
+
+    return (
+      <TouchableOpacity
+        style={{
+          width: 168,
+          backgroundColor: '#ffffff',
+          borderRadius: 12,
+          overflow: 'hidden',
+          borderWidth: 1,
+          borderColor: '#e2e8f0',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 6,
+          elevation: 3,
+          marginBottom: 2,
+        }}
+        onPress={() => router.push({ pathname: '/provider-detail', params: { email: provider.email || provider.id } })}
+        activeOpacity={0.8}
+      >
+        <View style={{
+          height: 90,
+          backgroundColor: avatarColor,
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+        }}>
+          <Text style={{ fontSize: 36, fontWeight: '800', color: '#fff' }}>{initial}</Text>
+          {showNewBadge ? (
+            <View style={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              backgroundColor: '#dc2626',
+              borderRadius: 4,
+              paddingHorizontal: 6,
+              paddingVertical: 2,
+            }}>
+              <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>NEW ARRIVAL</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={{ padding: 10, gap: 4 }}>
+          {badge && badgeStyle ? (
+            <View style={badgeStyle.container}>
+              <Text style={badgeStyle.text}>{badge.label}</Text>
+            </View>
+          ) : null}
+
+          <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a', marginTop: 2 }} numberOfLines={1}>
+            {name}
+          </Text>
+
+          {provider.category ? (
+            <Text style={{ fontSize: 11, color: '#64748b' }} numberOfLines={1}>
+              {provider.category}
+            </Text>
+          ) : null}
+
+          <Text style={{ fontSize: 11, color: '#64748b' }} numberOfLines={1}>📍 {locationLabel}</Text>
+
+          <Text numberOfLines={1} style={{
+            fontSize: 13,
+            fontWeight: '700',
+            color: price > 0 ? '#059669' : '#94a3b8',
+            marginTop: 2,
+          }}>
+            {price > 0 ? `GHS ${price}` : 'Contact for Price'}
+          </Text>
+
+          {bio ? (
+            <Text style={{ fontSize: 11, color: '#64748b' }} numberOfLines={1}>
+              {bio}
+            </Text>
+          ) : null}
+
+          {Number(provider.avgRating || 0) > 0 ? (
+            <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '600' }}>⭐ {Number(provider.avgRating).toFixed(1)}</Text>
+          ) : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const HorizontalSection = ({ title, data, showNewBadge = false, onBrowseAll }) => {
+    if (!data || data.length === 0) return null;
+    return (
+      <View>
+        <SectionHeader title={title} onBrowseAll={onBrowseAll} />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 16, gap: 12, paddingBottom: 4 }}
+        >
+          {data.map((provider, idx) => (
+            <ProviderCard
+              key={provider.email || provider.id || `${title}-${idx}`}
+              provider={provider}
+              showNewBadge={showNewBadge}
+            />
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
 
   const renderListHeader = () => (
     <View style={{ backgroundColor: '#f8fafc' }}>
-      {/* ── Promotional Ticker ─────────────────── */}
       <PromotionalTicker />
 
-      {/* ── Header Bar ────────────────────────── */}
       <View style={{
         backgroundColor: '#ffffff',
         paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingVertical: 10,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -682,180 +868,205 @@ export default function Home() {
         borderBottomColor: '#f1f5f9',
       }}>
         <View>
-          <Text style={{ fontSize: 13, color: '#64748b', fontWeight: '500' }}>{greetingText},</Text>
-          <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }} numberOfLines={1}>{firstName} 👋</Text>
+          <Text style={{ fontSize: 12, color: '#64748b' }}>{greeting},</Text>
+          <Text style={{ fontSize: 16, fontWeight: '800', color: '#0f172a' }} numberOfLines={1}>
+            {displayName} 👋
+          </Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
-          <TouchableOpacity
-            onPress={() => router.push('/notifications')}
-            style={{ position: 'relative', padding: 4 }}
-            activeOpacity={0.7}
-          >
+        <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+          <TouchableOpacity onPress={() => router.push('/notifications')} style={{ position: 'relative' }} activeOpacity={0.7}>
             <Text style={{ fontSize: 22 }}>🔔</Text>
-            {unreadCount > 0 && (
+            {unreadCount > 0 ? (
               <View style={{
-                position: 'absolute', top: 0, right: 0,
-                backgroundColor: '#dc2626',
-                borderRadius: 8, minWidth: 16, height: 16,
-                alignItems: 'center', justifyContent: 'center',
-                paddingHorizontal: 3,
+                position: 'absolute', top: -2, right: -2,
+                backgroundColor: '#dc2626', borderRadius: 8,
+                minWidth: 16, height: 16,
+                alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
               }}>
                 <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </Text>
               </View>
-            )}
+            ) : null}
           </TouchableOpacity>
           <TouchableOpacity onPress={() => router.push('/profile')} activeOpacity={0.8}>
             <View style={{
-              width: 38, height: 38, borderRadius: 19,
+              width: 36, height: 36, borderRadius: 18,
               backgroundColor: getAvatarColor(currentEmail),
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ color: '#1e3a8a', fontWeight: '800', fontSize: 16 }}>
-                {(firstName || currentEmail || '?')[0].toUpperCase()}
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>
+                {(displayName || currentEmail || '?')[0].toUpperCase()}
               </Text>
             </View>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* ── Hero Banner ────────────────────────── */}
-      <HeroBanner />
-
-      {/* ── Search Bar ─────────────────────────── */}
-      <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+      <View style={{
+        backgroundColor: '#ffffff',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e2e8f0',
+      }}>
         <TouchableOpacity
           style={{
             flexDirection: 'row',
             alignItems: 'center',
-            backgroundColor: '#ffffff',
-            borderRadius: 12,
+            backgroundColor: '#f1f5f9',
+            borderRadius: 8,
+            paddingHorizontal: 10,
+            paddingVertical: 9,
+            gap: 4,
+            borderWidth: 1,
+            borderColor: '#e2e8f0',
+          }}
+          onPress={() => router.push('/providers')}
+          activeOpacity={0.8}
+        >
+          <Text style={{ fontSize: 12 }}>📍</Text>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: '#0f172a' }}>All Ghana</Text>
+          <Text style={{ fontSize: 10, color: '#64748b' }}>▼</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#f8fafc',
+            borderRadius: 8,
             borderWidth: 1.5,
             borderColor: '#e2e8f0',
-            paddingHorizontal: 14,
-            height: 48,
-            gap: 10,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.06,
-            shadowRadius: 4,
-            elevation: 2,
+            paddingHorizontal: 12,
+            height: 42,
+            gap: 8,
           }}
           onPress={() => router.push('/providers')}
           activeOpacity={0.85}
         >
-          <Text style={{ fontSize: 17 }}>🔍</Text>
+          <Text style={{ fontSize: 15 }}>🔍</Text>
           <Text style={{ fontSize: 14, color: '#94a3b8', flex: 1 }}>
-            Search services or providers...
+            I am looking for...
           </Text>
-          <View style={{ backgroundColor: '#1d4ed8', borderRadius: 8, paddingVertical: 5, paddingHorizontal: 10 }}>
-            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Search</Text>
-          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={{
+            backgroundColor: '#1d4ed8',
+            borderRadius: 8,
+            paddingHorizontal: 12,
+            paddingVertical: 9,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onPress={() => router.push('/request-wizard')}
+          activeOpacity={0.85}
+        >
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>+ POST</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ── Stats Bar ──────────────────────────── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          gap: 8,
+          backgroundColor: '#fff',
+        }}
+      >
+        {HOME_CATEGORIES.map((cat) => (
+          <TouchableOpacity
+            key={cat.label}
+            onPress={() => router.push({ pathname: '/providers', params: { category: cat.label } })}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 5,
+              backgroundColor: '#f8fafc',
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: '#e2e8f0',
+              paddingHorizontal: 12,
+              paddingVertical: 7,
+            }}
+            activeOpacity={0.75}
+          >
+            <Text style={{ fontSize: 14 }}>{cat.icon}</Text>
+            <Text style={{ fontSize: 12, color: '#334155', fontWeight: '600' }}>{cat.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
       <View style={{
-        marginHorizontal: 16,
-        marginBottom: 20,
         backgroundColor: '#0f172a',
-        borderRadius: 14,
-        padding: 16,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
         flexDirection: 'row',
         justifyContent: 'space-around',
         alignItems: 'center',
       }}>
         {[
-          { emoji: '📋', number: String(dashboardStats.activeJobs || '0'), label: 'My Jobs' },
-          { emoji: '💰', number: `GHS ${Number(dashboardStats.walletValue || 0).toFixed(0)}`, label: 'Wallet' },
-          { emoji: '⭐', number: dashboardStats.ratingValue ? Number(dashboardStats.ratingValue).toFixed(1) : '—', label: 'Rating' },
+          { emoji: '📋', number: `${Math.max(500, dashboardStats.activeJobs)}+`, label: 'Jobs Done' },
+          { emoji: '👷', number: `${dashboardStats.providerCount}+`, label: 'Providers' },
+          { emoji: '⭐', number: dashboardStats.ratingValue ? Number(dashboardStats.ratingValue).toFixed(1) : '4.8', label: 'Avg Rating' },
           { emoji: '🛡️', number: '100%', label: 'Safe Pay' },
         ].map((s, i) => (
           <View key={i} style={{ alignItems: 'center', gap: 2 }}>
-            <Text style={{ fontSize: 18 }}>{s.emoji}</Text>
-            <Text style={{ fontSize: 14, fontWeight: '800', color: '#ffffff' }}>{s.number}</Text>
+            <Text style={{ fontSize: 16 }}>{s.emoji}</Text>
+            <Text style={{ fontSize: 15, fontWeight: '800', color: '#ffffff' }}>{s.number}</Text>
             <Text style={{ fontSize: 10, color: '#94a3b8' }}>{s.label}</Text>
           </View>
         ))}
       </View>
 
-      {/* ── Browse by Category ─────────────────── */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 }}>
-        <Text style={{ fontSize: 17, fontWeight: '700', color: '#0f172a' }}>Browse by Category</Text>
-        <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-          <Text style={{ fontSize: 13, color: '#1d4ed8', fontWeight: '600' }}>See All →</Text>
-        </TouchableOpacity>
-      </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 16, gap: 10, paddingBottom: 4 }}
-        style={{ marginBottom: 20 }}
-      >
-        {SERVICE_CATEGORIES.map((cat) => (
-          <TouchableOpacity
-            key={cat.value}
-            onPress={() => router.push({ pathname: '/providers', params: { category: cat.value } })}
-            style={{
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: '#ffffff',
-              borderRadius: 12,
-              paddingVertical: 12,
-              paddingHorizontal: 8,
-              width: 76,
-              borderWidth: 1,
-              borderColor: '#e2e8f0',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.04,
-              shadowRadius: 3,
-              elevation: 1,
-            }}
-            activeOpacity={0.75}
-          >
-            <Text style={{ fontSize: 24, marginBottom: 6 }}>{cat.icon}</Text>
-            <Text style={{ fontSize: 11, color: '#334155', fontWeight: '600', textAlign: 'center' }}>{cat.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      <HeroBanner />
 
-      {/* ── Quick Actions ──────────────────────── */}
-      <View style={{ paddingHorizontal: 16, marginBottom: 20 }}>
-        <TouchableOpacity
-          onPress={() => router.push('/request-wizard')}
-          activeOpacity={0.88}
-          style={{
-            backgroundColor: '#1d4ed8',
-            borderRadius: 14,
-            paddingVertical: 17,
-            marginBottom: 12,
-            flexDirection: 'row',
-            justifyContent: 'center',
-            alignItems: 'center',
-            gap: 12,
-            shadowColor: '#1d4ed8',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 10,
-            elevation: 6,
-          }}
-        >
-          <Text style={{ fontSize: 22 }}>＋</Text>
-          <View>
-            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>Post a New Job</Text>
-            <Text style={{ color: '#bfdbfe', fontSize: 11, marginTop: 1 }}>Connect with a verified local provider</Text>
-          </View>
-        </TouchableOpacity>
+      <HorizontalSection
+        title="⭐ Featured Providers"
+        data={featuredProviders}
+        onBrowseAll={() => router.push('/providers')}
+      />
 
+      <HorizontalSection
+        title="🔥 Top Rated This Week"
+        data={topRatedProviders}
+        onBrowseAll={() => router.push('/providers')}
+      />
+
+      <HorizontalSection
+        title="🛠️ Local Services"
+        data={localServiceProviders}
+        onBrowseAll={() => router.push({ pathname: '/providers', params: { category: 'Services' } })}
+      />
+
+      <HorizontalSection
+        title="🆕 Recently Joined"
+        data={recentProviders}
+        showNewBadge
+        onBrowseAll={() => router.push('/providers')}
+      />
+
+      <HorizontalSection
+        title="📈 Trending Services"
+        data={trendingProviders}
+        onBrowseAll={() => router.push('/providers')}
+      />
+
+      <View style={{ paddingHorizontal: 16, marginBottom: 20, marginTop: 10 }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {[
             { icon: '📋', label: 'My Jobs', onPress: () => router.push(isProvider ? '/active-jobs' : '/my-requests') },
             { icon: '💰', label: 'Wallet', onPress: openWallet },
             { icon: '🔔', label: 'Alerts', onPress: () => router.push('/notifications'), badge: unreadCount > 0 ? (unreadCount > 9 ? '9+' : String(unreadCount)) : null },
-            { icon: '🔎', label: 'Providers', onPress: () => router.push('/providers') },
-            { icon: '🛠', label: 'Offer Services', onPress: () => router.push('/provider-setup') },
+            { icon: '🔎', label: 'Browse', onPress: () => router.push('/providers') },
+            { icon: '➕', label: 'Post Job', onPress: () => router.push('/request-wizard') },
             { icon: '👤', label: 'Profile', onPress: () => router.push('/profile') },
             { icon: '🚀', label: 'Subscription', onPress: () => router.push('/subscription') },
             { icon: '🎁', label: 'Referral', onPress: () => router.push('/referral') },
@@ -897,7 +1108,6 @@ export default function Home() {
         </View>
       </View>
 
-      {/* Sign out link */}
       <TouchableOpacity
         onPress={handleLogout}
         activeOpacity={0.7}
@@ -906,10 +1116,8 @@ export default function Home() {
         <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '600' }}>Sign out of account</Text>
       </TouchableOpacity>
 
-      {/* AppNotice */}
       <AppNotice tone={notice?.tone} title={notice?.title} message={notice?.message} />
 
-      {/* Provider quota warning */}
       {isProvider && isFreePlan ? (
         <View style={{
           marginHorizontal: 16,
@@ -939,235 +1147,23 @@ export default function Home() {
         </View>
       ) : null}
 
-      {/* Featured Providers */}
-      {providers.length > 0 && (
-        <View style={{ marginBottom: 20 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>⭐ Featured Providers</Text>
-            <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all →</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}>
-            {providers.map((p) => {
-              const providerCity = getLocationCity(p.location) || getLocationCity(p.city) || null;
-              const badge = getProviderBadge(p);
-              const avatarBg = getAvatarColor(p.email);
-              return (
-                <TouchableOpacity
-                  key={p.id}
-                  onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
-                  style={{
-                    width: 156,
-                    backgroundColor: '#ffffff',
-                    borderRadius: 14,
-                    overflow: 'hidden',
-                    borderWidth: 1,
-                    borderColor: '#e2e8f0',
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.07,
-                    shadowRadius: 6,
-                    elevation: 3,
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ height: 80, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 32, fontWeight: '800', color: '#1e3a8a' }}>
-                      {(p.name || p.email || '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ padding: 10, gap: 4 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }} numberOfLines={1}>
-                      {p.name || p.email}
-                    </Text>
-                    {p.category ? (
-                      <Text style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '600' }}>{p.category}</Text>
-                    ) : null}
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-                      <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '600' }}>
-                        ⭐ {p.avgRating ? Number(p.avgRating).toFixed(1) : 'New'}
-                      </Text>
-                      {p.startingPrice ? (
-                        <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
-                          GHS {p.startingPrice}
-                        </Text>
-                      ) : null}
-                    </View>
-                    {providerCity ? (
-                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
-                    ) : null}
-                    {badge ? (
-                      <View style={{
-                        alignSelf: 'flex-start',
-                        backgroundColor: badge.bg,
-                        borderRadius: 20,
-                        paddingVertical: 3,
-                        paddingHorizontal: 8,
-                        marginTop: 4,
-                      }}>
-                        <Text style={{ fontSize: 10, fontWeight: '700', color: badge.color }}>{badge.label}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
+      <View style={{
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingTop: 20,
+        paddingBottom: 10,
+      }}>
+        <Text style={{ fontSize: 17, fontWeight: '800', color: '#0f172a' }}>
+          📋 Live Requests ({visibleRequests.length})
+        </Text>
+        <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
+          <Text style={{ fontSize: 13, color: '#1d4ed8', fontWeight: '600' }}>Browse All →</Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* Top Rated This Week */}
-      {topRatedProviders.length > 0 && (
-        <View style={{ marginBottom: 20 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>🔥 Top Rated This Week</Text>
-            <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all →</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}>
-            {topRatedProviders.map((p) => {
-              const providerCity = getLocationCity(p.location) || null;
-              const badge = getProviderBadge(p);
-              const avatarBg = getAvatarColor(p.email);
-              return (
-                <TouchableOpacity
-                  key={p.id}
-                  onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
-                  style={{
-                    width: 156,
-                    backgroundColor: '#ffffff',
-                    borderRadius: 14,
-                    overflow: 'hidden',
-                    borderWidth: 1,
-                    borderColor: '#e2e8f0',
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.07,
-                    shadowRadius: 6,
-                    elevation: 3,
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ height: 80, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 32, fontWeight: '800', color: '#1e3a8a' }}>
-                      {(p.name || p.email || '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ padding: 10, gap: 4 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }} numberOfLines={1}>
-                      {p.name || p.email}
-                    </Text>
-                    {p.category ? (
-                      <Text style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '600' }}>{p.category}</Text>
-                    ) : null}
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 }}>
-                      <Text style={{ fontSize: 11, color: '#d97706', fontWeight: '700' }}>
-                        ⭐ {Number(p.avgRating).toFixed(1)}
-                      </Text>
-                      {p.startingPrice ? (
-                        <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700' }}>
-                          GHS {p.startingPrice}
-                        </Text>
-                      ) : null}
-                    </View>
-                    {providerCity ? (
-                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
-                    ) : null}
-                    {badge ? (
-                      <View style={{
-                        alignSelf: 'flex-start',
-                        backgroundColor: badge.bg,
-                        borderRadius: 20,
-                        paddingVertical: 3,
-                        paddingHorizontal: 8,
-                        marginTop: 4,
-                      }}>
-                        <Text style={{ fontSize: 10, fontWeight: '700', color: badge.color }}>{badge.label}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* Recently Joined Providers */}
-      {recentProviders.length > 0 && (
-        <View style={{ marginBottom: 20 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, marginBottom: 10 }}>
-            <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>🆕 Recently Joined Providers</Text>
-            <TouchableOpacity onPress={() => router.push('/providers')} activeOpacity={0.7}>
-              <Text style={{ color: '#1d4ed8', fontWeight: '600', fontSize: 13 }}>See all →</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}>
-            {recentProviders.map((p) => {
-              const providerCity = getLocationCity(p.location) || null;
-              const avatarBg = getAvatarColor(p.email);
-              return (
-                <TouchableOpacity
-                  key={p.id}
-                  onPress={() => router.push({ pathname: '/provider-detail', params: { email: p.email } })}
-                  style={{
-                    width: 156,
-                    backgroundColor: '#ffffff',
-                    borderRadius: 14,
-                    overflow: 'hidden',
-                    borderWidth: 1,
-                    borderColor: '#e2e8f0',
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.07,
-                    shadowRadius: 6,
-                    elevation: 3,
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 1, backgroundColor: '#7c3aed', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
-                    <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>NEW</Text>
-                  </View>
-                  <View style={{ height: 80, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ fontSize: 32, fontWeight: '800', color: '#1e3a8a' }}>
-                      {(p.name || p.email || '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ padding: 10, gap: 4 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#0f172a' }} numberOfLines={1}>
-                      {p.name || p.email}
-                    </Text>
-                    {p.category ? (
-                      <Text style={{ fontSize: 11, color: '#1d4ed8', fontWeight: '600' }}>{p.category}</Text>
-                    ) : null}
-                    <Text style={{ fontSize: 11, color: '#7c3aed', fontWeight: '600', marginTop: 2 }}>
-                      Akwaaba! 🎉
-                    </Text>
-                    {providerCity ? (
-                      <Text style={{ fontSize: 10, color: '#94a3b8' }} numberOfLines={1}>📍 {providerCity}</Text>
-                    ) : null}
-                    {p.startingPrice ? (
-                      <Text style={{ fontSize: 11, color: '#059669', fontWeight: '700', marginTop: 2 }}>
-                        GHS {p.startingPrice}
-                      </Text>
-                    ) : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* ── Live Requests section header ────────── */}
       <View style={{ paddingHorizontal: 16, marginBottom: 10 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Text style={{ fontWeight: '800', fontSize: 16, color: '#0f172a' }}>📋 Live Requests ({visibleRequests.length})</Text>
-          <View style={{ flex: 1, height: 1, backgroundColor: '#e2e8f0', marginLeft: 10 }} />
-        </View>
-
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10 }}>
           <StatusChip label="Open" value={requestSummary.open} bg="#dbeafe" fg="#1d4ed8" />
           <StatusChip label="Accepted" value={requestSummary.accepted} bg="#ffedd5" fg="#c2410c" />
@@ -1196,7 +1192,7 @@ export default function Home() {
                   gap: 4,
                 }}
               >
-                {cat !== 'All' && <Text style={{ fontSize: 12 }}>{CATEGORY_ICONS[cat] || '✨'}</Text>}
+                {cat !== 'All' ? <Text style={{ fontSize: 12 }}>{CATEGORY_ICONS[cat] || '?'}</Text> : null}
                 <Text style={{ fontWeight: '600', fontSize: 13, color: active ? '#ffffff' : '#334155' }}>{cat}</Text>
               </TouchableOpacity>
             );
@@ -1275,44 +1271,101 @@ export default function Home() {
           contentContainerStyle={{ paddingBottom: 100 }}
           ListFooterComponent={() => (
             <View style={{
-              marginTop: 16,
               backgroundColor: '#0f172a',
               padding: 24,
-              alignItems: 'center',
-              gap: 12,
+              gap: 20,
+              marginTop: 8,
             }}>
-              <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff' }}>ConnectHub</Text>
-              <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>
-                Ghana&apos;s trusted marketplace for local services
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: '#1d4ed8',
-                    borderRadius: 10,
-                    paddingVertical: 10,
-                    paddingHorizontal: 18,
-                  }}
-                  onPress={() => router.push('/providers')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>🌐 Browse Providers</Text>
-                </TouchableOpacity>
+              <View style={{ alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 26, fontWeight: '900', color: '#ffffff', letterSpacing: -0.5 }}>
+                  ConnectHub
+                </Text>
+                <Text style={{ fontSize: 12, color: '#64748b', textAlign: 'center' }}>
+                  Ghana&apos;s trusted marketplace for local services
+                </Text>
               </View>
-              <Text style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
-                © 2026 ConnectHub. All rights reserved.
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 20, marginTop: 4 }}>
-                <TouchableOpacity onPress={() => router.push('/terms')} activeOpacity={0.7}>
-                  <Text style={{ fontSize: 12, color: '#64748b' }}>Terms</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => router.push('/privacy-policy')} activeOpacity={0.7}>
-                  <Text style={{ fontSize: 12, color: '#64748b' }}>Privacy</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => router.push('/help')} activeOpacity={0.7}>
-                  <Text style={{ fontSize: 12, color: '#64748b' }}>Help</Text>
-                </TouchableOpacity>
+
+              <View style={{
+                backgroundColor: '#1e293b',
+                borderRadius: 12,
+                padding: 14,
+                alignItems: 'center',
+                gap: 6,
+              }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#94a3b8' }}>Customer Support</Text>
+                <Text style={{ fontSize: 17, fontWeight: '800', color: '#facc15' }}>connecthub1000@gmail.com</Text>
+                <Text style={{ fontSize: 12, color: '#64748b' }}>Available Mon - Fri, 8am - 6pm GMT</Text>
               </View>
+
+              <View>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff', marginBottom: 10 }}>QUICK LINKS</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                  {[
+                    { label: 'Browse Providers', route: '/providers' },
+                    { label: 'Post a Job', route: '/request-wizard' },
+                    { label: 'My Wallet', route: '/wallet' },
+                    { label: 'Help Center', route: '/help' },
+                    { label: 'Privacy Policy', route: '/privacy-policy' },
+                    { label: 'Terms of Use', route: '/terms' },
+                  ].map((link) => (
+                    <TouchableOpacity key={link.label} onPress={() => router.push(link.route)} activeOpacity={0.7}>
+                      <Text style={{ fontSize: 12, color: '#94a3b8', textDecorationLine: 'underline' }}>
+                        {link.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#ffffff', marginBottom: 10 }}>DOWNLOAD APP</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#1e293b',
+                      borderRadius: 10,
+                      padding: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                      borderWidth: 1,
+                      borderColor: '#334155',
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 20 }}>▶️</Text>
+                    <View>
+                      <Text style={{ fontSize: 9, color: '#94a3b8' }}>Get it on</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>Google Play</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#1e293b',
+                      borderRadius: 10,
+                      padding: 12,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 8,
+                      borderWidth: 1,
+                      borderColor: '#334155',
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={{ fontSize: 20 }}>🍎</Text>
+                    <View>
+                      <Text style={{ fontSize: 9, color: '#94a3b8' }}>Get it on</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>App Store</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <Text style={{ fontSize: 11, color: '#475569', textAlign: 'center', marginTop: 4 }}>
+                ConnectHub online store © 2026. All rights reserved.
+              </Text>
             </View>
           )}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
@@ -1524,3 +1577,4 @@ function StatusChip({ label, value, bg, fg }) {
     </View>
   );
 }
+

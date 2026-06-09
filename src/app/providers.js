@@ -11,7 +11,7 @@ import { AppColors, AppRadius, AppShadow, AppSpace } from '../constants/design-t
 import { db } from '../firebase';
 import useAuthUser from '../hooks/use-auth-user';
 import { calculateDistance, formatDistance, getCurrentLocation, getLocationCoords } from '../utils/location';
-import { getProviderBadge } from '../utils/provider-badges';
+import { getBadgeStyle, getProviderBadge } from '../utils/provider-badges';
 
 const ALL = 'All';
 const FILTER_CATEGORIES = [
@@ -25,11 +25,6 @@ function isPublicProviderEmail(email) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!normalized) return false;
   return !BLOCKED_PROVIDER_EMAIL_PARTS.some((part) => normalized.includes(part));
-}
-
-function buildStars(rating) {
-  const n = Math.max(0, Math.min(5, Math.round(Number(rating || 0))));
-  return `${'★'.repeat(n)}${'☆'.repeat(5 - n)}`;
 }
 
 function EmptyState({ category, onBrowseAll, onBecomeProvider, onPostRequest }) {
@@ -397,11 +392,13 @@ export default function Providers() {
           renderItem={({ item, index }) => {
             const letter = String(item.name || item.email || '?').trim().charAt(0).toUpperCase();
             const avatarBg = AVATAR_COLORS[index % AVATAR_COLORS.length];
-            const reviews = Number(item.jobsCompleted || item.reviewCount || 0);
-            const photoCount = Array.isArray(item.portfolioPhotos) ? item.portfolioPhotos.length : 0;
             const providerBadge = getProviderBadge(item);
+            const badgeStyle = providerBadge ? getBadgeStyle(providerBadge) : null;
+            const rating = Number(item.avgRating || 0);
+            const jobsDone = Number(item.jobsCompleted || item.jobsDone || item.reviewCount || 0);
+            const providerLocation = item.location || 'Accra, Ghana';
             return (
-              <AppCard style={{ marginBottom: 12, borderRadius: 12, ...AppShadow.card }}>
+              <AppCard style={{ marginBottom: 12, borderRadius: 12, minHeight: 190, ...AppShadow.card }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: avatarBg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                     <Text style={{ color: '#1e3a8a', fontWeight: '900', fontSize: 18 }}>{letter || '?'}</Text>
@@ -410,29 +407,14 @@ export default function Providers() {
                     <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                       <Text style={{ color: AppColors.ink900, fontWeight: '800', fontSize: 16 }}>{item.name || item.email}</Text>
                       <SubscriptionBadge plan={item.subscriptionPlan} />
-                      {item.kycVerified === true || String(item.kycStatus || '').toLowerCase() === 'verified' ? (
-                        <View style={{ backgroundColor: '#dcfce7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: '#166534', fontSize: 10, fontWeight: '800' }}>✓ VERIFIED</Text>
-                        </View>
-                      ) : null}
-                      {String(item.subscriptionPlan || '').toLowerCase() === 'pro' ? (
-                        <View style={{ backgroundColor: '#dbeafe', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: '#1d4ed8', fontSize: 10, fontWeight: '800' }}>PRO</Text>
-                        </View>
-                      ) : null}
-                      {String(item.subscriptionPlan || '').toLowerCase() === 'premium' ? (
-                        <View style={{ backgroundColor: '#fef3c7', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: '#92400e', fontSize: 10, fontWeight: '800' }}>PREMIUM</Text>
-                        </View>
-                      ) : null}
                     </View>
                     <View style={{ marginTop: 4, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <View style={{ alignSelf: 'flex-start', backgroundColor: '#dbeafe', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
                         <Text style={{ color: '#1d4ed8', fontSize: 11, fontWeight: '700' }}>{item.category || 'General'}</Text>
                       </View>
-                      {providerBadge ? (
-                        <View style={{ alignSelf: 'flex-start', backgroundColor: providerBadge.bg, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 }}>
-                          <Text style={{ color: providerBadge.color, fontSize: 11, fontWeight: '700' }}>{providerBadge.label}</Text>
+                      {providerBadge && badgeStyle ? (
+                        <View style={badgeStyle.container}>
+                          <Text style={badgeStyle.text}>{providerBadge.label}</Text>
                         </View>
                       ) : null}
                     </View>
@@ -440,8 +422,7 @@ export default function Providers() {
                 </View>
 
                 <View style={{ marginTop: 10 }}>
-                  <Text style={{ color: '#0f172a', fontWeight: '700' }}>{buildStars(item.avgRating)} ({Number(item.avgRating || 0).toFixed(1)}) — {reviews} reviews</Text>
-                  <Text style={{ color: '#64748b', marginTop: 4 }}>📍 {item.location || 'Accra, Ghana'}</Text>
+                  <Text style={{ color: '#64748b', marginTop: 2 }} numberOfLines={1}>📍 {providerLocation}</Text>
                   {myLocation ? (() => {
                     const providerCoords = getLocationCoords(item.location) || (
                       Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude))
@@ -455,8 +436,12 @@ export default function Providers() {
                     </Text>
                     );
                   })() : null}
-                  <Text style={{ color: '#16a34a', marginTop: 4, fontWeight: '800' }}>From GHS {Number(item.startingPrice || 0).toFixed(2)}</Text>
-                  {photoCount > 0 ? <Text style={{ color: '#94a3b8', marginTop: 4 }}>📷 {photoCount} photos</Text> : null}
+                  <Text style={{ color: item.startingPrice ? '#059669' : '#94a3b8', marginTop: 4, fontWeight: '800' }}>
+                    {item.startingPrice ? `GHS ${Number(item.startingPrice).toFixed(2)}` : 'Contact for Price'}
+                  </Text>
+                  <Text style={{ color: '#0f172a', marginTop: 4, fontWeight: '700' }}>
+                    {rating > 0 ? `⭐ ${rating.toFixed(1)} (${jobsDone} jobs)` : `⭐ New provider (${jobsDone} jobs)`}
+                  </Text>
                 </View>
 
                 <AppButton

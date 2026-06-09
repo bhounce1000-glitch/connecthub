@@ -4,12 +4,13 @@ import { Animated, Dimensions, Platform, StyleSheet, Text, View } from 'react-na
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 const MESSAGES = [
-  '🎉 Post your first job FREE — no commission on your first booking',
+  '🎉 Free promotion!! List your services FREE on ConnectHub featured section',
   '🔥 Top-rated providers in Accra, Kumasi and Tema — book now',
-  '🛡️ Safe escrow payments — your money is protected until job is done',
-  '🚀 Live GPS tracking — see your provider coming in real-time',
-  '💸 Instant MoMo payouts for providers — withdraw in minutes',
-  '⭐ Verified providers near you — KYC-checked and rated',
+  '🌟 Explore local services near you — plumbers, cleaners, electricians and more',
+  '🚀 Get trending on ConnectHub — complete your KYC and start earning today',
+  '💸 Safe escrow payments — your money is protected until the job is done',
+  '⭐ Verified providers near you — KYC-checked, rated and trusted',
+  '🛡️ Live GPS tracking — see your provider coming in real-time like Uber',
 ];
 
 const FULL_TEXT = MESSAGES.join('     •     ');
@@ -21,30 +22,25 @@ export default function PromotionalTicker() {
 
   useEffect(() => {
     if (Platform.OS === 'web') return undefined;
-    let running = true;
     const run = () => {
-      if (!running) return;
       position.setValue(SCREEN_WIDTH);
       Animated.timing(position, {
         toValue: -FULL_WIDTH,
-        duration: FULL_TEXT.length * 110,
+        duration: FULL_TEXT.length * 100,
         useNativeDriver: true,
       }).start(({ finished }) => {
-        if (finished && running) run();
+        if (finished) run();
       });
     };
     run();
-    return () => {
-      running = false;
-      position.stopAnimation();
-    };
+    return () => position.stopAnimation();
   }, [position]);
 
   if (Platform.OS === 'web') {
     return (
       <View style={styles.wrapper}>
-        <Text style={styles.staticText} numberOfLines={1}>
-          {MESSAGES[0]}
+        <Text style={styles.text} numberOfLines={1}>
+          {MESSAGES[0]}{'     •     '}{MESSAGES[1]}{'     •     '}{MESSAGES[2]}
         </Text>
       </View>
     );
@@ -64,7 +60,7 @@ export default function PromotionalTicker() {
 
 const styles = StyleSheet.create({
   wrapper: {
-    height: 34,
+    height: 36,
     backgroundColor: '#0f172a',
     overflow: 'hidden',
     justifyContent: 'center',
@@ -73,13 +69,7 @@ const styles = StyleSheet.create({
     color: '#facc15',
     fontSize: 12.5,
     fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  staticText: {
-    color: '#facc15',
-    fontSize: 12.5,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-    paddingHorizontal: 16,
+    letterSpacing: 0.3,
+    paddingHorizontal: Platform.OS === 'web' ? 16 : 0,
   },
 });
