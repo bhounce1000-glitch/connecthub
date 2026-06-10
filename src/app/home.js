@@ -831,24 +831,33 @@ export default function Home() {
     );
   };
 
-  const HorizontalSection = ({ title, data, showNewBadge = false, onBrowseAll }) => {
-    if (!data || data.length === 0) return null;
+  const ProviderRow = ({ title, data, showNewBadge = false, onBrowseAll, emptyLabel }) => {
+    const hasData = Array.isArray(data) && data.length > 0;
     return (
       <View>
         <SectionHeader title={title} onBrowseAll={onBrowseAll} />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 12, paddingBottom: 4 }}
-        >
-          {data.map((provider, idx) => (
-            <ProviderCard
-              key={provider.email || provider.id || `${title}-${idx}`}
-              provider={provider}
-              showNewBadge={showNewBadge}
-            />
-          ))}
-        </ScrollView>
+        {hasData ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 12, paddingBottom: 4 }}
+          >
+            {data.map((provider, idx) => (
+              <ProviderCard
+                key={provider.email || provider.id || `${title}-${idx}`}
+                provider={provider}
+                showNewBadge={showNewBadge}
+              />
+            ))}
+          </ScrollView>
+        ) : (
+          <View style={{ marginHorizontal: 16, marginBottom: 16, backgroundColor: '#f8fafc', borderRadius: 12, padding: 16, borderWidth: 1, borderColor: '#e2e8f0', borderStyle: 'dashed', alignItems: 'center' }}>
+            <Text style={{ fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>{emptyLabel || 'No providers available yet in this section.'}</Text>
+            <TouchableOpacity onPress={() => router.push('/providers')} style={{ marginTop: 10, backgroundColor: '#1d4ed8', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14 }} activeOpacity={0.85}>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Browse All Providers</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   };
@@ -1004,6 +1013,44 @@ export default function Home() {
         ))}
       </ScrollView>
 
+      <HeroBanner />
+
+      <ProviderRow
+        title="Featured Providers"
+        data={featuredProviders}
+        onBrowseAll={() => router.push('/providers')}
+        emptyLabel="Top providers will appear here once they join ConnectHub."
+      />
+
+      <ProviderRow
+        title="Top Rated This Week"
+        data={topRatedProviders}
+        onBrowseAll={() => router.push('/providers')}
+        emptyLabel="Top-rated providers will appear here after completed jobs."
+      />
+
+      <ProviderRow
+        title="Local Services"
+        data={localServiceProviders}
+        onBrowseAll={() => router.push({ pathname: '/providers', params: { category: 'Services' } })}
+        emptyLabel="Local service providers will appear here."
+      />
+
+      <ProviderRow
+        title="Recently Joined"
+        data={recentProviders}
+        showNewBadge
+        onBrowseAll={() => router.push('/providers')}
+        emptyLabel="New providers joining ConnectHub will appear here."
+      />
+
+      <ProviderRow
+        title="Trending Services"
+        data={trendingProviders}
+        onBrowseAll={() => router.push('/providers')}
+        emptyLabel="Trending providers will appear here as activity grows."
+      />
+
       <View style={{
         backgroundColor: '#0f172a',
         paddingHorizontal: 16,
@@ -1013,51 +1060,18 @@ export default function Home() {
         alignItems: 'center',
       }}>
         {[
-          { emoji: '📋', number: `${Math.max(500, dashboardStats.activeJobs)}+`, label: 'Jobs Done' },
-          { emoji: '👷', number: `${dashboardStats.providerCount}+`, label: 'Providers' },
-          { emoji: '⭐', number: dashboardStats.ratingValue ? Number(dashboardStats.ratingValue).toFixed(1) : '4.8', label: 'Avg Rating' },
-          { emoji: '🛡️', number: '100%', label: 'Safe Pay' },
+          { emoji: 'J', number: `${Math.max(500, dashboardStats.activeJobs)}+`, label: 'Jobs Done' },
+          { emoji: 'P', number: `${dashboardStats.providerCount}+`, label: 'Providers' },
+          { emoji: 'R', number: dashboardStats.ratingValue ? Number(dashboardStats.ratingValue).toFixed(1) : '4.8', label: 'Avg Rating' },
+          { emoji: 'S', number: '100%', label: 'Safe Pay' },
         ].map((s, i) => (
           <View key={i} style={{ alignItems: 'center', gap: 2 }}>
-            <Text style={{ fontSize: 16 }}>{s.emoji}</Text>
+            <Text style={{ fontSize: 16, color: '#ffffff' }}>{s.emoji}</Text>
             <Text style={{ fontSize: 15, fontWeight: '800', color: '#ffffff' }}>{s.number}</Text>
             <Text style={{ fontSize: 10, color: '#94a3b8' }}>{s.label}</Text>
           </View>
         ))}
       </View>
-
-      <HeroBanner />
-
-      <HorizontalSection
-        title="⭐ Featured Providers"
-        data={featuredProviders}
-        onBrowseAll={() => router.push('/providers')}
-      />
-
-      <HorizontalSection
-        title="🔥 Top Rated This Week"
-        data={topRatedProviders}
-        onBrowseAll={() => router.push('/providers')}
-      />
-
-      <HorizontalSection
-        title="🛠️ Local Services"
-        data={localServiceProviders}
-        onBrowseAll={() => router.push({ pathname: '/providers', params: { category: 'Services' } })}
-      />
-
-      <HorizontalSection
-        title="🆕 Recently Joined"
-        data={recentProviders}
-        showNewBadge
-        onBrowseAll={() => router.push('/providers')}
-      />
-
-      <HorizontalSection
-        title="📈 Trending Services"
-        data={trendingProviders}
-        onBrowseAll={() => router.push('/providers')}
-      />
 
       <View style={{ paddingHorizontal: 16, marginBottom: 20, marginTop: 10 }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -1305,6 +1319,8 @@ export default function Home() {
                     { label: 'Post a Job', route: '/request-wizard' },
                     { label: 'My Wallet', route: '/wallet' },
                     { label: 'Help Center', route: '/help' },
+                    { label: 'Notifications', route: '/notifications' },
+                    { label: 'My Profile', route: '/profile' },
                     { label: 'Privacy Policy', route: '/privacy-policy' },
                     { label: 'Terms of Use', route: '/terms' },
                   ].map((link) => (
